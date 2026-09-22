@@ -56,6 +56,10 @@ export function createGame({ seed, players }) {
     bidding: { turn: 0, first: 0, highest: 0, highestBy: -1, calls: [], passes: 0 },
     turn: -1,
     trick: null, // { leader, combo } while a trick is live
+    // What each seat has done in the trick now in progress, in order. The table
+    // lays these out one per seat, so who played what is answered by where the
+    // cards are rather than by a caption.
+    trickPlays: [],
     passStreak: 0,
     bidValue: 0,
     bombs: 0,
@@ -84,6 +88,7 @@ function dealCards(state, rng) {
   state.bidding = { turn: first, first, highest: 0, highestBy: -1, calls: [], passes: 0 };
   state.turn = -1;
   state.trick = null;
+  state.trickPlays = [];
   state.passStreak = 0;
   state.bidValue = 0;
   state.bombs = 0;
@@ -147,6 +152,7 @@ function settleBidding(state) {
   state.phase = Phase.PLAYING;
   state.turn = landlord;
   state.trick = null;
+  state.trickPlays = [];
   state.passStreak = 0;
   state.multiplier = state.bidValue;
   state.log.push({ kind: 'landlord', seat: landlord, points: state.bidValue });
@@ -191,6 +197,7 @@ export function play(state, seat, cards) {
     return { ok: false, error: 'that does not beat the current play' };
   }
 
+  if (!state.trick) state.trickPlays = []; // leading: the last trick clears away
   player.hand = removeCards(player.hand, resolved);
   state.plays.push({ seat, cards: resolved, combo: summarise(combo) });
   state.log.push({ kind: 'play', seat, combo: summarise(combo) });
@@ -202,6 +209,7 @@ export function play(state, seat, cards) {
   else state.farmerPlays += 1;
 
   state.trick = { leader: seat, combo };
+  state.trickPlays.push({ seat, cards: resolved, combo: summarise(combo) });
   state.passStreak = 0;
 
   if (player.hand.length === 0) {
@@ -217,10 +225,13 @@ export function pass(state, seat) {
   if (seat !== state.turn) return { ok: false, error: 'not your turn' };
   if (!state.trick) return { ok: false, error: 'you must lead' };
   state.plays.push({ seat, pass: true });
+  state.trickPlays.push({ seat, pass: true });
   state.log.push({ kind: 'pass', seat });
   state.passStreak += 1;
   if (state.passStreak >= SEATS - 1) {
     // Both opponents passed: the trick is won, its winner opens the next one.
+    // trickPlays is left standing so the table can keep the finished trick on
+    // screen, greyed, until somebody leads again.
     state.turn = state.trick.leader;
     state.trick = null;
     state.passStreak = 0;
@@ -305,6 +316,7 @@ export function seatView(state, seat) {
     turn: state.turn,
     trick: state.trick ? { leader: state.trick.leader, combo: summarise(state.trick.combo), cards: state.trick.combo.cards } : null,
     lastPlays: state.plays.slice(-6),
+    trickPlays: state.trickPlays,
     // Every card anyone has played. Public information at the table, so passing
     // it to a bot is card counting, not cheating.
     playedCards: state.plays.flatMap((p) => p.cards ?? []),

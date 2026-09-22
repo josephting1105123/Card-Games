@@ -11,7 +11,7 @@
 import { cardsToString, sortCards } from '../core/cards.js';
 import { SOLO_CURRENCY, currencyLabel, currencyTint, formatAmount, formatMoney } from '../core/currency.js';
 import { Phase } from '../games/doudizhu/engine.js';
-import { beats, classify, describeCombo } from '../games/doudizhu/rules.js';
+import { beats, classify, comboName, describeCombo } from '../games/doudizhu/rules.js';
 import { findHint } from '../games/doudizhu/moves.js';
 import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el } from './dom.js';
@@ -40,30 +40,34 @@ export class TableView {
     this.nodes = {};
     const n = this.nodes;
 
-    n.hudTurn = el('span.hud__pill', el('small', 'On turn'), el('b', { id: 'hud-turn' }, '—'));
-    n.hudMult = el('span.hud__pill', el('small', 'Multiplier'), el('b', '×2'));
-    n.hudPot = el('span.hud__pill', el('small', 'Pot'), el('b', this.meta.potLabel));
-    // The pill already names the coin, so the amount does not repeat it.
-    n.hudPurse = el('span.hud__pill', { style: `--pill-tint:${currencyTint(this.currency)}` },
+    // The head-up display carries three numbers and no sentences. Whose turn it
+    // is was a pill of its own; the seat plates already ring the player on turn
+    // and the controls enable, which says it without spending a word. The pot
+    // rides along with the table's name instead of taking a pill.
+    n.hudMult = el('span.hud__pill.hud__pill--mult', { title: 'Stake multiplier' }, el('b', '×2'));
+    n.hudPurse = el('span.hud__pill', { style: `--pill-tint:${currencyTint(this.currency)}`, title: currencyLabel(this.currency) },
       el('small', currencyLabel(this.currency)),
       el('b', formatAmount(this.meta.bankroll ?? 0)));
 
     const hud = el('div.hud',
-      el('button.back-link', { type: 'button', onclick: () => this.handlers.onLeave?.() }, '← Leave table'),
-      el('span.hud__pill', el('small', 'Table'), el('b', this.meta.lobbyName)),
+      el('button.back-link', { type: 'button', 'aria-label': 'Leave table', title: 'Leave table', onclick: () => this.handlers.onLeave?.() }, '←'),
+      el('span.hud__pill.hud__pill--table', el('b', `${this.meta.lobbyName} · ${this.meta.potLabel}`)),
       el('div.hud__spacer'),
-      n.hudTurn, n.hudMult, n.hudPot, n.hudPurse,
+      n.hudMult, n.hudPurse,
     );
 
     n.leftSeat = this.buildSeat('left');
     n.rightSeat = this.buildSeat('right');
     n.bottomRow = el('div.bottom-cards__row');
     n.bottom = el('div.bottom-cards', el('span.bottom-cards__label', 'Landlord’s three'), n.bottomRow);
-    n.trickCards = el('div.trick__cards');
-    n.trickLabel = el('div.trick__label.is-muted', 'Waiting');
-    n.trick = el('div.trick', n.trickCards, n.trickLabel);
+    // One landing area per seat, laid out where that player sits. A pile in the
+    // middle with a caption underneath made you read to find out who had moved;
+    // this way the answer is where the cards are.
+    const playZone = (slot) => el(`div.play.play--${slot}`, el('div.play__cards'), el('span.play__name'));
+    n.plays = { left: playZone('left'), right: playZone('right'), self: playZone('self') };
     n.bidPanel = el('div.bid-panel', { hidden: true });
-    n.felt = el('div.felt', n.leftSeat.wrap, n.rightSeat.wrap, n.bottom, n.trick, n.bidPanel);
+    n.felt = el('div.felt', n.leftSeat.wrap, n.rightSeat.wrap, n.bottom,
+      n.plays.left, n.plays.right, n.plays.self, n.bidPanel);
 
     n.handInner = el('div.hand__inner');
     n.hand = el('div.hand', n.handInner);
@@ -110,9 +114,14 @@ export class TableView {
     // stayed lit into the next trick.
     if (previous && previous.playedCards?.length !== view.playedCards?.length) this.hinted.clear();
 
+    // Calls belong to bidding. Once cards are down they are stale, so they go.
+    if (previous && previous.phase === Phase.BIDDING && view.phase !== Phase.BIDDING) {
+      this.clearSpeech();
+    }
+
     this.renderSeats();
     this.renderBottom();
-    this.renderTrick();
+    this.renderPlays();
     this.renderBidding();
     this.renderHand();
     this.renderControls();
@@ -139,6 +148,13 @@ export class TableView {
     node._sayTimer = setTimeout(() => node.say.classList.remove('is-on'), 2200);
   }
 
+  clearSpeech() {
+    for (const node of [this.nodes.leftSeat, this.nodes.rightSeat]) {
+      clearTimeout(node._sayTimer);
+      node.say.classList.remove('is-on');
+    }
+  }
+
   seatNodeFor(seat) {
     const view = this.view;
     if (!view) return null;
@@ -149,14 +165,10 @@ export class TableView {
   }
 
   renderHud() {
-    const view = this.view;
-    const onTurn = view.phase === Phase.BIDDING ? view.bidding.turn : view.turn;
-    const label = onTurn === view.seat ? 'You' : (view.players[onTurn]?.name ?? '—');
-    this.nodes.hudTurn.querySelector('b').textContent = view.phase === Phase.FINISHED ? 'Over' : label;
-    const mult = this.nodes.hudMult.querySelector('b');
-    const shown = Math.max(view.multiplier, this.meta.baseMultiplier ?? 1);
-    mult.textContent = `×${shown}`;
-    this.nodes.hudMult.classList.toggle('is-hot', shown > (this.meta.baseMultiplier ?? 1) * 2);
+    const base = this.meta.baseMultiplier ?? 1;
+    const shown = Math.max(this.view.multiplier, base);
+    this.nodes.hudMult.querySelector('b').textContent = `×${shown}`;
+    this.nodes.hudMult.classList.toggle('is-hot', shown > base);
   }
 
   renderSeats() {
@@ -186,21 +198,79 @@ export class TableView {
     }
   }
 
-  renderTrick() {
+  /** Which seat sits in each of the three landing areas, from here. */
+  seatForSlot(slot) {
+    const me = this.view.seat;
+    return slot === 'self' ? me : slot === 'left' ? (me + 1) % 3 : (me + 2) % 3;
+  }
+
+  /**
+   * Lay the trick out one play per seat.
+   *
+   * Nothing here is captioned. The cards are in front of whoever played them,
+   * the play still standing is the bright one, and a finished trick greys out
+   * rather than vanishing, so the table can be read at a glance instead of
+   * parsed. The only word on the felt is "Pass", because a pass has no cards to
+   * show for itself.
+   */
+  renderPlays() {
     const view = this.view;
-    this.nodes.trick.hidden = view.phase === Phase.BIDDING;
-    clear(this.nodes.trickCards);
-    if (!view.trick) {
-      this.nodes.trickLabel.textContent = view.phase === Phase.PLAYING
-        ? (view.turn === view.seat ? 'Your lead' : 'Fresh trick')
-        : 'Waiting';
-      this.nodes.trickLabel.classList.add('is-muted');
-      return;
+    const bidding = view.phase === Phase.BIDDING;
+    const plays = view.trickPlays ?? [];
+    const bySeat = new Map(plays.map((entry) => [entry.seat, entry]));
+    const trickLive = !!view.trick;
+
+    for (const slot of ['left', 'right', 'self']) {
+      const zone = this.nodes.plays[slot];
+      const seat = this.seatForSlot(slot);
+      const entry = bySeat.get(seat);
+      const key = bidding ? '' : entry ? (entry.pass ? 'pass' : entry.cards.map((c) => c.id).join(',')) : '';
+
+      if (zone.dataset.key !== key) {
+        zone.dataset.key = key;
+        this.paintZone(zone, entry, slot, bidding);
+      }
+      const standing = !!entry && !entry.pass && trickLive && view.trick.leader === seat;
+      zone.classList.toggle('is-empty', !key);
+      // Bright while the trick it belongs to is still being fought over.
+      zone.classList.toggle('is-stale', !!key && !trickLive);
+      zone.classList.toggle('is-standing', standing);
+      // Exactly one caption on the felt: what the play you have to beat is. Two
+      // words at most, and only while it still stands.
+      zone.querySelector('.play__name').textContent = standing ? shortName(entry.combo) : '';
+      zone.title = entry && !entry.pass ? describeCombo(entry.combo) : '';
     }
-    for (const card of sortCards(view.trick.cards)) this.nodes.trickCards.append(cardElement(card));
-    const who = view.trick.leader === view.seat ? 'You' : view.players[view.trick.leader].name;
-    this.nodes.trickLabel.textContent = `${who}: ${describeCombo(view.trick.combo)}`;
-    this.nodes.trickLabel.classList.remove('is-muted');
+  }
+
+  paintZone(zone, entry, slot, bidding) {
+    const cards = zone.querySelector('.play__cards');
+    clear(cards);
+    zone.classList.remove('is-entering');
+    if (bidding || !entry) return;
+
+    if (entry.pass) {
+      cards.append(el('span.play__pass', 'Pass'));
+    } else {
+      sortCards(entry.cards).forEach((card, index) => {
+        const node = cardElement(card);
+        node.style.setProperty('--i', String(index));
+        cards.append(node);
+      });
+    }
+    // Restart the deal-in animation: the cards travel from the seat that played
+    // them, which is the other half of saying who moved without saying it.
+    void zone.offsetWidth;
+    zone.classList.add('is-entering');
+    announce(this.describePlay(entry, slot));
+  }
+
+  /** Spoken for screen readers only; the felt itself stays wordless. */
+  describePlay(entry, slot) {
+    const view = this.view;
+    const seat = this.seatForSlot(slot);
+    const who = seat === view.seat ? 'You' : view.players[seat]?.name ?? 'Opponent';
+    if (entry.pass) return `${who} passed`;
+    return `${who} played ${describeCombo(entry.combo)}: ${cardsToString(entry.cards)}`;
   }
 
   renderBidding() {
@@ -347,4 +417,11 @@ export class TableView {
   destroy() {
     clear(this.root);
   }
+}
+
+/** "Pair", "Straight ×5" — short enough to sit under a play without shouting. */
+function shortName(combo) {
+  if (!combo) return '';
+  const name = comboName(combo.type);
+  return combo.length > 1 ? `${name} ×${combo.length}` : name;
 }

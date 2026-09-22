@@ -197,3 +197,38 @@ test('a hundred bot games all finish and conserve the deck', () => {
     assert.equal(state.log.some((e) => e.kind === 'fallback'), false, 'a bot produced an illegal move');
   }
 });
+
+test('trickPlays says who did what in the trick now in progress', () => {
+  const state = riggedGame(['345', '456', '567']);
+  assert.deepEqual(state.trickPlays, []);
+
+  play(state, 0, [findCard(state, 0, 5)]);
+  assert.equal(state.trickPlays.length, 1);
+  assert.equal(state.trickPlays[0].seat, 0);
+  assert.equal(state.trickPlays[0].cards.length, 1);
+
+  play(state, 1, [findCard(state, 1, 6)]);
+  pass(state, 2);
+  assert.deepEqual(state.trickPlays.map((p) => p.seat), [0, 1, 2]);
+  assert.equal(state.trickPlays[2].pass, true);
+
+  // Two passes end the trick, but the finished trick stays on the table so it
+  // can be shown greyed rather than blinking out of existence.
+  pass(state, 0);
+  assert.equal(state.trick, null);
+  assert.equal(state.trickPlays.length, 4, 'the finished trick is still readable');
+
+  // Leading again clears it.
+  play(state, 1, [findCard(state, 1, 4)]);
+  assert.deepEqual(state.trickPlays.map((p) => p.seat), [1]);
+});
+
+test('a seat view carries the current trick per seat', () => {
+  const state = riggedGame(['345', '456', '567']);
+  play(state, 0, [findCard(state, 0, 3)]);
+  const view = seatView(state, 1);
+  assert.equal(view.trickPlays.length, 1);
+  assert.equal(view.trickPlays[0].seat, 0);
+  // Still only the viewer's own hand in the payload.
+  assert.equal(JSON.stringify(view).match(/"hand"/g).length, 1);
+});

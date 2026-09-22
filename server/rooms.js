@@ -17,7 +17,6 @@ import { settleDouDiZhu } from '../src/core/economy.js';
 import { Phase, bid, createGame, pass, play, seatView } from '../src/games/doudizhu/engine.js';
 import { botTurn } from '../src/games/doudizhu/match.js';
 import { skillByName } from '../src/games/doudizhu/ai.js';
-import { describeCombo } from '../src/games/doudizhu/rules.js';
 import { C2S, S2C, encode, sanitiseSettings } from '../src/net/protocol.js';
 import { generateCode } from '../src/net/roomcode.js';
 
@@ -183,7 +182,7 @@ export class RoomHub {
       if (member && member.connected) {
         players.push({ id: member.id, name: member.name, isBot: false });
       } else {
-        const name = `${spare.pop() ?? 'Bot'} (${skill.name})`;
+        const name = spare.pop() ?? 'Bot';
         players.push({ id: `bot-${seat}`, name, isBot: true, skill });
         if (!room.chips.has(`bot-${seat}`)) room.chips.set(`bot-${seat}`, room.settings.startingChips);
       }
@@ -230,18 +229,16 @@ export class RoomHub {
     }, this.options.botStepMs);
   }
 
+  /**
+   * Only bidding is broadcast as a spoken bubble. Plays and passes travel in the
+   * seat view as trickPlays and land on the felt in front of the seat that made
+   * them, which says who moved without a caption.
+   */
   describeLastAction(room, seat, acted) {
     const last = room.state.log[room.state.log.length - 1];
-    let text = '';
-    if (acted?.kind === 'bid' || last?.kind === 'bid') {
-      const value = acted?.value ?? last.value;
-      text = value === 0 ? 'No call' : `${value} point${value > 1 ? 's' : ''}`;
-    } else if (last?.kind === 'pass') {
-      text = 'Pass';
-    } else if (last?.kind === 'play') {
-      text = describeCombo(last.combo);
-    }
-    if (text) this.broadcast(room, { t: S2C.EVENT, kind: 'say', seat, text });
+    if (acted?.kind !== 'bid' && last?.kind !== 'bid') return;
+    const value = acted?.value ?? last.value;
+    this.broadcast(room, { t: S2C.EVENT, kind: 'say', seat, text: value === 0 ? 'No call' : `${value}` });
   }
 
   settle(room) {

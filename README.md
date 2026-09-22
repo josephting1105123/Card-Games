@@ -8,7 +8,7 @@ as-is, which is why it installs straight from GitHub Pages and why the local
 network host is a single `node` command with nothing to install first.
 
 ```
-npm test                  # 81 tests, about 1.5 seconds
+npm test                  # 91 tests, about 1.5 seconds
 node server/server.js     # host for local network play, also serves the app
 ```
 
@@ -237,6 +237,22 @@ test/                   64 tests, node:test, no runner to install
 
 `src/games/**` and `src/core/**` never touch the DOM — the LAN host imports the
 same files — and a test enforces it.
+
+### Reading the table
+
+The felt is laid out so it does not have to be read in words. Each play lands in
+front of the seat that made it — left, right, or just above your own fan — and
+the cards travel in from that seat as they appear, so who moved is answered by
+where the cards are and how they got there. The play still standing is the bright
+one; a finished trick greys out rather than blinking away, so you can see what
+just happened.
+
+There is exactly one caption on the felt: two words naming the play you have to
+beat, under the play that stands. Everything else the table used to say — a
+running commentary of "Rong (Casual): Pair 3", a bubble by each seat repeating
+it, a pill for whose turn it is — is gone. The seat on turn is ringed, the pot
+rides along with the table's name, and the only words left in the head-up display
+are the coin you are counting in.
 
 ### The cards
 

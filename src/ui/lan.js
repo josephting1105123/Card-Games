@@ -293,7 +293,7 @@ class LanScreens {
 
   onEvent(message) {
     if (message.kind === 'say') this.table?.say(message.seat, message.text);
-    if (message.kind === 'left') this.table?.say(message.seat, `${message.name} left — a bot took the seat`);
+    if (message.kind === 'left') this.table?.say(message.seat, `${message.name} left`);
   }
 
   onResult(message) {
