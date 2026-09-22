@@ -7,7 +7,8 @@
  * seat only its own hand.
  */
 
-import { DEFAULT_ROOM_CURRENCY, isRoomCurrency, suggestedStakes } from '../core/currency.js';
+import { DEFAULT_ROOM_CURRENCY, isRoomCurrency } from '../core/currency.js';
+import { stackForPot, suggestedStakes } from '../core/economy.js';
 
 export const C2S = {
   HELLO: 'hello',
@@ -61,9 +62,22 @@ export const SETTING_LIMITS = {
 export function sanitiseSettings(input = {}) {
   const out = { ...DEFAULT_SETTINGS };
   if (isRoomCurrency(input.currency)) out.currency = String(input.currency).toLowerCase();
-  for (const [key, limit] of Object.entries(SETTING_LIMITS)) {
+  else if (input.currency === undefined && input.pot === undefined) {
+    Object.assign(out, suggestedStakes(out.currency));
+  }
+  const clamp = (key, value) => {
+    const limit = SETTING_LIMITS[key];
+    return Math.min(limit.max, Math.max(limit.min, value));
+  };
+  // The pot is settled first, because a room that names a pot and no stack gets
+  // the house multiple of it rather than the default coin's stack.
+  const pot = Number(input.pot);
+  out.pot = Number.isFinite(pot) ? clamp('pot', pot) : suggestedStakes(out.currency).pot;
+  const stack = Number(input.startingChips);
+  out.startingChips = clamp('startingChips', Number.isFinite(stack) ? stack : stackForPot(out.pot));
+  for (const key of ['baseMultiplier', 'capFactor']) {
     const value = Number(input[key]);
-    if (Number.isFinite(value)) out[key] = Math.min(limit.max, Math.max(limit.min, value));
+    if (Number.isFinite(value)) out[key] = clamp(key, value);
   }
   if (typeof input.botSkill === 'string') out.botSkill = input.botSkill;
   const humans = Number(input.humanSeats);

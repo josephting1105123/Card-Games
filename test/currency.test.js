@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import {
   CURRENCIES, DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, SOLO_CURRENCY,
   currencyByCode, currencyLabel, formatAmount, formatMoney, isCurrency, isRoomCurrency,
-  suggestedStakes,
 } from '../src/core/currency.js';
-import { formatChips } from '../src/core/economy.js';
+import { STARTING_STACK_MULTIPLE, formatChips, suggestedStakes } from '../src/core/economy.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, sanitiseSettings } from '../src/net/protocol.js';
 
 test('rooms keep score in coins, not in the single-player purse', () => {
@@ -47,8 +46,9 @@ test('gold and silver are the same arithmetic, different scale', () => {
   const silver = suggestedStakes('silver');
   const gold = suggestedStakes('gold');
   assert.ok(gold.pot > silver.pot && gold.startingChips > silver.startingChips);
-  assert.equal(silver.startingChips / silver.pot, gold.startingChips / gold.pot,
-    'both open at the same ratio of stack to pot, so the game plays the same');
+  assert.equal(silver.startingChips / silver.pot, STARTING_STACK_MULTIPLE);
+  assert.equal(gold.startingChips / gold.pot, STARTING_STACK_MULTIPLE,
+    'both open at the same number of pots, so the game plays the same');
 });
 
 test('an unknown coin falls back to chips instead of throwing', () => {
@@ -83,4 +83,10 @@ test('a room can be priced small, and its ceiling is the high one', () => {
   );
   assert.equal(sanitiseSettings({ pot: 5, startingChips: 100 }).pot, 5);
   assert.equal(sanitiseSettings({ pot: 0 }).pot, 1, 'still clamped above zero');
+  // A host who names a pot and no stack gets the house multiple of that pot,
+  // not the default coin's stack.
+  assert.equal(sanitiseSettings({ currency: 'gold', pot: 50 }).startingChips, 50 * STARTING_STACK_MULTIPLE);
+  assert.equal(sanitiseSettings({ pot: 4 }).startingChips, 4 * STARTING_STACK_MULTIPLE);
+  assert.equal(sanitiseSettings({ pot: 1_000, startingChips: 999 }).startingChips, 999,
+    'but an explicit stack is left alone');
 });

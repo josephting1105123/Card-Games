@@ -7,7 +7,8 @@
  * failing mysteriously.
  */
 
-import { DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, currencyLabel, formatMoney, suggestedStakes } from '../core/currency.js';
+import { DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, currencyLabel, formatMoney } from '../core/currency.js';
+import { STARTING_STACK_MULTIPLE, stackForPot, suggestedStakes } from '../core/economy.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { LanClient } from '../net/client.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, S2C } from '../net/protocol.js';
@@ -168,9 +169,13 @@ class LanScreens {
     const pot = numberInput('set-pot', s.pot, SETTING_LIMITS.pot);
     const chips = numberInput('set-chips', s.startingChips, SETTING_LIMITS.startingChips);
     const preview = el('span.field__hint', '');
-    // Switching coin re-scales the stakes, but never over a number the host has
-    // typed themselves.
-    let stakesEdited = false;
+    // The stack follows the pot at the house multiple until the host types a
+    // stack of their own; after that it is theirs and nothing overwrites it.
+    let potEdited = false;
+    let stackEdited = false;
+    const syncStack = () => {
+      if (!stackEdited) chips.value = String(stackForPot(Number(pot.value) || 0));
+    };
     const refreshPreview = () => {
       const code = currency.value;
       const potValue = Number(pot.value) || 0;
@@ -178,19 +183,19 @@ class LanScreens {
         + ` · a landlord win at ×2 settles ${formatMoney(potValue * 2 * 2, code)}`;
     };
     currency.addEventListener('change', () => {
-      if (!stakesEdited) {
-        const suggested = suggestedStakes(currency.value);
-        pot.value = String(suggested.pot);
-        chips.value = String(suggested.startingChips);
-      }
+      if (!potEdited) pot.value = String(suggestedStakes(currency.value).pot);
+      syncStack();
       refreshPreview();
     });
-    for (const input of [pot, chips]) {
-      input.addEventListener('input', () => {
-        stakesEdited = true;
-        refreshPreview();
-      });
-    }
+    pot.addEventListener('input', () => {
+      potEdited = true;
+      syncStack();
+      refreshPreview();
+    });
+    chips.addEventListener('input', () => {
+      stackEdited = true;
+      refreshPreview();
+    });
     const mult = numberInput('set-mult', s.baseMultiplier, SETTING_LIMITS.baseMultiplier);
     const cap = numberInput('set-cap', s.capFactor, SETTING_LIMITS.capFactor);
     const seats = select('set-seats', [
@@ -235,7 +240,7 @@ class LanScreens {
           field('Seats', seats, 'Bots fill whatever is left of the three'),
           field('Coins', currency, 'Silver for a quick game, gold for a heavy one'),
           field('Pot per person', pot, 'What each seat puts up'),
-          field('Starting stack', chips, 'Everyone begins with this'),
+          field('Starting stack', chips, `Everyone begins with this — ${STARTING_STACK_MULTIPLE} pots unless you say otherwise`),
           field('Base multiplier', mult, 'The floor; bombs and springs double it'),
           field('Hand ceiling (× pot)', cap, 'The most one hand can move, won or lost'),
           field('Bot strength', skill, 'For any seat a person does not take'),
