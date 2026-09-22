@@ -5,7 +5,9 @@
  *
  * 1. A lobby is priced by "pot per person" — the stake each of the three seats
  *    puts up. Dou Di Zhu settles asymmetrically: each farmer pays or receives one
- *    stake, and the landlord pays or receives two.
+ *    stake, and the landlord pays or receives two. A stack is always
+ *    STARTING_STACK_MULTIPLE pots, so the shape of the game does not change
+ *    between tables, only the size of the numbers.
  *
  * 2. Every game carries a multiplier. It starts at the lobby's base multiplier
  *    (2 by default) and is raised by the points called, by each bomb or rocket,
@@ -34,9 +36,21 @@
  *    take the balance below zero, until the balance reaches RESCUE_EXIT.
  */
 
-import { SOLO_CURRENCY, formatMoney } from './currency.js';
+import { SOLO_CURRENCY, formatMoney, suggestedPot } from './currency.js';
 
-export const STARTING_BANKROLL = 10_000;
+/**
+ * A stack is this many pots, everywhere: the single-player purse you start
+ * with, and the stack a network room deals out. One number so that the swing of
+ * a hand means the same thing at every table — a landlord at the base x2
+ * multiplier is risking 4 pots, which is a sixth of the stack whichever table
+ * it is.
+ */
+export const STARTING_STACK_MULTIPLE = 25;
+
+/** The cheapest normal table, and the pot the opening purse is measured in. */
+export const STARTER_POT = 1_000;
+
+export const STARTING_BANKROLL = STARTER_POT * STARTING_STACK_MULTIPLE;
 /** Below this you cannot afford the cheapest normal lobby, so you are bankrupt. */
 export const BANKRUPT_THRESHOLD = 1_000;
 /** Leave the rescue table once you hold this much. */
@@ -72,7 +86,7 @@ export const HAND_CAP_FACTOR = 50;
 export const LOBBIES = [
   { id: 'rescue', name: 'Rescue Table', short: '400', pot: 400, baseMultiplier: 2, entry: 0, capFactor: HAND_CAP_FACTOR, skill: 'novice', botElo: 800, rescue: true,
     blurb: 'No entry fee, no bankruptcy. Grind back to 2,000 and you are out of here.' },
-  { id: 'starter', name: 'Starter Room', short: '1K', pot: 1_000, baseMultiplier: 2, entry: 1_000, capFactor: HAND_CAP_FACTOR, skill: 'casual', botElo: 1_000,
+  { id: 'starter', name: 'Starter Room', short: '1K', pot: STARTER_POT, baseMultiplier: 2, entry: STARTER_POT, capFactor: HAND_CAP_FACTOR, skill: 'casual', botElo: 1_000,
     blurb: 'The default table. Bots play a loose social game.' },
   { id: 'bronze', name: 'Bronze Hall', short: '10K', pot: 10_000, baseMultiplier: 2, entry: 12_000, capFactor: HAND_CAP_FACTOR, skill: 'steady', botElo: 1_200,
     blurb: 'Bots stop throwing away kickers and start defending as a pair.' },
@@ -149,6 +163,21 @@ export function settleDouDiZhu({ lobby, result, seat, bankroll, rescueMode = fal
   const cap = lossCap(lobby, bankroll, rescueMode);
   const delta = -Math.min(magnitude, cap);
   return { delta, gross, capped: delta !== gross, multiplier, stake, won, cap };
+}
+
+/**
+ * What a room of this coin opens with: the coin's pot, and a stack of
+ * STARTING_STACK_MULTIPLE of them.
+ * @param {string} currencyCode
+ */
+export function suggestedStakes(currencyCode) {
+  const pot = suggestedPot(currencyCode);
+  return { pot, startingChips: pot * STARTING_STACK_MULTIPLE };
+}
+
+/** The stack that goes with any pot, by the same rule. */
+export function stackForPot(pot) {
+  return Math.max(1, Math.round(pot * STARTING_STACK_MULTIPLE));
 }
 
 /** The ceiling on one hand at this table, before any bankroll limit. */

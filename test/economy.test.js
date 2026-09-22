@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BANKRUPT_THRESHOLD, HAND_CAP_FACTOR, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT, STARTING_BANKROLL,
-  applyToBankroll, formatChips, handCap, isBankrupt, lobbyAccess, lobbyById, lossCap, settleDouDiZhu,
+  BANKRUPT_THRESHOLD, HAND_CAP_FACTOR, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT,
+  STARTER_POT, STARTING_BANKROLL, STARTING_STACK_MULTIPLE,
+  applyToBankroll, formatChips, handCap, isBankrupt, lobbyAccess, lobbyById, lossCap,
+  settleDouDiZhu, stackForPot, suggestedStakes,
 } from '../src/core/economy.js';
 import { DEFAULT_RATING, expectedScore, kFactor, updateRating } from '../src/core/elo.js';
 
@@ -13,7 +15,7 @@ const rescue = lobbyById('rescue');
 test('the lobby ladder is the one that was asked for', () => {
   assert.deepEqual(LOBBIES.map((l) => l.pot), [400, 1_000, 10_000, 50_000, 100_000, 500_000, 1_000_000]);
   for (const lobby of LOBBIES) assert.equal(lobby.baseMultiplier, 2, 'every lobby starts at x2');
-  assert.equal(STARTING_BANKROLL, 10_000);
+  assert.equal(STARTING_BANKROLL, 25_000);
   assert.equal(rescue.pot, 400);
   assert.equal(rescue.entry, 0);
 });
@@ -187,4 +189,31 @@ test('Elo: rating is conserved in a head-to-head pair', () => {
   const winner = updateRating({ rating: 1_400, opponents: 1_400, score: 1, gamesPlayed: 99 });
   const loser = updateRating({ rating: 1_400, opponents: 1_400, score: 0, gamesPlayed: 99 });
   assert.equal(winner.delta + loser.delta, 0);
+});
+
+test('a stack is the same number of pots wherever you sit', () => {
+  assert.equal(STARTING_STACK_MULTIPLE, 25);
+  assert.equal(STARTING_BANKROLL, STARTER_POT * STARTING_STACK_MULTIPLE);
+  assert.equal(stackForPot(1_000), 25_000);
+  assert.equal(stackForPot(10), 250);
+  assert.equal(stackForPot(0), 1, 'never a stack of nothing');
+  for (const code of ['silver', 'gold']) {
+    const { pot, startingChips } = suggestedStakes(code);
+    assert.equal(startingChips, pot * STARTING_STACK_MULTIPLE, `${code} opens off the house multiple`);
+  }
+});
+
+test('the swing of a hand is the same fraction of the stack at every table', () => {
+  // A landlord at the base x2 multiplier risks 4 pots. With a stack of 25 pots
+  // that is the same share of it whatever the table is priced at, which is the
+  // point of deriving the stack from the pot rather than fixing it.
+  const shares = LOBBIES.filter((l) => !l.rescue).map((lobby) => {
+    const stack = stackForPot(lobby.pot);
+    const settled = settleDouDiZhu({
+      lobby, result: { landlordWon: false, landlordSeat: 0, multiplier: 2 }, seat: 0, bankroll: stack,
+    });
+    return Math.abs(settled.delta) / stack;
+  });
+  for (const share of shares) assert.equal(share, shares[0]);
+  assert.ok(shares[0] > 0.1 && shares[0] < 0.2, `a base landlord hand is ${(shares[0] * 100).toFixed(0)}% of a stack`);
 });

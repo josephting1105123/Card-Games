@@ -13,10 +13,10 @@
  * the device.
  *
  * Gold and silver are the same arithmetic. What differs is the scale a table
- * opens at — silver 10 against a stack of 100, gold 1,000 against 10,000 — and
- * both open at the same ratio of stack to pot as the single-player starter
- * table, so the game plays identically whichever coin is on the felt. The host
- * can override either number.
+ * opens at: silver a pot of 10, gold a pot of 1,000. The stack that goes with
+ * either is not stored here — economy.js derives it from the pot, so every
+ * table in the app opens at the same number of pots and the game plays
+ * identically whichever coin is on the felt. The host can override both.
  *
  * Amounts are whole units. Card-game stakes are counted, not measured, and
  * integer arithmetic keeps settlement exact — no rounding drift between seats.
@@ -29,8 +29,7 @@
  * @property {string} label     the short word for a HUD pill or column heading
  * @property {string} unit      appended to a standalone amount ('' for chips)
  * @property {string} tint      CSS custom property holding its colour
- * @property {number} [suggestedPot]
- * @property {number} [suggestedStack]
+ * @property {number} [suggestedPot] the pot a room of this coin opens at
  * @property {boolean} [room]   offered to a room host
  */
 
@@ -50,7 +49,6 @@ export const CURRENCIES = [
     unit: 'silver',
     tint: 'var(--silver)',
     suggestedPot: 10,
-    suggestedStack: 100,
     room: true,
   },
   {
@@ -60,7 +58,6 @@ export const CURRENCIES = [
     unit: 'gold',
     tint: 'var(--gold-bright)',
     suggestedPot: 1_000,
-    suggestedStack: 10_000,
     room: true,
   },
 ];
@@ -124,11 +121,7 @@ export function currencyTint(code) {
   return currencyByCode(code).tint;
 }
 
-/** What a room of this coin should open with, before the host edits anything. */
-export function suggestedStakes(code) {
-  const currency = currencyByCode(code);
-  return {
-    pot: currency.suggestedPot ?? 1_000,
-    startingChips: currency.suggestedStack ?? 10_000,
-  };
+/** The pot a room of this coin opens at. economy.js turns it into a stack. */
+export function suggestedPot(code) {
+  return currencyByCode(code).suggestedPot ?? 1_000;
 }

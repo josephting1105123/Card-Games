@@ -9,8 +9,14 @@
 import { DEFAULT_RATING, updateRating } from './elo.js';
 import { STARTING_BANKROLL, applyToBankroll, isBankrupt } from './economy.js';
 
-const KEY = 'card-games.profile.v1';
-const SCHEMA = 1;
+const KEY = 'card-games.profile.v2';
+/**
+ * Bumped to 2 when a stack became 25 pots and the hand ceilings changed. A
+ * profile saved under the old economy starts from the old 10,000 and would
+ * quietly be playing a different game, so a profile from an earlier schema is
+ * dropped and dealt again rather than migrated.
+ */
+const SCHEMA = 2;
 
 let memoryFallback = null;
 

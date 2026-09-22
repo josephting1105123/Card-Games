@@ -69,20 +69,32 @@ The default ("classic") rule set, no house variations.
 
 ## Chips, tables and the loss cap
 
-You start with **10,000 chips**. Each table is priced by its pot — what each of
-the three seats puts up. Every table starts at a **×2 multiplier**, which is a
-floor: points called, bombs and springs only raise it. The landlord settles for
-twice a farmer.
+Each table is priced by its **pot** — what each of the three seats puts up — and a
+**stack is always 25 pots**. That one rule sets the opening purse (25 × the 1,000
+starter pot = **25,000 chips**) and the stack a network room deals out, so the
+swing of a hand is the same share of your money whichever table you sit at: a
+landlord at the base multiplier risks 4 pots, which is a sixth of a stack
+everywhere.
 
-| Table | Pot / person | Entry | Bots | Nominal rating |
-| --- | --- | --- | --- | --- |
-| Rescue | 400 | — | Novice | 800 |
-| Starter | 1,000 | 1,000 | Casual | 1,000 |
-| Bronze | 10,000 | 12,000 | Steady | 1,200 |
-| Silver | 50,000 | 60,000 | Sharp | 1,400 |
-| Gold | 100,000 | 120,000 | Expert | 1,600 |
-| Ruby | 500,000 | 600,000 | Master | 1,800 |
-| Legend | 1,000,000 | 1,200,000 | Grandmaster | 2,000 |
+Every table starts at a **×2 multiplier**, which is a floor: points called, bombs
+and springs only raise it. The landlord settles for twice a farmer.
+
+| Table | Pot / person | A full stack (25 pots) | Entry | Bots | Nominal rating |
+| --- | --- | --- | --- | --- | --- |
+| Rescue | 400 | 10,000 | — | Novice | 800 |
+| Starter | 1,000 | 25,000 | 1,000 | Casual | 1,000 |
+| Bronze | 10,000 | 250,000 | 12,000 | Steady | 1,200 |
+| Silver | 50,000 | 1,250,000 | 60,000 | Sharp | 1,400 |
+| Gold | 100,000 | 2,500,000 | 120,000 | Expert | 1,600 |
+| Ruby | 500,000 | 12,500,000 | 600,000 | Master | 1,800 |
+| Legend | 1,000,000 | 25,000,000 | 1,200,000 | Grandmaster | 2,000 |
+
+**Entry is a floor, not a recommendation.** It only asks that you can cover a
+pot or so, which means you may sit at a table far short of a full stack — the
+75% loss cap then bleeds a short stack back below the entry in a hand or two and
+you drop a table. That is deliberate rather than accidental, but if you would
+rather the ladder gated properly, set each `entry` to a multiple of the pot in
+`src/core/economy.js`.
 
 ### The two ceilings
 
@@ -159,7 +171,7 @@ node server/server.js
 
 It prints a `http://192.168.x.x:8787` address. Everyone opens that address, picks
 **Local multiplayer → Join room**, and types the code the host reads out. The host
-sets the pot, the starting chips, the base multiplier, the loss cap and how many
+sets the pot, the starting stack, the base multiplier, the hand ceiling and how many
 of the three seats people take — bots fill the rest.
 
 The host is authoritative: it shuffles, runs the bots, validates every move
@@ -177,8 +189,9 @@ Two things worth knowing:
   with an Elo attached. A room's money is temporary: dealt out when the room
   opens, gone when it closes, never touching anybody's purse. The host picks
   **silver** for a quick game or **gold** for a heavy one — same arithmetic, no
-  exchange rate, just the scale the table opens at (silver 10 against a stack of
-  100, gold 1,000 against 10,000, both the same ratio as the solo starter table).
+  exchange rate, just the scale the table opens at: silver a pot of 10, gold a
+  pot of 1,000. The stack follows the pot at 25× in both cases, and keeps
+  following it as the host edits the pot until they type a stack of their own.
 - **Nothing here stands for real money.** There are no real currencies in the
   app, no payments, no transfers, and no way to move a balance off the device. A
   test keeps it that way.
