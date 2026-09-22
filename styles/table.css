@@ -7,6 +7,11 @@
 .table {
   position: fixed; inset: 0; display: grid; overflow: hidden;
   grid-template-rows: auto 1fr auto;
+  /* One card width for the whole table. It lives here, not on .card, because
+     .hand reserves its row height from it and a value set on the card itself
+     would never reach an ancestor: the fan would then overflow upward and cover
+     the trick. Each landing area overrides it on its own cards. */
+  --card-w: clamp(44px, 7.4vw, 82px);
   background:
     radial-gradient(60% 50% at 50% 38%, rgba(255, 255, 255, 0.08), transparent 70%),
     radial-gradient(120% 100% at 50% 120%, rgba(0, 0, 0, 0.55), transparent 60%),
@@ -92,7 +97,7 @@
 }
 .bottom-cards__label { font-size: var(--t-label); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-tertiary); }
 .bottom-cards__row { display: flex; gap: 4px; }
-.bottom-cards .card { width: clamp(30px, 5vw, 48px); }
+.bottom-cards .card { --card-w: clamp(30px, 5vw, 48px); }
 
 /* --- the trick, one landing area per seat ---------------------------------
    Cards sit in front of whoever played them, so position answers "who" and the
@@ -109,7 +114,13 @@
 .play--self { left: 50%; top: 68%; transform: translate(-50%, -50%); }
 
 .play__cards { display: flex; justify-content: center; }
-.play__cards .card { width: clamp(34px, 5.6vw, 60px); margin-left: -24%; }
+.play__cards .card {
+  --card-w: clamp(34px, 5.6vw, 60px);
+  /* Never a percentage here: it would resolve against the row rather than the
+     card, so every extra card widens the row, widens the margin, and collapses
+     the fan into a stack. Keep the overlap proportional to the card. */
+  margin-left: calc(var(--card-w) * -0.5);
+}
 .play__cards .card:first-child { margin-left: 0; }
 
 .play.is-empty { opacity: 0; }
@@ -230,8 +241,8 @@
 .hand__inner { position: absolute; left: 50%; transform: translateX(-50%); height: 100%; }
 
 .card {
-  --card-w: clamp(44px, 7.4vw, 82px);
-  width: var(--card-w); aspect-ratio: 100 / 140; padding: 0; border: 0;
+  /* The fallback only matters for a card rendered outside .table. */
+  width: var(--card-w, clamp(44px, 7.4vw, 82px)); aspect-ratio: 100 / 140; padding: 0; border: 0;
   background: none; display: block; line-height: 0;
   /* A box-shadow on the element beats a drop-shadow on the artwork: the filter
      is evaluated per pixel of a forty-card table, the shadow is not. */
@@ -303,12 +314,12 @@
 /* Very short landscape windows (phones) get smaller cards so the fan still fits,
    and the landing areas pull in and down to clear the seats' card backs. */
 @media (orientation: landscape) and (max-height: 460px) {
-  .card { --card-w: clamp(38px, 6vw, 58px); }
+  .table { --card-w: clamp(38px, 6vw, 58px); }
   .seat { top: 4px; }
   .hud { padding-top: 5px; padding-bottom: 5px; }
   .play { min-height: clamp(44px, 9vh, 80px); }
   .play--left { left: 29%; top: 56%; }
   .play--right { left: 71%; top: 56%; }
   .play--self { top: 74%; }
-  .play__cards .card { width: clamp(30px, 4.6vw, 46px); }
+  .play__cards .card { --card-w: clamp(30px, 4.6vw, 46px); }
 }

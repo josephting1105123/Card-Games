@@ -134,6 +134,41 @@ test('the stylesheets read tokens rather than hard-coded values', () => {
   }
 });
 
+test('no card fan is spaced with a percentage margin', () => {
+  // A percentage margin resolves against the containing block's width, not the
+  // element's. On a row of overlapping cards that is self-amplifying: each extra
+  // card widens the row, which widens every negative margin, which collapses the
+  // fan into a pile. It shipped twice — once on the seats' card backs, once on
+  // the played trick. Overlap is expressed as a fraction of --card-w instead.
+  for (const file of ['styles/app.css', 'styles/table.css', 'styles/tokens.css']) {
+    const offenders = [...read(file).matchAll(/margin[a-z-]*:[^;{}]*?-[\d.]+%/g)].map((m) => m[0].trim());
+    assert.deepEqual(offenders, [], `${file} spaces something with a negative percentage margin: ${offenders.join(' | ')}`);
+  }
+});
+
+test('the card width is declared where every element that reads it can see it', () => {
+  // --card-w is a custom property, so it inherits downward and nowhere else.
+  // Declared on .card it reached the card and nothing above it, which left the
+  // hand's height calc invalid, collapsed its row to zero and floated the fan up
+  // over the trick. The table owns the value; a landing area may override it on
+  // its own cards; nothing else may declare it.
+  const css = read('styles/table.css');
+  const tableBlock = css.slice(css.indexOf('.table {'), css.indexOf('}', css.indexOf('.table {')));
+  assert.ok(/--card-w:/.test(tableBlock), '.table does not declare --card-w, so .hand cannot inherit it');
+
+  for (const [, selector, block] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/--card-w:/.test(block)) continue;
+    const rule = selector.trim().split('\n').pop().trim();
+    assert.ok(/^\.table\b/.test(rule) || /\.card\b/.test(rule),
+      `${rule} declares --card-w; the table owns it and only a card may override its own`);
+  }
+
+  // The card reads the inherited value, with a fallback for a card rendered
+  // outside the table, rather than setting a width of its own.
+  const cardBlock = css.slice(css.indexOf('\n.card {'), css.indexOf('}', css.indexOf('\n.card {')));
+  assert.ok(/width:\s*var\(--card-w,/.test(cardBlock), '.card must take its width from --card-w with a fallback');
+});
+
 test('the interface quotes the thresholds rather than hard-coding them', () => {
   // A number typed into a sentence is a number that drifts the next time the
   // economy is tuned; it happened once with the rescue threshold already.
