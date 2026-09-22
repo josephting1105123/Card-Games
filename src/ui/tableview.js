@@ -12,9 +12,9 @@ import { cardsToString, sortCards } from '../core/cards.js';
 import { SOLO_CURRENCY, currencyLabel, currencyTint, formatAmount, formatMoney } from '../core/currency.js';
 import { Phase } from '../games/doudizhu/engine.js';
 import { beats, classify, comboName, describeCombo } from '../games/doudizhu/rules.js';
-import { findHint } from '../games/doudizhu/moves.js';
+import { findHint, legalPlays } from '../games/doudizhu/moves.js';
 import { cardElement, installCardDefs } from './cardart.js';
-import { announce, clear, el } from './dom.js';
+import { announce, clear, el, wait } from './dom.js';
 
 export class TableView {
   /**
@@ -79,8 +79,9 @@ export class TableView {
     n.controls = el('div.controls', n.role, n.hintBtn, n.passBtn, n.playBtn, n.comboLabel);
     n.dock = el('div.dock', n.hand, n.controls);
 
+    n.table = el('div.table', hud, n.felt, n.dock);
     this.root.append(
-      el('div.table', hud, n.felt, n.dock),
+      n.table,
       el('div.rotate-gate',
         el('div',
           el('div.rotate-gate__icon', '↻'),
@@ -119,6 +120,11 @@ export class TableView {
       this.clearSpeech();
     }
 
+    // Worked out once per update: it decides the greying, the hand's signature
+    // and which buttons are live, and legalPlays is not free.
+    this.stuck = this.isYourPlayTurn() && !!view.trick
+      && legalPlays(view.you.hand, view.trick.combo).length === 0;
+
     this.renderSeats();
     this.renderBottom();
     this.renderPlays();
@@ -146,6 +152,56 @@ export class TableView {
     node.say.classList.add('is-on');
     clearTimeout(node._sayTimer);
     node._sayTimer = setTimeout(() => node.say.classList.remove('is-on'), 2200);
+  }
+
+  /** Animations are off under prefers-reduced-motion, or by the player's setting. */
+  animationsOn() {
+    if (this.meta.animations === false) return false;
+    return !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  }
+
+  /**
+   * Shuffle the deck and deal it out, before a hand starts.
+   *
+   * Nine cards rather than fifty-four: it reads as dealing without making
+   * anybody wait for it, and nine nodes is nothing next to the table it is
+   * standing in front of. Everything moves on transform and opacity only, so it
+   * stays on the compositor and costs no layout.
+   */
+  async dealIn() {
+    if (!this.animationsOn()) return;
+    const targets = {
+      left: { dx: '-32vw', dy: '-8vh', dr: '-14deg' },
+      right: { dx: '32vw', dy: '-8vh', dr: '14deg' },
+      self: { dx: '0vw', dy: '26vh', dr: '4deg' },
+    };
+    const dealer = el('div.dealer');
+    for (let i = 0; i < 9; i++) {
+      const card = cardElement(null, { faceDown: true });
+      card.classList.add('dealer__card');
+      const to = targets[['left', 'right', 'self'][i % 3]];
+      card.style.setProperty('--i', String(i));
+      card.style.setProperty('--sx', i % 2 ? '26px' : '-26px');
+      card.style.setProperty('--sr', i % 2 ? '7deg' : '-7deg');
+      card.style.setProperty('--dx', to.dx);
+      card.style.setProperty('--dy', to.dy);
+      card.style.setProperty('--dr', to.dr);
+      dealer.append(card);
+    }
+    this.nodes.felt.append(dealer);
+    this.nodes.table.classList.add('is-dealing');
+    this.dealer = dealer;
+
+    dealer.classList.add('is-shuffling');
+    await wait(560);
+    if (!dealer.isConnected) return;
+    dealer.classList.remove('is-shuffling');
+    dealer.classList.add('is-flying');
+    await wait(720);
+
+    dealer.remove();
+    this.dealer = null;
+    this.nodes.table.classList.remove('is-dealing');
   }
 
   clearSpeech() {
@@ -184,14 +240,20 @@ export class TableView {
       node.role.textContent = view.landlord < 0 ? '' : isLandlord ? 'Landlord' : 'Farmer';
       const onTurn = view.phase === Phase.BIDDING ? view.bidding.turn : view.turn;
       node.plate.classList.toggle('is-turn', seat === onTurn && view.phase !== Phase.FINISHED);
-      clear(node.backs);
+
+      // The backs are identical, so add or remove the difference rather than
+      // tearing down a dozen of them on every update.
       const shown = Math.min(player.cards, 12);
-      for (let i = 0; i < shown; i++) node.backs.append(cardElement(null, { faceDown: true }));
+      while (node.backs.childElementCount > shown) node.backs.lastElementChild.remove();
+      while (node.backs.childElementCount < shown) node.backs.append(cardElement(null, { faceDown: true }));
     }
   }
 
   renderBottom() {
     const view = this.view;
+    const signature = `${view.bottomRevealed}:${(view.bottom ?? []).map((c) => c?.id ?? 'x').join(',')}`;
+    if (signature === this.bottomSignature) return;
+    this.bottomSignature = signature;
     clear(this.nodes.bottomRow);
     for (const card of view.bottom ?? []) {
       this.nodes.bottomRow.append(cardElement(card, { faceDown: !card }));
@@ -277,9 +339,14 @@ export class TableView {
     const view = this.view;
     const panel = this.nodes.bidPanel;
     if (view.phase !== Phase.BIDDING) {
+      if (!panel.hidden) clear(panel);
       panel.hidden = true;
+      this.bidSignature = null;
       return;
     }
+    const signature = `${view.bidding.turn}:${view.bidding.highest}:${view.bidding.calls.length}`;
+    if (signature === this.bidSignature) return;
+    this.bidSignature = signature;
     const yours = view.bidding.turn === view.seat;
     clear(panel);
     panel.hidden = false;
@@ -305,7 +372,21 @@ export class TableView {
   renderHand() {
     const view = this.view;
     const hand = sortCards(view.you.hand);
+    // Rebuilding twenty cards costs real time on a phone, and most updates do
+    // not touch the hand at all: a bot playing a card used to re-make the whole
+    // fan. Skip when nothing that affects it has moved.
+    const signature = [
+      hand.map((c) => c.id).join(','),
+      [...this.selected].sort().join(','),
+      [...this.hinted].sort().join(','),
+      this.stuck ? 'stuck' : '',
+      this.root.clientWidth,
+    ].join('|');
+    if (signature === this.handSignature) return;
+    this.handSignature = signature;
+
     const inner = this.nodes.handInner;
+    this.nodes.hand.classList.toggle('is-stuck', !!this.stuck);
     clear(inner);
     const width = this.cardWidth();
     const available = Math.max(240, this.root.clientWidth - 40);
@@ -320,6 +401,7 @@ export class TableView {
       node.style.setProperty('--i', String(index));
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.classList.toggle('is-hinted', this.hinted.has(card.id));
+      if (this.stuck) node.disabled = true;
       node.setAttribute('aria-pressed', this.selected.has(card.id) ? 'true' : 'false');
       node.addEventListener('click', () => this.toggle(card.id));
       inner.append(node);
@@ -334,7 +416,7 @@ export class TableView {
   }
 
   toggle(cardId) {
-    if (!this.isYourPlayTurn()) return;
+    if (!this.isYourPlayTurn() || this.stuck) return;
     if (this.selected.has(cardId)) this.selected.delete(cardId);
     else this.selected.add(cardId);
     this.hinted.clear();
@@ -369,10 +451,13 @@ export class TableView {
     n.role.textContent = view.landlord < 0
       ? 'Bidding'
       : view.you.role === 'landlord' ? 'You are the landlord' : 'You are a farmer';
-    n.playBtn.disabled = !yours || !legal;
+    // Nothing in the hand answers what is on the table: the fan greys out and
+    // Pass is the only thing left to press, which says it without a sentence.
+    n.playBtn.disabled = !yours || !legal || this.stuck;
     n.passBtn.disabled = !yours || !current;
-    n.hintBtn.disabled = !yours;
-    n.comboLabel.textContent = !cards.length
+    n.hintBtn.disabled = !yours || this.stuck;
+    n.passBtn.classList.toggle('btn--primary', !!this.stuck);
+    n.comboLabel.textContent = this.stuck || !cards.length
       ? ''
       : legal ? describeCombo(combo) : combo ? `${describeCombo(combo)} — does not beat it` : 'Not a combination';
   }
@@ -415,6 +500,8 @@ export class TableView {
   }
 
   destroy() {
+    this.dealer?.remove();
+    this.dealer = null;
     clear(this.root);
   }
 }
