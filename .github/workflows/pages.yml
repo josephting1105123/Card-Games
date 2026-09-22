@@ -28,10 +28,14 @@ jobs:
       # The site is plain ES modules, so there is nothing to build. The tests
       # still gate the deploy.
       - run: npm test
-      # No `enablement: true` here: creating a Pages site needs more than the
-      # default GITHUB_TOKEN has ("Resource not accessible by integration"), so
-      # the flag only adds a red herring to the log. Pages has to be turned on
-      # once by hand, in Settings -> Pages -> Source -> GitHub Actions.
+      # No `enablement: true` here. Creating a Pages site needs more than the
+      # default GITHUB_TOKEN has: the call comes back "Resource not accessible
+      # by integration". Tested on this repository both private and public, so
+      # it is a token scope limit rather than anything about visibility, and the
+      # flag only adds a second red herring to an already failing log.
+      # Pages is turned on once by hand, in
+      # Settings -> Pages -> Source -> GitHub Actions, and every push to main
+      # deploys by itself after that.
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
