@@ -28,6 +28,8 @@ jobs:
       # The site is plain ES modules, so there is nothing to build. The tests
       # still gate the deploy.
       - run: npm test
+      # A stale stamp would deploy an app that returning visitors never see.
+      - run: node tools/stamp-sw.mjs --check
       # No `enablement: true` here. Creating a Pages site needs more than the
       # default GITHUB_TOKEN has: the call comes back "Resource not accessible
       # by integration". Tested on this repository both private and public, so
