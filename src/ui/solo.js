@@ -7,7 +7,7 @@
  */
 
 import { SOLO_CURRENCY } from '../core/currency.js';
-import { formatChips, lobbyAccess, settleDouDiZhu } from '../core/economy.js';
+import { RESCUE_EXIT, formatChips, lobbyAccess, settleDouDiZhu } from '../core/economy.js';
 import { ratingTitle } from '../core/elo.js';
 import { gameStats, recordResult } from '../core/profile.js';
 import { makeRng, randomSeed } from '../core/rng.js';
@@ -191,7 +191,7 @@ export class SoloGame {
       lines.splice(2, 0, `Loss capped at <span>${formatChips(Math.abs(settlement.delta))}</span> (gross ${formatChips(Math.abs(settlement.gross))})`);
     }
     if (bankrollChange.wentBankrupt) {
-      lines.push('<span>Bankrupt.</span> You have been moved to the rescue table: 400 pot, no bankruptcy, until you hold 2,000.');
+      lines.push(`<span>Bankrupt.</span> You have been moved to the rescue table: 400 pot, no bankruptcy, until you hold <span>${formatChips(RESCUE_EXIT)}</span>.`);
     }
     if (bankrollChange.leftRescue) {
       lines.push('<span>Back in the game.</span> The normal tables are open again.');

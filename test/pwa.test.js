@@ -131,3 +131,16 @@ test('the stylesheets read tokens rather than hard-coded values', () => {
     assert.equal(/@font-face/.test(css), false, `${file} declares a font face; that belongs in tokens.css`);
   }
 });
+
+test('the interface quotes the thresholds rather than hard-coding them', () => {
+  // A number typed into a sentence is a number that drifts the next time the
+  // economy is tuned; it happened once with the rescue threshold already.
+  const sources = ['src/ui/screens.js', 'src/ui/solo.js', 'src/ui/lan.js'];
+  const thresholds = [/\b25,?000\b/, /\b6,?000\b/, /\b2,?000 ?\./];
+  for (const file of sources) {
+    const source = read(file).replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const pattern of thresholds) {
+      assert.equal(pattern.test(source), false, `${file} writes a threshold out in full: ${pattern}`);
+    }
+  }
+});

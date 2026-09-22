@@ -69,32 +69,43 @@ The default ("classic") rule set, no house variations.
 
 ## Chips, tables and the loss cap
 
-Each table is priced by its **pot** — what each of the three seats puts up — and a
-**stack is always 25 pots**. That one rule sets the opening purse (25 × the 1,000
-starter pot = **25,000 chips**) and the stack a network room deals out, so the
-swing of a hand is the same share of your money whichever table you sit at: a
-landlord at the base multiplier risks 4 pots, which is a sixth of a stack
-everywhere.
+Each table is priced by its **pot** — what each of the three seats puts up — and
+every threshold in the game is counted in pots rather than set by hand, so the
+ladder cannot drift out of step with itself:
+
+| | In pots | At the starter table |
+| --- | --- | --- |
+| A stack, and the opening purse | 25 | 25,000 |
+| Enough to sit down | 6 | 6,000 |
+| Leaving the rescue table | 6 | 6,000 |
+| Bankrupt below | 1 | 1,000 |
+
+The swing of a hand is therefore the same share of your money whichever table you
+sit at: a landlord at the base multiplier risks 4 pots, which is a sixth of a
+stack everywhere.
 
 Every table starts at a **×2 multiplier**, which is a floor: points called, bombs
 and springs only raise it. The landlord settles for twice a farmer.
 
-| Table | Pot / person | A full stack (25 pots) | Entry | Bots | Nominal rating |
+| Table | Pot / person | Entry (6 pots) | A full stack (25 pots) | Bots | Nominal rating |
 | --- | --- | --- | --- | --- | --- |
-| Rescue | 400 | 10,000 | — | Novice | 800 |
-| Starter | 1,000 | 25,000 | 1,000 | Casual | 1,000 |
-| Bronze | 10,000 | 250,000 | 12,000 | Steady | 1,200 |
-| Silver | 50,000 | 1,250,000 | 60,000 | Sharp | 1,400 |
-| Gold | 100,000 | 2,500,000 | 120,000 | Expert | 1,600 |
-| Ruby | 500,000 | 12,500,000 | 600,000 | Master | 1,800 |
-| Legend | 1,000,000 | 25,000,000 | 1,200,000 | Grandmaster | 2,000 |
+| Rescue | 400 | — | 10,000 | Novice | 800 |
+| Starter | 1,000 | 6,000 | 25,000 | Casual | 1,000 |
+| Bronze | 10,000 | 60,000 | 250,000 | Steady | 1,200 |
+| Silver | 50,000 | 300,000 | 1,250,000 | Sharp | 1,400 |
+| Gold | 100,000 | 600,000 | 2,500,000 | Expert | 1,600 |
+| Ruby | 500,000 | 3,000,000 | 12,500,000 | Master | 1,800 |
+| Legend | 1,000,000 | 6,000,000 | 25,000,000 | Grandmaster | 2,000 |
 
-**Entry is a floor, not a recommendation.** It only asks that you can cover a
-pot or so, which means you may sit at a table far short of a full stack — the
-75% loss cap then bleeds a short stack back below the entry in a hand or two and
-you drop a table. That is deliberate rather than accidental, but if you would
-rather the ladder gated properly, set each `entry` to a multiple of the pot in
-`src/core/economy.js`.
+**Why six pots to sit down.** It is the smallest stack at which an ordinary hand
+is settled in full. A landlord at the base ×2 multiplier risks 4 pots, and the
+bankroll cap allows 75% of the stack, so at five pots or fewer (0.75 × 5 = 3.75)
+the emergency cap fires on a perfectly normal loss. A table you cannot lose an
+ordinary hand at is a table you should not be sitting at, and the cap should be
+for disasters rather than for Tuesdays.
+
+So a fresh purse of 25,000 opens the starter table and nothing else. Bronze wants
+60,000, which is a first milestone rather than a free gift.
 
 ### The two ceilings
 
@@ -116,9 +127,16 @@ have afforded to lose is the one worth having, so a landlord at ×16 collects al
 32 pots whatever their balance.
 
 **Bankruptcy is still reachable.** Two bad landlord hands from a fresh stack will
-do it. Below 1,000 chips you move to the **rescue table**: a 400 pot against the
-weakest bot, where a loss cannot take your balance below zero, until you hold
-2,000 again. Then the normal rooms reopen.
+do it. Below **1,000** — one pot at the cheapest table, so you can no longer play
+at all — you move to the **rescue table**: a 400 pot against the weakest bot,
+where a loss cannot take your balance below zero.
+
+You leave it at **6,000**, which is not a round number picked for the feel of it:
+it is exactly the starter table's entry. Holding somebody in rescue past the
+point a normal table will have them is pointless, and releasing them before it
+only sends them back — the earlier threshold of 2,000 handed a player two pots,
+which one ordinary landlord hand took most of. Six pots is about a dozen net
+hands at the 400 pot: a stint rather than a sentence.
 
 ## How the bots scale
 
