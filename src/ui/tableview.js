@@ -9,7 +9,7 @@
  */
 
 import { cardsToString, sortCards } from '../core/cards.js';
-import { SOLO_CURRENCY, currencyLabel, formatMoney } from '../core/currency.js';
+import { SOLO_CURRENCY, currencyLabel, currencyTint, formatAmount, formatMoney } from '../core/currency.js';
 import { Phase } from '../games/doudizhu/engine.js';
 import { beats, classify, describeCombo } from '../games/doudizhu/rules.js';
 import { findHint } from '../games/doudizhu/moves.js';
@@ -43,8 +43,10 @@ export class TableView {
     n.hudTurn = el('span.hud__pill', el('small', 'On turn'), el('b', { id: 'hud-turn' }, '—'));
     n.hudMult = el('span.hud__pill', el('small', 'Multiplier'), el('b', '×2'));
     n.hudPot = el('span.hud__pill', el('small', 'Pot'), el('b', this.meta.potLabel));
-    n.hudPurse = el('span.hud__pill', el('small', currencyLabel(this.currency)),
-      el('b', formatMoney(this.meta.bankroll ?? 0, this.currency)));
+    // The pill already names the coin, so the amount does not repeat it.
+    n.hudPurse = el('span.hud__pill', { style: `--pill-tint:${currencyTint(this.currency)}` },
+      el('small', currencyLabel(this.currency)),
+      el('b', formatAmount(this.meta.bankroll ?? 0)));
 
     const hud = el('div.hud',
       el('button.back-link', { type: 'button', onclick: () => this.handlers.onLeave?.() }, '← Leave table'),
@@ -116,7 +118,7 @@ export class TableView {
 
   setBankroll(value) {
     this.meta.bankroll = value;
-    this.nodes.hudPurse.querySelector('b').textContent = formatMoney(value, this.currency);
+    this.nodes.hudPurse.querySelector('b').textContent = formatAmount(value);
   }
 
   /** Amounts shown at this table, in this table's currency. */

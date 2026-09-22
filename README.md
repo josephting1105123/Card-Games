@@ -8,7 +8,7 @@ as-is, which is why it installs straight from GitHub Pages and why the local
 network host is a single `node` command with nothing to install first.
 
 ```
-npm test                  # 78 tests, about 1.5 seconds
+npm test                  # 81 tests, about 1.5 seconds
 node server/server.js     # host for local network play, also serves the app
 ```
 
@@ -66,23 +66,37 @@ the three seats puts up. Every table starts at a **×2 multiplier**, which is a
 floor: points called, bombs and springs only raise it. The landlord settles for
 twice a farmer.
 
-| Table | Pot / person | Entry | Bots | Nominal rating | Max loss per hand |
-| --- | --- | --- | --- | --- | --- |
-| Rescue | 400 | — | Novice | 800 | your balance (no bankruptcy) |
-| Starter | 1,000 | 1,000 | Casual | 1,000 | 6 × pot |
-| Bronze | 10,000 | 12,000 | Steady | 1,200 | 4 × pot |
-| Silver | 50,000 | 60,000 | Sharp | 1,400 | 3 × pot |
-| Gold | 100,000 | 120,000 | Expert | 1,600 | 3 × pot |
-| Ruby | 500,000 | 600,000 | Master | 1,800 | 2.5 × pot |
-| Legend | 1,000,000 | 1,200,000 | Grandmaster | 2,000 | 2 × pot |
+| Table | Pot / person | Entry | Bots | Nominal rating |
+| --- | --- | --- | --- | --- |
+| Rescue | 400 | — | Novice | 800 |
+| Starter | 1,000 | 1,000 | Casual | 1,000 |
+| Bronze | 10,000 | 12,000 | Steady | 1,200 |
+| Silver | 50,000 | 60,000 | Sharp | 1,400 |
+| Gold | 100,000 | 120,000 | Expert | 1,600 |
+| Ruby | 500,000 | 600,000 | Master | 1,800 |
+| Legend | 1,000,000 | 1,200,000 | Grandmaster | 2,000 |
 
-**Losses are capped twice**: by the table (pot × its cap factor) and by your
-bankroll — no single hand can take more than 60% of what you hold. That second cap
-is the one that makes the big rooms playable: walk into the 1M table with a bad
-hand and you cannot be wiped out in one deal. Winnings are never capped.
+### The two ceilings
 
-**Bankruptcy is still reachable**, because a run of capped losses grinds you down.
-Below 1,000 chips you are moved to the **rescue table**: a 400 pot against the
+**No single hand moves more than 50 pots**, won or lost. The landlord risks twice
+a farmer, so exposure is `2 × multiplier` pots and that ceiling only bites past a
+multiplier of 25 — in practice ×32 or more, which is three bombs and a spring on a
+three-point call. It is a backstop against a runaway chain, not a routine clamp.
+
+That distinction is the whole point. An earlier version capped at 6 pots, which
+bites above a multiplier of **4**: every bomb past the first paid nothing, so the
+doubling mechanic was decoration. A ceiling that binds on ordinary hands makes
+winning flat and losing riskless in the same stroke.
+
+**Losses are held down a second time, by bankroll**: never more than 75% of what
+you hold. One disastrous hand cannot wipe you out, which is what makes the big
+rooms playable — walk into the 1M table with a bad hand and a quarter of your
+stack always survives. Winnings are *not* held down that way. A win you could not
+have afforded to lose is the one worth having, so a landlord at ×16 collects all
+32 pots whatever their balance.
+
+**Bankruptcy is still reachable.** Two bad landlord hands from a fresh stack will
+do it. Below 1,000 chips you move to the **rescue table**: a 400 pot against the
 weakest bot, where a loss cannot take your balance below zero, until you hold
 2,000 again. Then the normal rooms reopen.
 
@@ -151,14 +165,15 @@ Two things worth knowing:
   loaded from GitHub Pages over HTTPS is not allowed by the browser to open a
   plain `ws://` connection to a private address, so LAN play needs everyone on the
   host's own address. The app says this rather than failing mysteriously.
-- **A room keeps its own score, in its own currency.** Single player is always in
-  Chips; a room defaults to ringgit and the host can pick from ringgit, Singapore
-  and US dollars, pounds, euro, yuan, Taiwan dollars, points or matchsticks. The
-  minimum pot is 1, so a room can be priced at RM 5 rather than five thousand of
-  something. Room balances never touch your single-player purse or your Elo.
-- **The currency is a label.** There are no payments, no transfers and no way to
-  move a balance off the device. Choosing "RM" writes RM in front of a number,
-  exactly like writing it on a scorepad.
+- **A room deals its own coins.** Single player is a persistent purse of Chips
+  with an Elo attached. A room's money is temporary: dealt out when the room
+  opens, gone when it closes, never touching anybody's purse. The host picks
+  **silver** for a quick game or **gold** for a heavy one — same arithmetic, no
+  exchange rate, just the scale the table opens at (silver 10 against a stack of
+  100, gold 1,000 against 10,000, both the same ratio as the solo starter table).
+- **Nothing here stands for real money.** There are no real currencies in the
+  app, no payments, no transfers, and no way to move a balance off the device. A
+  test keeps it that way.
 
 The WebSocket server is implemented here (`server/ws.js`, ~230 lines) rather than
 pulled from npm, so hosting needs no install and there is no dependency tree to
@@ -170,7 +185,8 @@ audit.
 index.html              app shell
 sw.js                   service worker: precache everything, run offline
 manifest.webmanifest    PWA manifest (installs landscape)
-src/core/               cards, seeded RNG, Elo, chips and lobbies, currency, profile
+styles/tokens.css       palette, type scale, motion, elevation — the only :root
+src/core/               cards, seeded RNG, Elo, chips and lobbies, coins, profile
 src/games/doudizhu/     rules, move generation, engine, bot, match runner
 src/ui/                 card art, table view, screens, solo controller
 src/net/                room codes, wire protocol, LAN client
@@ -192,10 +208,18 @@ shapes live in one hidden symbol sheet that every card references, so a
 twenty-card fan is cheap to build. The icons are drawn pixel by pixel and written
 as PNG by `tools/make-icons.mjs` with nothing but `node:zlib`.
 
-### The type
+### The type and the tokens
 
 Everything is set in **EB Garamond** — menus, table, buttons and the card indices
 alike. Nothing in the app uses a sans face, and a test enforces that.
+
+The CSS follows the structure of the OffBridge site: `styles/tokens.css` owns the
+palette, the fluid type scale, the motion curves, the radius and spacing steps and
+the z-index order, and it is the only sheet with a `:root` block or an
+`@font-face`. `app.css` and `table.css` read those variables and nothing else,
+which a test also checks. The palette is this app's own — green baize, gold rule,
+claret — and there is no light theme: a card table lit from above does not have
+one.
 
 The font is committed to the repository rather than linked from a font CDN
 (`assets/fonts/`, SIL Open Font License, see the README there). A `<link>` to
@@ -220,11 +244,12 @@ node tools/sim.mjs 3000      # bot ladder report
 
 Covered: every combination type and rejection, the beats relation, move
 generation, bidding, turn order, springs, deck conservation over 100 bot games,
-the loss caps and the bankruptcy cycle, Elo, currency formatting and the room
-default, room codes, the WebSocket handshake and framing, a full two-client LAN
+the two ceilings and the bankruptcy cycle, Elo, coin formatting and the fact that
+no real currency appears in the app, room codes, the WebSocket handshake and framing, a full two-client LAN
 hand over a real socket, chip conservation when caps bite, a client vanishing
 without a close frame, the offline manifest, and that no module imports a Node
-built-in into the browser or sets anything in a sans face.
+built-in into the browser, sets anything in a sans face, or defines a design
+token outside `tokens.css`.
 
 ## Licence
 

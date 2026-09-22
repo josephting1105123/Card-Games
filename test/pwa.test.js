@@ -39,17 +39,17 @@ test('the font files are real woff2 and are precached', () => {
     const buf = readFileSync(join(ROOT, file));
     assert.equal(buf.subarray(0, 4).toString('ascii'), 'wOF2', `${file} is not a woff2`);
   }
-  const css = read('styles/app.css');
+  const css = read('styles/tokens.css');
   for (const file of fonts) {
     assert.ok(css.includes(file.replace('assets/', '../assets/')), `no @font-face references ${file}`);
   }
-  assert.equal(/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(css + read('index.html')), false,
+  assert.equal(/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(css + read('index.html') + read('styles/app.css')), false,
     'the app must not fetch its font from a CDN at run time');
   assert.doesNotThrow(() => statSync(join(ROOT, 'assets/fonts/OFL.txt')), 'the font licence must ship with the font');
 });
 
 test('nothing is set in a sans face', () => {
-  for (const file of ['styles/app.css', 'styles/table.css']) {
+  for (const file of ['styles/tokens.css', 'styles/app.css', 'styles/table.css']) {
     const css = read(file);
     assert.equal(/sans-serif/.test(css), false, `${file} still falls back to a sans face`);
   }
@@ -114,5 +114,20 @@ test('the shared game code is free of DOM access', () => {
     'src/core/cards.js', 'src/core/economy.js', 'src/core/elo.js', 'src/core/rng.js']) {
     const source = read(file);
     assert.equal(/\bdocument\.|\bwindow\./.test(source), false, `${file} touches the DOM`);
+  }
+});
+
+test('the stylesheets read tokens rather than hard-coded values', () => {
+  // tokens.css owns the palette, the type scale and the motion curves; a colour
+  // or a duration that drifts into a component sheet is how a design system
+  // stops being one.
+  const tokens = read('styles/tokens.css');
+  for (const name of ['--font', '--t-body', '--dur-med', '--ease', '--r-lg', '--shadow-8', '--gold']) {
+    assert.ok(tokens.includes(`${name}:`), `tokens.css does not define ${name}`);
+  }
+  for (const file of ['styles/app.css', 'styles/table.css']) {
+    const css = read(file);
+    assert.equal(/^\s*:root\s*\{/m.test(css), false, `${file} redefines tokens; they belong in tokens.css`);
+    assert.equal(/@font-face/.test(css), false, `${file} declares a font face; that belongs in tokens.css`);
   }
 });

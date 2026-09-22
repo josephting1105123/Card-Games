@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BANKRUPT_THRESHOLD, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT, STARTING_BANKROLL,
-  applyToBankroll, formatChips, isBankrupt, lobbyAccess, lobbyById, lossCap, settleDouDiZhu,
+  BANKRUPT_THRESHOLD, HAND_CAP_FACTOR, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT, STARTING_BANKROLL,
+  applyToBankroll, formatChips, handCap, isBankrupt, lobbyAccess, lobbyById, lossCap, settleDouDiZhu,
 } from '../src/core/economy.js';
 import { DEFAULT_RATING, expectedScore, kFactor, updateRating } from '../src/core/elo.js';
 
@@ -43,24 +43,50 @@ test('the base multiplier acts as a floor', () => {
   assert.equal(settled.delta, -2_000);
 });
 
-test('winnings are never capped', () => {
+test('a win pays in full, however much more it is than the player holds', () => {
+  // A landlord at x16 collects 32 pots. Nothing about the player's balance
+  // limits that: a win you could not have afforded to lose is the point.
   const result = { landlordWon: true, landlordSeat: 0, multiplier: 16 };
   const settled = settleDouDiZhu({ lobby: starter, result, seat: 0, bankroll: 1_000 });
   assert.equal(settled.delta, 32_000);
   assert.equal(settled.capped, false);
 });
 
-test('losses are capped by the lobby and by the bankroll', () => {
+test('the ceiling on one hand is high enough that bombs still pay', () => {
+  // Landlord exposure is 2 x multiplier pots, so a 50-pot ceiling only bites
+  // above a multiplier of 32. Every ordinary bomb hand pays in full.
+  assert.equal(HAND_CAP_FACTOR, 50);
+  assert.equal(handCap(starter), 50_000);
+  for (const multiplier of [2, 4, 8, 12, 24]) {
+    const settled = settleDouDiZhu({
+      lobby: starter, result: { landlordWon: true, landlordSeat: 0, multiplier }, seat: 0, bankroll: 10_000,
+    });
+    assert.equal(settled.capped, false, `a x${multiplier} win should pay in full`);
+    assert.equal(settled.delta, 1_000 * multiplier * 2);
+  }
+  const absurd = settleDouDiZhu({
+    lobby: starter, result: { landlordWon: true, landlordSeat: 0, multiplier: 64 }, seat: 0, bankroll: 10_000,
+  });
+  assert.equal(absurd.delta, 50_000, 'and a runaway chain stops at the ceiling');
+  assert.equal(absurd.capped, true);
+});
+
+test('every table shares the same ceiling', () => {
+  for (const lobby of LOBBIES) assert.equal(lobby.capFactor, HAND_CAP_FACTOR);
+});
+
+test('losses are capped by the table ceiling and by the bankroll', () => {
   const result = { landlordWon: false, landlordSeat: 0, multiplier: 16 };
-  // Lobby cap: 1,000 pot x capFactor 6 = 6,000. Bankroll cap at 60% of 100,000
-  // is 60,000, so the lobby cap binds.
+  // 32 pots is 32,000, under the 50,000 ceiling, and 75% of 100,000 is 75,000,
+  // so a rich player simply pays the lot.
   const rich = settleDouDiZhu({ lobby: starter, result, seat: 0, bankroll: 100_000 });
   assert.equal(rich.gross, -32_000);
-  assert.equal(rich.delta, -6_000);
-  assert.equal(rich.capped, true);
-  // Bankroll cap: 60% of 5,000 is 3,000, which now binds instead.
+  assert.equal(rich.delta, -32_000);
+  assert.equal(rich.capped, false);
+  // 75% of 5,000 is 3,750, which does bind.
   const poor = settleDouDiZhu({ lobby: starter, result, seat: 0, bankroll: 5_000 });
-  assert.equal(poor.delta, -3_000);
+  assert.equal(poor.delta, -3_750);
+  assert.equal(poor.capped, true);
 });
 
 test('one hand can never wipe out a bankroll, even at the 1M table', () => {
@@ -69,7 +95,8 @@ test('one hand can never wipe out a bankroll, even at the 1M table', () => {
   const settled = settleDouDiZhu({ lobby: legend, result, seat: 0, bankroll });
   assert.ok(settled.delta < 0);
   bankroll += settled.delta;
-  assert.ok(bankroll >= 1_500_000 * (1 - MAX_LOSS_FRACTION), 'at least 40% survives any single hand');
+  assert.ok(bankroll >= 1_500_000 * (1 - MAX_LOSS_FRACTION), 'a quarter of the stack survives any single hand');
+  assert.equal(MAX_LOSS_FRACTION, 0.75);
 });
 
 test('repeated capped losses still reach bankruptcy', () => {
@@ -85,7 +112,8 @@ test('repeated capped losses still reach bankruptcy', () => {
     hands += 1;
   }
   assert.equal(rescueMode, true, 'a losing run does eventually bankrupt you');
-  assert.ok(hands > 2 && hands < 40, `took ${hands} hands, which should be a run and not one hand`);
+  assert.ok(hands >= 2, 'but never in a single hand');
+  assert.ok(hands < 40, `took ${hands} hands, which should be a run and not a grind`);
 });
 
 test('the rescue table cannot take you below zero and releases you at 2,000', () => {
@@ -121,7 +149,9 @@ test('access: the rescue table is the only door when bankrupt', () => {
 
 test('lossCap at the rescue table is simply the balance', () => {
   assert.equal(lossCap(rescue, 750, true), 750);
-  assert.equal(lossCap(starter, 10_000, false), Math.min(6_000, 6_000));
+  // At a fresh stack the bankroll share binds long before the 50-pot ceiling.
+  assert.equal(lossCap(starter, 10_000, false), 7_500);
+  assert.equal(lossCap(starter, 1_000_000, false), 50_000);
 });
 
 test('formatChips', () => {

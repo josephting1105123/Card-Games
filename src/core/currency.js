@@ -1,49 +1,76 @@
 /**
- * What the chips are called.
+ * What the money at a table is called.
  *
- * Single player is always in "Chips": one closed play-money economy with its own
- * Elo, and renaming it would only confuse the purse in the corner. A local
- * network room is the opposite case — the people at the table are in the same
- * house and usually keeping score in something they already have a word for — so
- * a room picks its own currency and defaults to one that is plainly not the
- * single-player purse.
+ * Single player is one closed play-money economy: a persistent purse of Chips
+ * with an Elo rating attached to it.
  *
- * These are labels and nothing more. The app has no payments, no transfers and
- * no way to move a balance off the device; picking "MYR" writes RM in front of a
- * number, exactly like writing it on a scorepad.
+ * A local network room is a different thing entirely. Its money is temporary
+ * and belongs to the room — dealt out by the host when the room opens, gone when
+ * the room closes, never touching anybody's purse. So a room keeps score in
+ * coins, and the host picks which: silver for a quick game, gold for a heavy
+ * one. There is deliberately no real currency here and no exchange rate
+ * anywhere: nothing in this app represents money, and nothing can be moved off
+ * the device.
  *
- * Amounts are whole units everywhere. Card-game stakes are counted, not
- * measured, and integer arithmetic keeps settlement exact — no rounding drift
- * between the three seats.
+ * Gold and silver are the same arithmetic. What differs is the scale a table
+ * opens at — silver 10 against a stack of 100, gold 1,000 against 10,000 — and
+ * both open at the same ratio of stack to pot as the single-player starter
+ * table, so the game plays identically whichever coin is on the felt. The host
+ * can override either number.
+ *
+ * Amounts are whole units. Card-game stakes are counted, not measured, and
+ * integer arithmetic keeps settlement exact — no rounding drift between seats.
  */
 
 /**
  * @typedef {object} Currency
  * @property {string} code
- * @property {string} name
- * @property {string} symbol   '' when the amount stands on its own
- * @property {'prefix'|'suffix'} place
- * @property {string} [gap]    separator between symbol and amount
+ * @property {string} name      as it appears in the picker
+ * @property {string} label     the short word for a HUD pill or column heading
+ * @property {string} unit      appended to a standalone amount ('' for chips)
+ * @property {string} tint      CSS custom property holding its colour
+ * @property {number} [suggestedPot]
+ * @property {number} [suggestedStack]
+ * @property {boolean} [room]   offered to a room host
  */
 
 /** @type {Currency[]} */
 export const CURRENCIES = [
-  { code: 'chips', name: 'Chips', symbol: '', place: 'suffix' },
-  { code: 'myr', name: 'Ringgit (RM)', symbol: 'RM', place: 'prefix', gap: ' ' },
-  { code: 'sgd', name: 'Singapore dollar (S$)', symbol: 'S$', place: 'prefix' },
-  { code: 'usd', name: 'US dollar ($)', symbol: '$', place: 'prefix' },
-  { code: 'gbp', name: 'Pound (£)', symbol: '£', place: 'prefix' },
-  { code: 'eur', name: 'Euro (€)', symbol: '€', place: 'prefix' },
-  { code: 'cny', name: 'Yuan (¥)', symbol: '¥', place: 'prefix' },
-  { code: 'twd', name: 'Taiwan dollar (NT$)', symbol: 'NT$', place: 'prefix' },
-  { code: 'points', name: 'Points', symbol: 'pts', place: 'suffix', gap: ' ' },
-  { code: 'matchsticks', name: 'Matchsticks', symbol: 'sticks', place: 'suffix', gap: ' ' },
+  {
+    code: 'chips',
+    name: 'Chips',
+    label: 'Chips',
+    unit: '',
+    tint: 'var(--gold)',
+  },
+  {
+    code: 'silver',
+    name: 'Silver coins',
+    label: 'Silver',
+    unit: 'silver',
+    tint: 'var(--silver)',
+    suggestedPot: 10,
+    suggestedStack: 100,
+    room: true,
+  },
+  {
+    code: 'gold',
+    name: 'Gold coins',
+    label: 'Gold',
+    unit: 'gold',
+    tint: 'var(--gold-bright)',
+    suggestedPot: 1_000,
+    suggestedStack: 10_000,
+    room: true,
+  },
 ];
 
-/** Single player always uses this. */
+/** The coins a room host may choose between. */
+export const ROOM_CURRENCIES = CURRENCIES.filter((c) => c.room);
+/** Single player is always this. */
 export const SOLO_CURRENCY = 'chips';
-/** A new room starts here instead, so room money never reads as your purse. */
-export const DEFAULT_ROOM_CURRENCY = 'myr';
+/** A new room opens on silver: small numbers, quick games. */
+export const DEFAULT_ROOM_CURRENCY = 'silver';
 
 const BY_CODE = new Map(CURRENCIES.map((c) => [c.code, c]));
 
@@ -53,6 +80,11 @@ export function currencyByCode(code) {
 
 export function isCurrency(code) {
   return BY_CODE.has(String(code ?? '').toLowerCase());
+}
+
+/** Only a coin may be a room's currency; the solo purse is not on offer. */
+export function isRoomCurrency(code) {
+  return ROOM_CURRENCIES.some((c) => c.code === String(code ?? '').toLowerCase());
 }
 
 /** 1234567 -> "1,234,567"; compact: 1_500_000 -> "1.5M", 50_000 -> "50K". */
@@ -71,22 +103,32 @@ function trim(x) {
 }
 
 /**
+ * An amount with its unit, for anywhere the coin is not already named nearby.
  * @param {number} value
  * @param {string} [code]
  * @param {boolean} [compact]
  */
 export function formatMoney(value, code = SOLO_CURRENCY, compact = false) {
   const currency = currencyByCode(code);
-  if (!currency.symbol) return formatAmount(value, compact);
-  const gap = currency.gap ?? '';
-  if (currency.place !== 'prefix') return `${formatAmount(value, compact)}${gap}${currency.symbol}`;
-  // The sign belongs outside the symbol: -RM 2,500, never RM -2,500.
-  const sign = Math.round(value) < 0 ? '-' : '';
-  return `${sign}${currency.symbol}${gap}${formatAmount(Math.abs(value), compact)}`;
+  const amount = formatAmount(value, compact);
+  return currency.unit ? `${amount} ${currency.unit}` : amount;
 }
 
-/** The short name to put on a column heading or a HUD pill. */
+/** The short word to put on a HUD pill or a column heading. */
 export function currencyLabel(code) {
+  return currencyByCode(code).label;
+}
+
+/** The colour a table paints its money in. */
+export function currencyTint(code) {
+  return currencyByCode(code).tint;
+}
+
+/** What a room of this coin should open with, before the host edits anything. */
+export function suggestedStakes(code) {
   const currency = currencyByCode(code);
-  return currency.code === 'chips' ? 'Chips' : (currency.symbol || currency.name);
+  return {
+    pot: currency.suggestedPot ?? 1_000,
+    startingChips: currency.suggestedStack ?? 10_000,
+  };
 }

@@ -1,77 +1,86 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CURRENCIES, DEFAULT_ROOM_CURRENCY, SOLO_CURRENCY,
-  currencyByCode, currencyLabel, formatAmount, formatMoney, isCurrency,
+  CURRENCIES, DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, SOLO_CURRENCY,
+  currencyByCode, currencyLabel, formatAmount, formatMoney, isCurrency, isRoomCurrency,
+  suggestedStakes,
 } from '../src/core/currency.js';
 import { formatChips } from '../src/core/economy.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, sanitiseSettings } from '../src/net/protocol.js';
 
-test('a room does not keep score in the single-player purse', () => {
+test('rooms keep score in coins, not in the single-player purse', () => {
   assert.equal(SOLO_CURRENCY, 'chips');
-  assert.notEqual(DEFAULT_ROOM_CURRENCY, SOLO_CURRENCY, 'a new room defaults to a different currency');
+  assert.deepEqual(ROOM_CURRENCIES.map((c) => c.code), ['silver', 'gold']);
+  assert.equal(DEFAULT_ROOM_CURRENCY, 'silver');
+  assert.notEqual(DEFAULT_ROOM_CURRENCY, SOLO_CURRENCY);
   assert.equal(DEFAULT_SETTINGS.currency, DEFAULT_ROOM_CURRENCY);
-  assert.ok(isCurrency(DEFAULT_ROOM_CURRENCY));
 });
 
-test('currency codes are unique and complete', () => {
+test('nothing here stands for real money', () => {
+  const words = JSON.stringify(CURRENCIES).toLowerCase();
+  for (const forbidden of ['usd', 'dollar', 'myr', 'ringgit', 'gbp', 'pound', 'euro', 'yen', 'yuan', '$', '£', '€', '¥']) {
+    assert.equal(words.includes(forbidden), false, `"${forbidden}" should not appear in the currency table`);
+  }
+});
+
+test('currency codes are unique and carry what the interface needs', () => {
   const codes = CURRENCIES.map((c) => c.code);
   assert.equal(new Set(codes).size, codes.length, 'duplicate currency code');
   for (const currency of CURRENCIES) {
-    assert.ok(currency.name, `${currency.code} has no name`);
-    assert.ok(['prefix', 'suffix'].includes(currency.place));
+    assert.ok(currency.name && currency.label && currency.tint, `${currency.code} is missing a field`);
   }
-  assert.ok(codes.length >= 5, 'the host has a real choice to make');
 });
 
-test('amounts format with the symbol on the right side of the number', () => {
-  assert.equal(formatMoney(1_234_567, 'chips'), '1,234,567');
-  assert.equal(formatMoney(1_000, 'myr'), 'RM 1,000');
-  assert.equal(formatMoney(1_000, 'usd'), '$1,000');
-  assert.equal(formatMoney(1_000, 'gbp'), '£1,000');
-  assert.equal(formatMoney(1_000, 'points'), '1,000 pts');
-});
-
-test('the sign sits outside a prefixed symbol', () => {
-  assert.equal(formatMoney(-2_500, 'myr'), '-RM 2,500');
-  assert.equal(formatMoney(-2_500, 'usd'), '-$2,500');
-  assert.equal(formatMoney(-2_500, 'points'), '-2,500 pts');
-  assert.equal(formatMoney(-2_500, 'chips'), '-2,500');
-});
-
-test('compact amounts keep their currency', () => {
-  assert.equal(formatMoney(1_500_000, 'myr', true), 'RM 1.5M');
-  assert.equal(formatMoney(50_000, 'usd', true), '$50K');
-  assert.equal(formatMoney(400, 'chips', true), '400');
+test('an amount carries its coin when nothing else names it', () => {
+  assert.equal(formatMoney(1_234, 'silver'), '1,234 silver');
+  assert.equal(formatMoney(1_234, 'gold'), '1,234 gold');
+  assert.equal(formatMoney(1_234, 'chips'), '1,234', 'the solo purse needs no unit');
+  assert.equal(formatMoney(-300, 'gold'), '-300 gold');
+  assert.equal(formatMoney(1_500_000, 'gold', true), '1.5M gold');
+  assert.equal(formatAmount(50_000, true), '50K');
   assert.equal(formatAmount(-1_500_000, true), '-1.5M');
 });
 
-test('an unknown currency falls back to chips instead of throwing', () => {
-  assert.equal(currencyByCode('dogecoin').code, SOLO_CURRENCY);
+test('gold and silver are the same arithmetic, different scale', () => {
+  // No exchange rate anywhere: a coin only changes what a room opens with.
+  assert.equal(formatAmount(500), formatAmount(500));
+  const silver = suggestedStakes('silver');
+  const gold = suggestedStakes('gold');
+  assert.ok(gold.pot > silver.pot && gold.startingChips > silver.startingChips);
+  assert.equal(silver.startingChips / silver.pot, gold.startingChips / gold.pot,
+    'both open at the same ratio of stack to pot, so the game plays the same');
+});
+
+test('an unknown coin falls back to chips instead of throwing', () => {
+  assert.equal(currencyByCode('doubloons').code, SOLO_CURRENCY);
   assert.equal(currencyByCode(undefined).code, SOLO_CURRENCY);
   assert.equal(formatMoney(100, 'nonsense'), '100');
   assert.equal(isCurrency('nonsense'), false);
+});
+
+test('the solo purse cannot be selected as a room currency', () => {
+  assert.equal(isRoomCurrency('chips'), false);
+  assert.equal(isRoomCurrency('gold'), true);
+  assert.equal(sanitiseSettings({ currency: 'chips' }).currency, DEFAULT_ROOM_CURRENCY);
+  assert.equal(sanitiseSettings({ currency: 'GOLD' }).currency, 'gold', 'case is forgiven');
+  assert.equal(sanitiseSettings({ currency: 'bananas' }).currency, DEFAULT_ROOM_CURRENCY);
 });
 
 test('single player still reads as plain chips', () => {
   assert.equal(formatChips(10_000), '10,000');
   assert.equal(formatChips(1_500_000, true), '1.5M');
   assert.equal(currencyLabel('chips'), 'Chips');
-  assert.equal(currencyLabel('myr'), 'RM');
+  assert.equal(currencyLabel('silver'), 'Silver');
+  assert.equal(currencyLabel('gold'), 'Gold');
 });
 
-test('room settings accept a currency and refuse junk', () => {
-  assert.equal(sanitiseSettings({ currency: 'USD' }).currency, 'usd', 'case is forgiven');
-  assert.equal(sanitiseSettings({ currency: 'bananas' }).currency, DEFAULT_ROOM_CURRENCY);
-  assert.equal(sanitiseSettings({}).currency, DEFAULT_ROOM_CURRENCY);
-});
-
-test('a room can be priced for real-world stakes, not just thousands', () => {
-  // Keeping score in ringgit means a pot of 5, which the old floor of 100 would
-  // have silently raised.
+test('a room can be priced small, and its ceiling is the high one', () => {
   assert.equal(SETTING_LIMITS.pot.min, 1);
+  assert.equal(DEFAULT_SETTINGS.capFactor, 50, 'rooms get the same high ceiling as the solo tables');
+  assert.deepEqual(
+    { pot: DEFAULT_SETTINGS.pot, startingChips: DEFAULT_SETTINGS.startingChips },
+    suggestedStakes(DEFAULT_ROOM_CURRENCY),
+  );
   assert.equal(sanitiseSettings({ pot: 5, startingChips: 100 }).pot, 5);
-  assert.equal(sanitiseSettings({ pot: 5, startingChips: 100 }).startingChips, 100);
   assert.equal(sanitiseSettings({ pot: 0 }).pot, 1, 'still clamped above zero');
-  assert.equal(sanitiseSettings({ pot: 1e12 }).pot, SETTING_LIMITS.pot.max);
 });

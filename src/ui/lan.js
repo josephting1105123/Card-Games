@@ -7,7 +7,7 @@
  * failing mysteriously.
  */
 
-import { CURRENCIES, DEFAULT_ROOM_CURRENCY, formatMoney } from '../core/currency.js';
+import { DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, currencyLabel, formatMoney, suggestedStakes } from '../core/currency.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { LanClient } from '../net/client.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, S2C } from '../net/protocol.js';
@@ -94,7 +94,7 @@ class LanScreens {
           el('span.tile__accent'),
           el('h2.tile__name', 'Create a room'),
           el('p.tile__tag', 'You are the host'),
-          el('p.tile__desc', 'Set the currency, the pot, the starting stack, the multiplier and how many seats the bots fill, then hand out the code.'),
+          el('p.tile__desc', 'Choose the coins, the pot, the starting stack, the multiplier and how many seats the bots fill, then hand out the code.'),
         ),
         el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => this.renderJoin() },
           el('span.tile__accent'),
@@ -164,17 +164,33 @@ class LanScreens {
     const s = { ...DEFAULT_SETTINGS };
     const nameInput = el('input.input', { value: this.name, maxlength: 18, placeholder: 'Your name' });
     const currency = select('set-currency',
-      CURRENCIES.map((c) => ({ value: c.code, label: c.name })), s.currency);
+      ROOM_CURRENCIES.map((c) => ({ value: c.code, label: c.name })), s.currency);
     const pot = numberInput('set-pot', s.pot, SETTING_LIMITS.pot);
     const chips = numberInput('set-chips', s.startingChips, SETTING_LIMITS.startingChips);
     const preview = el('span.field__hint', '');
+    // Switching coin re-scales the stakes, but never over a number the host has
+    // typed themselves.
+    let stakesEdited = false;
     const refreshPreview = () => {
       const code = currency.value;
-      preview.textContent = `Pot ${formatMoney(Number(pot.value) || 0, code)} · stack ${formatMoney(Number(chips.value) || 0, code)} · a landlord win at ×2 settles ${formatMoney((Number(pot.value) || 0) * 2 * 2, code)}`;
+      const potValue = Number(pot.value) || 0;
+      preview.textContent = `Pot ${formatMoney(potValue, code)} · stack ${formatMoney(Number(chips.value) || 0, code)}`
+        + ` · a landlord win at ×2 settles ${formatMoney(potValue * 2 * 2, code)}`;
     };
-    currency.addEventListener('change', refreshPreview);
-    pot.addEventListener('input', refreshPreview);
-    chips.addEventListener('input', refreshPreview);
+    currency.addEventListener('change', () => {
+      if (!stakesEdited) {
+        const suggested = suggestedStakes(currency.value);
+        pot.value = String(suggested.pot);
+        chips.value = String(suggested.startingChips);
+      }
+      refreshPreview();
+    });
+    for (const input of [pot, chips]) {
+      input.addEventListener('input', () => {
+        stakesEdited = true;
+        refreshPreview();
+      });
+    }
     const mult = numberInput('set-mult', s.baseMultiplier, SETTING_LIMITS.baseMultiplier);
     const cap = numberInput('set-cap', s.capFactor, SETTING_LIMITS.capFactor);
     const seats = select('set-seats', [
@@ -210,18 +226,18 @@ class LanScreens {
       this.backLink('Local multiplayer', () => this.renderChoice()),
       el('div.page__head',
         el('h1.page__title', 'Create a room'),
-        el('p.page__sub', 'Your settings apply to everyone at the table. A room keeps its own score in its own currency — nothing here touches your single-player purse, and no money moves anywhere: the currency is a label on the numbers.'),
+        el('p.page__sub', 'Your settings apply to everyone at the table. The coins are dealt out when the room opens and are gone when it closes — they are not money, and they never touch your single-player purse.'),
       ),
       lanReachable() ? null : this.notReachable(),
       el('div.card-panel',
         el('div.form-grid',
           field('Your name', nameInput),
           field('Seats', seats, 'Bots fill whatever is left of the three'),
-          field('Currency', currency, 'What this room keeps score in'),
+          field('Coins', currency, 'Silver for a quick game, gold for a heavy one'),
           field('Pot per person', pot, 'What each seat puts up'),
           field('Starting stack', chips, 'Everyone begins with this'),
           field('Base multiplier', mult, 'The floor; bombs and springs double it'),
-          field('Loss cap (× pot)', cap, 'The most one hand can take off a player'),
+          field('Hand ceiling (× pot)', cap, 'The most one hand can move, won or lost'),
           field('Bot strength', skill, 'For any seat a person does not take'),
         ),
         el('p.field__hint', { style: 'margin:14px 0 0' }, preview),
@@ -349,10 +365,11 @@ class LanScreens {
           : `Others join with ${room.code}`),
         seatList,
         el('div.stat-grid', { style: 'margin-top:18px' },
-          statTile('Pot per person', this.money(room.settings.pot)),
+          statTile(`Pot per person`, this.money(room.settings.pot)),
           statTile('Starting stack', this.money(room.settings.startingChips)),
+          statTile('Coins', currencyLabel(room.settings.currency)),
           statTile('Base multiplier', `×${room.settings.baseMultiplier}`),
-          statTile('Loss cap', `${room.settings.capFactor}× pot`),
+          statTile('Hand ceiling', `${room.settings.capFactor}× pot`),
         ),
         el('div.btn-row', { style: 'margin-top:20px' },
           isHost

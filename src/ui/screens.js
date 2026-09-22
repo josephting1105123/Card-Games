@@ -5,7 +5,10 @@
  * a stake table, or (LAN) create or join a room.
  */
 
-import { BANKRUPT_THRESHOLD, LOBBIES, RESCUE_EXIT, formatChips, lobbyAccess } from '../core/economy.js';
+import {
+  BANKRUPT_THRESHOLD, HAND_CAP_FACTOR, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT,
+  formatChips, lobbyAccess,
+} from '../core/economy.js';
 import { ratingTitle } from '../core/elo.js';
 import { gameStats } from '../core/profile.js';
 import { GAMES, gameById } from '../games/registry.js';
@@ -146,7 +149,7 @@ export function renderLobby(app, root, gameId) {
         el('span', `Base ×${lobby.baseMultiplier}`),
         el('span', `Bots: ${skill?.name ?? lobby.skill}`),
         el('span', lobby.rescue ? 'No entry fee' : `Entry ${formatChips(lobby.entry, true)}`),
-        el('span', lobby.rescue ? 'No bankruptcy' : `Max loss ${formatChips(lobby.pot * lobby.capFactor, true)}`),
+        el('span', lobby.rescue ? 'No bankruptcy' : `Hand ceiling ${formatChips(lobby.pot * lobby.capFactor, true)}`),
       ),
       el('p.lobby__blurb', lobby.blurb),
       locked ? el('p.lobby__lock', reason) : null,
@@ -166,9 +169,9 @@ export function renderLobby(app, root, gameId) {
       el('div.card-panel',
         el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'How the caps work'),
         el('ul', { style: 'margin:0;padding-left:20px;line-height:1.75;color:#cfc9ba;font-size:14px' },
-          el('li', 'A single hand can never take more than 60% of your chips, whatever the table.'),
-          el('li', 'Each table also has its own ceiling: the pot times its cap factor.'),
-          el('li', 'Winnings are never capped.'),
+          el('li', `No single hand moves more than ${HAND_CAP_FACTOR} pots, won or lost. The landlord risks twice a farmer, so that ceiling only bites past a multiplier of ${HAND_CAP_FACTOR / 2} — in practice ×32 or more. Every ordinary bomb hand pays in full.`),
+          el('li', `Losses are held down a second time: never more than ${Math.round(MAX_LOSS_FRACTION * 100)}% of what you hold, so one hand cannot wipe you out.`),
+          el('li', 'Winnings are not held down that way. A win you could not have afforded to lose is the one worth having.'),
           el('li', `Below ${formatChips(BANKRUPT_THRESHOLD)} you move to the rescue table — 400 pot, no bankruptcy — until you hold ${formatChips(RESCUE_EXIT)}.`),
         ),
       ),

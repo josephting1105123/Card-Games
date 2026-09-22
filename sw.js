@@ -9,12 +9,13 @@
  * Bump CACHE whenever a file changes; the old cache is deleted on activate.
  */
 
-const CACHE = 'card-games-v2';
+const CACHE = 'card-games-v3';
 
 const PRECACHE = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './styles/tokens.css',
   './styles/app.css',
   './styles/table.css',
   './src/main.js',

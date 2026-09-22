@@ -1,0 +1,150 @@
+/* ==========================================================================
+   tokens.css — design tokens for Card Games.
+   Structure follows the OffBridge site: one token sheet everything else reads,
+   a fluid type scale, motion and elevation as variables. The palette is this
+   app's own: green baize, gold rule, claret. Dark is the only theme — a card
+   table lit from above does not have a light mode.
+   All other CSS reads only these vars.
+   ========================================================================== */
+
+/* --- Font: EB Garamond (self-hosted; SIL OFL, see assets/fonts/) ---------- */
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../assets/fonts/eb-garamond-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../assets/fonts/eb-garamond-latin-ext.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../assets/fonts/eb-garamond-italic-latin.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* ----- Brand palette ----- */
+  --felt-0: #0b2a22;
+  --felt-1: #10382c;
+  --felt-2: #0a2019;
+  --felt-table: #124634;
+
+  --gold: #cdae6c;
+  --gold-dim: #8a6d2f;
+  --gold-bright: #efdba6;
+  --silver: #c9ccd3;
+  --silver-bright: #e8eaee;
+
+  --ivory: #f6f0e2;
+  --stock: #fffdf6;
+  --ink: #1b1a17;
+  --claret: #7b1e2b;
+  --claret-bright: #c8362f;
+
+  --text: #ece6d8;
+  --text-secondary: #cfc9ba;
+  --text-tertiary: #a9a293;
+  --text-faint: #8f8a7c;
+
+  --hairline: rgba(205, 174, 108, 0.22);
+  --hairline-strong: rgba(205, 174, 108, 0.42);
+
+  /* ----- Semantic ----- */
+  --ok: #6fc28a;
+  --danger: #e2694f;
+  --warning: #e8b45c;
+
+  /* ----- Type: one face throughout ----- */
+  /* EB Garamond first, then whatever Garamond the machine already has, then a
+     serif CJK face for the Chinese titles, then the usual fallbacks. Nothing in
+     this app is set in a sans face. */
+  --font: "EB Garamond", Garamond, "Adobe Garamond Pro", "Cormorant Garamond",
+    "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", SimSun,
+    "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+
+  /* ----- Type scale (fluid) -----
+     A Garamond x-height is small, so every step sits a shade above where the
+     same scale would land in a sans face. */
+  --t-display: clamp(1.9rem, 1.2rem + 3.2vw, 2.6rem);
+  --t-h1: clamp(1.6rem, 1.2rem + 1.9vw, 2.4rem);
+  --t-h2: clamp(1.25rem, 1.1rem + 0.7vw, 1.6rem);
+  --t-h3: 1.2rem;
+  --t-lead: 1.0625rem;
+  --t-body: 1.0625rem;  /* 17px */
+  --t-small: 0.9375rem; /* 15px */
+  --t-caption: 0.8125rem;
+  --t-label: 0.75rem;   /* tracked-out uppercase micro-labels */
+  --track-label: 0.15em;
+
+  /* ----- Radius ----- */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* ----- Spacing (4px rhythm) ----- */
+  --s-2: 2px;
+  --s-4: 4px;
+  --s-6: 6px;
+  --s-8: 8px;
+  --s-12: 12px;
+  --s-16: 16px;
+  --s-20: 20px;
+  --s-26: 26px;
+  --s-34: 34px;
+  --s-48: 48px;
+
+  --container-max: 1180px;
+  --gutter: clamp(14px, 3vw, 28px);
+
+  /* ----- Motion ----- */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-med: 160ms;
+  --dur-slow: 220ms;
+
+  /* ----- Elevation ----- */
+  --shadow-1: 0 4px 7px rgba(0, 0, 0, 0.42);
+  --shadow-3: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-8: 0 18px 40px rgba(0, 0, 0, 0.45);
+
+  /* ----- Z-index (semantic; keep ordered) ----- */
+  --z-hud: 20;
+  --z-overlay: 40;
+  --z-rotate-gate: 90;
+
+  --ring: 0 0 0 2px var(--gold-bright);
+
+  color-scheme: dark;
+}
+
+/* --- Global reduced-motion guard ----------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

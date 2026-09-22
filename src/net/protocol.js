@@ -7,7 +7,7 @@
  * seat only its own hand.
  */
 
-import { DEFAULT_ROOM_CURRENCY, isCurrency } from '../core/currency.js';
+import { DEFAULT_ROOM_CURRENCY, isRoomCurrency, suggestedStakes } from '../core/currency.js';
 
 export const C2S = {
   HELLO: 'hello',
@@ -36,13 +36,12 @@ export const S2C = {
 
 export const DEFAULT_SETTINGS = {
   game: 'doudizhu',
-  // A room keeps score in its own currency, not the single-player purse, so the
-  // default is deliberately something other than chips. See core/currency.js.
+  // A room deals out its own temporary coins rather than touching anybody's
+  // single-player purse. The host picks silver or gold; see core/currency.js.
   currency: DEFAULT_ROOM_CURRENCY,
-  pot: 10,
-  startingChips: 200,
+  ...suggestedStakes(DEFAULT_ROOM_CURRENCY),
   baseMultiplier: 2,
-  capFactor: 6,
+  capFactor: 50,
   botSkill: 'steady',
   humanSeats: 2, // the rest of the three seats are filled by bots
 };
@@ -53,13 +52,15 @@ export const SETTING_LIMITS = {
   pot: { min: 1, max: 10_000_000, step: 1 },
   startingChips: { min: 1, max: 1_000_000_000, step: 10 },
   baseMultiplier: { min: 1, max: 8, step: 1 },
-  capFactor: { min: 1, max: 20, step: 0.5 },
+  // A loss cap high enough to be a backstop rather than a routine clamp: see
+  // the note on caps in core/economy.js.
+  capFactor: { min: 1, max: 200, step: 1 },
 };
 
 /** Clamp whatever a host typed into something the table can actually run. */
 export function sanitiseSettings(input = {}) {
   const out = { ...DEFAULT_SETTINGS };
-  if (isCurrency(input.currency)) out.currency = String(input.currency).toLowerCase();
+  if (isRoomCurrency(input.currency)) out.currency = String(input.currency).toLowerCase();
   for (const [key, limit] of Object.entries(SETTING_LIMITS)) {
     const value = Number(input[key]);
     if (Number.isFinite(value)) out[key] = Math.min(limit.max, Math.max(limit.min, value));

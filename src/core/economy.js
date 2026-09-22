@@ -12,11 +12,21 @@
  *    and by a spring. The engine reports its own multiplier; the base acts as a
  *    floor so a timid 1-point hand still settles at x2.
  *
- * 3. Loss is capped twice: by lobby (pot x capFactor) and by bankroll (you never
- *    lose more than MAX_LOSS_FRACTION of what you hold). The second cap is the
- *    one that actually protects a player who walks into the 1M table — it means
- *    a single disastrous hand cannot wipe you out, so the high lobbies are
- *    playable without fear. Winnings are not capped.
+ * 3. A single hand moves at most HAND_CAP_FACTOR pots, in either direction. The
+ *    landlord's exposure is 2 x multiplier pots, so a 50-pot ceiling only bites
+ *    above a multiplier of 32 — three bombs and a spring on a 3-point call. It
+ *    is a backstop against an absurd chain, not a routine clamp.
+ *
+ *    This matters more than it sounds. An earlier version capped at 6 pots,
+ *    which bites above a multiplier of 4: every bomb past the first paid
+ *    nothing, so the whole doubling mechanic was decoration. A cap that binds on
+ *    ordinary hands makes winning flat and losing riskless at the same time.
+ *
+ * 3b. Losses are capped a second time, by bankroll: no hand takes more than
+ *    MAX_LOSS_FRACTION of what you hold. That is what makes the 1M table
+ *    playable — one disastrous hand cannot wipe you out. It is deliberately not
+ *    applied to winnings, because a win you could not afford to lose is exactly
+ *    the win worth having.
  *
  * 4. Bankruptcy is still reachable, because a run of capped losses grinds the
  *    bankroll below the cheapest normal lobby. At that point the player is moved
@@ -31,8 +41,19 @@ export const STARTING_BANKROLL = 10_000;
 export const BANKRUPT_THRESHOLD = 1_000;
 /** Leave the rescue table once you hold this much. */
 export const RESCUE_EXIT = 2_000;
-/** No single game may take more than this share of the bankroll. */
-export const MAX_LOSS_FRACTION = 0.6;
+/**
+ * No single game may take more than this share of the bankroll. Raised from
+ * 0.6: at 0.75 a pair of bad landlord hands from a fresh stack really does put
+ * you on the rescue table, which is the risk that makes the rest mean anything.
+ */
+export const MAX_LOSS_FRACTION = 0.75;
+
+/**
+ * The most one hand can move, as a multiple of the pot, win or lose. Uniform
+ * across the ladder: the bankroll cap already scales the protection with what a
+ * player actually holds, so a second sliding scale would only obscure it.
+ */
+export const HAND_CAP_FACTOR = 50;
 
 /**
  * @typedef {object} Lobby
@@ -41,7 +62,7 @@ export const MAX_LOSS_FRACTION = 0.6;
  * @property {number} pot          stake per person
  * @property {number} baseMultiplier floor on the game multiplier
  * @property {number} entry        bankroll needed to sit down
- * @property {number} capFactor    per-game loss cap, as a multiple of the pot
+ * @property {number} capFactor    per-game ceiling, as a multiple of the pot
  * @property {string} skill        bot skill profile (see games/doudizhu/ai.js)
  * @property {number} botElo       rating the bots are treated as holding
  * @property {boolean} [rescue]    the bankruptcy table
@@ -49,19 +70,19 @@ export const MAX_LOSS_FRACTION = 0.6;
 
 /** @type {Lobby[]} */
 export const LOBBIES = [
-  { id: 'rescue', name: 'Rescue Table', short: '400', pot: 400, baseMultiplier: 2, entry: 0, capFactor: Infinity, skill: 'novice', botElo: 800, rescue: true,
+  { id: 'rescue', name: 'Rescue Table', short: '400', pot: 400, baseMultiplier: 2, entry: 0, capFactor: HAND_CAP_FACTOR, skill: 'novice', botElo: 800, rescue: true,
     blurb: 'No entry fee, no bankruptcy. Grind back to 2,000 and you are out of here.' },
-  { id: 'starter', name: 'Starter Room', short: '1K', pot: 1_000, baseMultiplier: 2, entry: 1_000, capFactor: 6, skill: 'casual', botElo: 1_000,
+  { id: 'starter', name: 'Starter Room', short: '1K', pot: 1_000, baseMultiplier: 2, entry: 1_000, capFactor: HAND_CAP_FACTOR, skill: 'casual', botElo: 1_000,
     blurb: 'The default table. Bots play a loose social game.' },
-  { id: 'bronze', name: 'Bronze Hall', short: '10K', pot: 10_000, baseMultiplier: 2, entry: 12_000, capFactor: 4, skill: 'steady', botElo: 1_200,
+  { id: 'bronze', name: 'Bronze Hall', short: '10K', pot: 10_000, baseMultiplier: 2, entry: 12_000, capFactor: HAND_CAP_FACTOR, skill: 'steady', botElo: 1_200,
     blurb: 'Bots stop throwing away kickers and start defending as a pair.' },
-  { id: 'silver', name: 'Silver Hall', short: '50K', pot: 50_000, baseMultiplier: 2, entry: 60_000, capFactor: 3, skill: 'sharp', botElo: 1_400,
+  { id: 'silver', name: 'Silver Hall', short: '50K', pot: 50_000, baseMultiplier: 2, entry: 60_000, capFactor: HAND_CAP_FACTOR, skill: 'sharp', botElo: 1_400,
     blurb: 'Bots count the played pile from here up.' },
-  { id: 'gold', name: 'Gold Salon', short: '100K', pot: 100_000, baseMultiplier: 2, entry: 120_000, capFactor: 3, skill: 'expert', botElo: 1_600,
+  { id: 'gold', name: 'Gold Salon', short: '100K', pot: 100_000, baseMultiplier: 2, entry: 120_000, capFactor: HAND_CAP_FACTOR, skill: 'expert', botElo: 1_600,
     blurb: 'Tight bidding, disciplined bombs, punishing endgames.' },
-  { id: 'ruby', name: 'Ruby Salon', short: '500K', pot: 500_000, baseMultiplier: 2, entry: 600_000, capFactor: 2.5, skill: 'master', botElo: 1_800,
+  { id: 'ruby', name: 'Ruby Salon', short: '500K', pot: 500_000, baseMultiplier: 2, entry: 600_000, capFactor: HAND_CAP_FACTOR, skill: 'master', botElo: 1_800,
     blurb: 'Rarely misreads a hand. Expect to be squeezed.' },
-  { id: 'legend', name: 'Legend Table', short: '1M', pot: 1_000_000, baseMultiplier: 2, entry: 1_200_000, capFactor: 2, skill: 'grandmaster', botElo: 2_000,
+  { id: 'legend', name: 'Legend Table', short: '1M', pot: 1_000_000, baseMultiplier: 2, entry: 1_200_000, capFactor: HAND_CAP_FACTOR, skill: 'grandmaster', botElo: 2_000,
     blurb: 'Near the ceiling of the evaluation. It still errs, about one move in thirty.' },
 ];
 
@@ -120,12 +141,19 @@ export function settleDouDiZhu({ lobby, result, seat, bankroll, rescueMode = fal
   const gross = won ? magnitude : -magnitude;
 
   if (won) {
-    return { delta: gross, gross, capped: false, multiplier, stake, won, cap: Infinity };
+    const cap = handCap(lobby);
+    const delta = Math.min(magnitude, cap);
+    return { delta, gross, capped: delta !== gross, multiplier, stake, won, cap };
   }
 
   const cap = lossCap(lobby, bankroll, rescueMode);
   const delta = -Math.min(magnitude, cap);
   return { delta, gross, capped: delta !== gross, multiplier, stake, won, cap };
+}
+
+/** The ceiling on one hand at this table, before any bankroll limit. */
+export function handCap(lobby) {
+  return lobby.pot * (lobby.capFactor ?? HAND_CAP_FACTOR);
 }
 
 /**
@@ -135,9 +163,8 @@ export function settleDouDiZhu({ lobby, result, seat, bankroll, rescueMode = fal
  */
 export function lossCap(lobby, bankroll, rescueMode) {
   if (rescueMode || lobby.rescue) return Math.max(0, bankroll);
-  const byLobby = lobby.pot * lobby.capFactor;
   const byBankroll = Math.floor(Math.max(0, bankroll) * MAX_LOSS_FRACTION);
-  return Math.max(0, Math.min(byLobby, byBankroll));
+  return Math.max(0, Math.min(handCap(lobby), byBankroll));
 }
 
 /**

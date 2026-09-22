@@ -266,10 +266,10 @@ test('a room carries the host\'s chosen currency to everyone in it', async (t) =
   const alice = new Client(host.url);
   await alice.ready();
   await alice.next(S2C.WELCOME);
-  alice.send({ t: 'create', name: 'Alice', settings: { currency: 'points', pot: 5, startingChips: 100, humanSeats: 2 } });
+  alice.send({ t: 'create', name: 'Alice', settings: { currency: 'gold', pot: 5, startingChips: 100, humanSeats: 2 } });
   const created = await alice.next(S2C.ROOM);
-  assert.equal(created.room.settings.currency, 'points');
-  assert.equal(created.room.settings.pot, 5, 'a small pot is allowed for real-world stakes');
+  assert.equal(created.room.settings.currency, 'gold');
+  assert.equal(created.room.settings.pot, 5, 'a host may price a room small');
   assert.notEqual(created.room.settings.currency, SOLO_CURRENCY);
 
   const bob = new Client(host.url);
@@ -277,12 +277,18 @@ test('a room carries the host\'s chosen currency to everyone in it', async (t) =
   await bob.next(S2C.WELCOME);
   bob.send({ t: 'join', code: created.room.code, name: 'Bob' });
   const joined = await bob.next(S2C.ROOM);
-  assert.equal(joined.room.settings.currency, 'points', 'a joiner is told what the room counts in');
+  assert.equal(joined.room.settings.currency, 'gold', 'a joiner is told which coins the room counts in');
 
   bob.drain(S2C.ROOM);
-  alice.send({ t: 'settings', settings: { currency: 'gbp' } });
+  alice.send({ t: 'settings', settings: { currency: 'silver' } });
   const changed = await bob.next(S2C.ROOM);
-  assert.equal(changed.room.settings.currency, 'gbp', 'the host can change it and everyone sees it');
+  assert.equal(changed.room.settings.currency, 'silver', 'the host can change it and everyone sees it');
+
+  bob.drain(S2C.ROOM);
+  alice.send({ t: 'settings', settings: { currency: 'chips' } });
+  const refused = await bob.next(S2C.ROOM);
+  assert.equal(refused.room.settings.currency, DEFAULT_ROOM_CURRENCY,
+    'the single-player purse is not a coin a room can deal in');
   alice.close();
   bob.close();
 });
