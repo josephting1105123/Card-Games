@@ -105,7 +105,10 @@ export class TableView {
     this.view = view;
     const handIds = new Set(view.you.hand.map((c) => c.id));
     for (const id of [...this.selected]) if (!handIds.has(id)) this.selected.delete(id);
-    if (previous && previous.plays?.length !== view.plays?.length) this.hinted.clear();
+    // seatView sends playedCards, never `plays` — reading the wrong field here
+    // meant the comparison was undefined !== undefined and the hint highlight
+    // stayed lit into the next trick.
+    if (previous && previous.playedCards?.length !== view.playedCards?.length) this.hinted.clear();
 
     this.renderSeats();
     this.renderBottom();
