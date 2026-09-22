@@ -1,0 +1,20 @@
+{
+  "name": "Card Games",
+  "short_name": "Card Games",
+  "description": "Classic card games with a premium deck. Dou Di Zhu against bots that sharpen as the stakes rise, Elo ratings, stake tables and local network play.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0b2a22",
+  "theme_color": "#0b2a22",
+  "lang": "en-GB",
+  "dir": "ltr",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "assets/icons/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
