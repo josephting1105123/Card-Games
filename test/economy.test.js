@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BANKRUPT_THRESHOLD, HAND_CAP_FACTOR, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT,
+  BANKRUPT_THRESHOLD, ENTRY_POTS, HAND_CAP_FACTOR, LOBBIES, MAX_LOSS_FRACTION, RESCUE_EXIT,
   STARTER_POT, STARTING_BANKROLL, STARTING_STACK_MULTIPLE,
   applyToBankroll, formatChips, handCap, isBankrupt, lobbyAccess, lobbyById, lossCap,
   settleDouDiZhu, stackForPot, suggestedStakes,
@@ -118,7 +118,7 @@ test('repeated capped losses still reach bankruptcy', () => {
   assert.ok(hands < 40, `took ${hands} hands, which should be a run and not a grind`);
 });
 
-test('the rescue table cannot take you below zero and releases you at 2,000', () => {
+test('the rescue table cannot take you below zero', () => {
   const loss = settleDouDiZhu({
     lobby: rescue,
     result: { landlordWon: false, landlordSeat: 0, multiplier: 8 },
@@ -129,12 +129,37 @@ test('the rescue table cannot take you below zero and releases you at 2,000', ()
   const afterLoss = applyToBankroll(300, loss.delta, true);
   assert.ok(afterLoss.bankroll >= 0);
   assert.equal(afterLoss.rescueMode, true);
+});
 
-  const afterWin = applyToBankroll(1_900, 400, true);
-  assert.equal(afterWin.bankroll, 2_300);
-  assert.equal(afterWin.rescueMode, false);
-  assert.equal(afterWin.leftRescue, true);
-  assert.equal(RESCUE_EXIT, 2_000);
+test('the rescue table releases you exactly when a normal table will have you', () => {
+  assert.equal(RESCUE_EXIT, STARTER_POT * ENTRY_POTS);
+  assert.equal(RESCUE_EXIT, lobbyById('starter').entry,
+    'holding somebody past that point is pointless, releasing them earlier sends them back');
+
+  const stillShort = applyToBankroll(RESCUE_EXIT - 1_000, 400, true);
+  assert.equal(stillShort.rescueMode, true);
+  assert.equal(stillShort.leftRescue, false);
+
+  const released = applyToBankroll(RESCUE_EXIT - 400, 800, true);
+  assert.equal(released.rescueMode, false);
+  assert.equal(released.leftRescue, true);
+  const open = lobbyAccess(released.bankroll, false).filter((a) => !a.locked).map((a) => a.lobby.id);
+  assert.deepEqual(open, ['starter'], 'and can sit down the moment they are out');
+});
+
+test('a player leaving rescue can absorb an ordinary hand without the cap firing', () => {
+  // The whole reason ENTRY_POTS is 6: a landlord at the base multiplier risks
+  // 4 pots, and 75% of a 6-pot stack is 4.5, so the emergency cap stays out of
+  // an ordinary loss.
+  const starterLobby = lobbyById('starter');
+  const settled = settleDouDiZhu({
+    lobby: starterLobby,
+    result: { landlordWon: false, landlordSeat: 0, multiplier: starterLobby.baseMultiplier },
+    seat: 0,
+    bankroll: RESCUE_EXIT,
+  });
+  assert.equal(settled.capped, false, 'an ordinary landlord loss is settled in full');
+  assert.equal(settled.delta, -4 * STARTER_POT);
 });
 
 test('access: the rescue table is the only door when bankrupt', () => {
@@ -142,9 +167,12 @@ test('access: the rescue table is the only door when bankrupt', () => {
   for (const entry of broke) {
     assert.equal(entry.locked, !entry.lobby.rescue);
   }
-  const flush = lobbyAccess(150_000, false);
+  const flush = lobbyAccess(350_000, false);
   const open = flush.filter((e) => !e.locked).map((e) => e.lobby.id);
-  assert.deepEqual(open, ['starter', 'bronze', 'silver', 'gold']);
+  assert.deepEqual(open, ['starter', 'bronze', 'silver']);
+  // A fresh purse is one stack at the cheapest table and nothing more.
+  const fresh = lobbyAccess(STARTING_BANKROLL, false).filter((e) => !e.locked).map((e) => e.lobby.id);
+  assert.deepEqual(fresh, ['starter'], 'the ladder starts at the bottom');
   assert.equal(isBankrupt(BANKRUPT_THRESHOLD - 1), true);
   assert.equal(isBankrupt(BANKRUPT_THRESHOLD), false);
 });
@@ -216,4 +244,14 @@ test('the swing of a hand is the same fraction of the stack at every table', () 
   });
   for (const share of shares) assert.equal(share, shares[0]);
   assert.ok(shares[0] > 0.1 && shares[0] < 0.2, `a base landlord hand is ${(shares[0] * 100).toFixed(0)}% of a stack`);
+});
+
+test('every threshold is counted in pots, not set by hand', () => {
+  assert.equal(BANKRUPT_THRESHOLD, STARTER_POT, 'bankrupt is one pot at the cheapest table');
+  for (const lobby of LOBBIES) {
+    assert.equal(lobby.entry, lobby.rescue ? 0 : lobby.pot * ENTRY_POTS, `${lobby.id} entry has drifted`);
+  }
+  // Entry rises with the pot, so the ladder gates rather than opening at once.
+  const normal = LOBBIES.filter((l) => !l.rescue);
+  for (let i = 1; i < normal.length; i++) assert.ok(normal[i].entry > normal[i - 1].entry);
 });

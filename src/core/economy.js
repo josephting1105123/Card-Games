@@ -34,6 +34,11 @@
  *    bankroll below the cheapest normal lobby. At that point the player is moved
  *    to the rescue table: a 400 pot against the weakest bot, where losses cannot
  *    take the balance below zero, until the balance reaches RESCUE_EXIT.
+ *
+ * 5. Every threshold is counted in pots rather than set by hand, so the ladder
+ *    stays in step with itself: a stack is STARTING_STACK_MULTIPLE pots, sitting
+ *    down needs ENTRY_POTS of them, and the rescue table releases you at exactly
+ *    the point the cheapest normal table will have you.
  */
 
 import { SOLO_CURRENCY, formatMoney, suggestedPot } from './currency.js';
@@ -51,16 +56,38 @@ export const STARTING_STACK_MULTIPLE = 25;
 export const STARTER_POT = 1_000;
 
 export const STARTING_BANKROLL = STARTER_POT * STARTING_STACK_MULTIPLE;
-/** Below this you cannot afford the cheapest normal lobby, so you are bankrupt. */
-export const BANKRUPT_THRESHOLD = 1_000;
-/** Leave the rescue table once you hold this much. */
-export const RESCUE_EXIT = 2_000;
+
 /**
  * No single game may take more than this share of the bankroll. Raised from
  * 0.6: at 0.75 a pair of bad landlord hands from a fresh stack really does put
  * you on the rescue table, which is the risk that makes the rest mean anything.
  */
 export const MAX_LOSS_FRACTION = 0.75;
+
+/**
+ * Pots you must hold to sit down at a table.
+ *
+ * Six is not a taste: it is the smallest number at which an ordinary hand is
+ * settled in full. A landlord at the base x2 multiplier risks 4 pots, and the
+ * bankroll cap allows MAX_LOSS_FRACTION of the stack, so at five pots or fewer
+ * (0.75 x 5 = 3.75 pots) the emergency cap fires on a perfectly normal loss.
+ * A table you cannot lose an ordinary hand at is a table you should not be
+ * sitting at, and the cap should be for disasters, not for Tuesdays.
+ */
+export const ENTRY_POTS = 6;
+
+/** Below one pot at the cheapest table you cannot play at all: bankrupt. */
+export const BANKRUPT_THRESHOLD = STARTER_POT;
+
+/**
+ * Leave the rescue table at exactly the point you can sit at the cheapest
+ * normal one. Holding anybody in rescue past that is pointless, and releasing
+ * them before it only sends them straight back: the old threshold of two pots
+ * handed a player a stack that one ordinary landlord hand took most of.
+ * About a dozen net hands at the 400 pot, which is a stint rather than a
+ * sentence.
+ */
+export const RESCUE_EXIT = STARTER_POT * ENTRY_POTS;
 
 /**
  * The most one hand can move, as a multiple of the pot, win or lose. Uniform
@@ -82,23 +109,33 @@ export const HAND_CAP_FACTOR = 50;
  * @property {boolean} [rescue]    the bankruptcy table
  */
 
-/** @type {Lobby[]} */
-export const LOBBIES = [
-  { id: 'rescue', name: 'Rescue Table', short: '400', pot: 400, baseMultiplier: 2, entry: 0, capFactor: HAND_CAP_FACTOR, skill: 'novice', botElo: 800, rescue: true,
+/** @type {Omit<Lobby, 'entry'>[]} */
+const LOBBY_DEFS = [
+  { id: 'rescue', name: 'Rescue Table', short: '400', pot: 400, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'novice', botElo: 800, rescue: true,
     blurb: 'No entry fee, no bankruptcy. Grind back to 2,000 and you are out of here.' },
-  { id: 'starter', name: 'Starter Room', short: '1K', pot: STARTER_POT, baseMultiplier: 2, entry: STARTER_POT, capFactor: HAND_CAP_FACTOR, skill: 'casual', botElo: 1_000,
+  { id: 'starter', name: 'Starter Room', short: '1K', pot: STARTER_POT, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'casual', botElo: 1_000,
     blurb: 'The default table. Bots play a loose social game.' },
-  { id: 'bronze', name: 'Bronze Hall', short: '10K', pot: 10_000, baseMultiplier: 2, entry: 12_000, capFactor: HAND_CAP_FACTOR, skill: 'steady', botElo: 1_200,
+  { id: 'bronze', name: 'Bronze Hall', short: '10K', pot: 10_000, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'steady', botElo: 1_200,
     blurb: 'Bots stop throwing away kickers and start defending as a pair.' },
-  { id: 'silver', name: 'Silver Hall', short: '50K', pot: 50_000, baseMultiplier: 2, entry: 60_000, capFactor: HAND_CAP_FACTOR, skill: 'sharp', botElo: 1_400,
+  { id: 'silver', name: 'Silver Hall', short: '50K', pot: 50_000, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'sharp', botElo: 1_400,
     blurb: 'Bots count the played pile from here up.' },
-  { id: 'gold', name: 'Gold Salon', short: '100K', pot: 100_000, baseMultiplier: 2, entry: 120_000, capFactor: HAND_CAP_FACTOR, skill: 'expert', botElo: 1_600,
+  { id: 'gold', name: 'Gold Salon', short: '100K', pot: 100_000, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'expert', botElo: 1_600,
     blurb: 'Tight bidding, disciplined bombs, punishing endgames.' },
-  { id: 'ruby', name: 'Ruby Salon', short: '500K', pot: 500_000, baseMultiplier: 2, entry: 600_000, capFactor: HAND_CAP_FACTOR, skill: 'master', botElo: 1_800,
+  { id: 'ruby', name: 'Ruby Salon', short: '500K', pot: 500_000, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'master', botElo: 1_800,
     blurb: 'Rarely misreads a hand. Expect to be squeezed.' },
-  { id: 'legend', name: 'Legend Table', short: '1M', pot: 1_000_000, baseMultiplier: 2, entry: 1_200_000, capFactor: HAND_CAP_FACTOR, skill: 'grandmaster', botElo: 2_000,
+  { id: 'legend', name: 'Legend Table', short: '1M', pot: 1_000_000, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'grandmaster', botElo: 2_000,
     blurb: 'Near the ceiling of the evaluation. It still errs, about one move in thirty.' },
 ];
+
+/**
+ * Entry is derived, so the ladder cannot drift out of step with ENTRY_POTS the
+ * way a hand-written column did. The rescue table has no entry at all: it is
+ * where you go when you can afford nothing.
+ */
+export const LOBBIES = LOBBY_DEFS.map((lobby) => ({
+  ...lobby,
+  entry: lobby.rescue ? 0 : lobby.pot * ENTRY_POTS,
+}));
 
 export const NORMAL_LOBBIES = LOBBIES.filter((l) => !l.rescue);
 export const RESCUE_LOBBY = LOBBIES.find((l) => l.rescue);
