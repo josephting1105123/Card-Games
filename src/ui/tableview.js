@@ -167,41 +167,91 @@ export class TableView {
    * anybody wait for it, and nine nodes is nothing next to the table it is
    * standing in front of. Everything moves on transform and opacity only, so it
    * stays on the compositor and costs no layout.
+   *
+   * A card is never destroyed on screen: `deal-out` lands at full opacity, at a
+   * destination read from the real seats and hand rather than guessed, and the
+   * real cards there only go visible once their seat's last flyer has landed —
+   * on the same frame, so the felt is never briefly empty and nothing pops in
+   * out of nowhere.
    */
   async dealIn() {
     if (!this.animationsOn()) return;
-    const targets = {
-      left: { dx: '-32vw', dy: '-8vh', dr: '-14deg' },
-      right: { dx: '32vw', dy: '-8vh', dr: '14deg' },
-      self: { dx: '0vw', dy: '26vh', dr: '4deg' },
-    };
+    const order = ['left', 'right', 'self'];
+    const hideClass = { left: 'is-dealing-left', right: 'is-dealing-right', self: 'is-dealing-self' };
+    const table = this.nodes.table;
+    table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bid');
+
     const dealer = el('div.dealer');
+    const flyers = { left: [], right: [], self: [] };
+    const lastIndex = {};
     for (let i = 0; i < 9; i++) {
+      const slot = order[i % 3];
+      lastIndex[slot] = i;
       const card = cardElement(null, { faceDown: true });
       card.classList.add('dealer__card');
-      const to = targets[['left', 'right', 'self'][i % 3]];
       card.style.setProperty('--i', String(i));
       card.style.setProperty('--sx', i % 2 ? '26px' : '-26px');
       card.style.setProperty('--sr', i % 2 ? '7deg' : '-7deg');
-      card.style.setProperty('--dx', to.dx);
-      card.style.setProperty('--dy', to.dy);
-      card.style.setProperty('--dr', to.dr);
       dealer.append(card);
+      flyers[slot].push(card);
     }
     this.nodes.felt.append(dealer);
-    this.nodes.table.classList.add('is-dealing');
     this.dealer = dealer;
 
     dealer.classList.add('is-shuffling');
     await wait(560);
     if (!dealer.isConnected) return;
+
+    // Measured once, right here, never inside the flight: is-dealing-* keeps
+    // these at opacity 0 but they are laid out all along, so their rects are
+    // real. Everything below is transform/opacity math from that one pass.
+    const anchor = dealer.getBoundingClientRect();
+    const anchorX = anchor.left + anchor.width / 2;
+    const anchorY = anchor.top + anchor.height * 0.46;
+    const flyerWidth = flyers.left[0].getBoundingClientRect().width;
+    const containers = { left: this.nodes.leftSeat.backs, right: this.nodes.rightSeat.backs, self: this.nodes.handInner };
+    for (const slot of order) {
+      const container = containers[slot];
+      const rect = container.getBoundingClientRect();
+      const cardRect = (container.querySelector('.card') ?? container).getBoundingClientRect();
+      const dx = rect.left + rect.width / 2 - anchorX;
+      const dy = rect.top + rect.height / 2 - anchorY;
+      const scale = (cardRect.width || flyerWidth) / flyerWidth;
+      for (const card of flyers[slot]) {
+        card.style.setProperty('--dx', `${dx}px`);
+        card.style.setProperty('--dy', `${dy}px`);
+        card.style.setProperty('--ds', scale.toFixed(3));
+      }
+    }
+
     dealer.classList.remove('is-shuffling');
     dealer.classList.add('is-flying');
-    await wait(720);
 
+    // 45ms stagger, 260ms flight (both inside the spec's 45-60/260-320 range):
+    // the round-robin order means each seat's *last* card lands a beat after
+    // the one before it, so the reveals land in deal order for free.
+    const STAGGER = 45;
+    const FLIGHT = 260;
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const revealSeat = async (slot) => {
+      await wait(lastIndex[slot] * STAGGER + FLIGHT);
+      if (!dealer.isConnected) return;
+      table.classList.remove(hideClass[slot]);
+      // Hold the flyers one more frame so the browser paints the real cards
+      // and the landed flyers together before the flyers disappear.
+      await nextFrame();
+      for (const card of flyers[slot]) card.remove();
+    };
+    await Promise.all(order.map(revealSeat));
+    if (!dealer.isConnected) return;
     dealer.remove();
     this.dealer = null;
-    this.nodes.table.classList.remove('is-dealing');
+
+    // The bid panel has nothing to hand over to and no flight of its own, so
+    // it needs no further wait: dealer.remove() above already only runs once
+    // every seat, including the hand, is on the felt, which is all "arrives
+    // last, after the hand is visible" asks for.
+    table.classList.remove('is-dealing-bid');
   }
 
   clearSpeech() {
