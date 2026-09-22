@@ -14,7 +14,6 @@ import { makeRng, randomSeed } from '../core/rng.js';
 import { Phase, bid, createGame, pass, play, seatView } from '../games/doudizhu/engine.js';
 import { botTurn } from '../games/doudizhu/match.js';
 import { SKILLS, skillByName } from '../games/doudizhu/ai.js';
-import { describeCombo } from '../games/doudizhu/rules.js';
 import { TableView } from './tableview.js';
 import { announce, wait } from './dom.js';
 
@@ -38,7 +37,7 @@ export class SoloGame {
     this.view = new TableView({
       root,
       meta: {
-        lobbyName: `${this.lobby.name} · ${this.lobby.short}`,
+        lobbyName: this.lobby.name,
         potLabel: formatChips(this.lobby.pot, true),
         bankroll: this.app.profile.bankroll,
         baseMultiplier: this.lobby.baseMultiplier,
@@ -69,8 +68,8 @@ export class SoloGame {
       seed: this.seed,
       players: [
         { id: 'you', name: this.app.profile.name || 'You' },
-        { id: 'bot1', name: `${names[0]} (${this.skill.name})`, isBot: true, skill: this.skill },
-        { id: 'bot2', name: `${names[1]} (${this.skill.name})`, isBot: true, skill: this.skill },
+        { id: 'bot1', name: names[0], isBot: true, skill: this.skill },
+        { id: 'bot2', name: names[1], isBot: true, skill: this.skill },
       ],
     });
     this.settled = false;
@@ -105,17 +104,16 @@ export class SoloGame {
     else this.refresh();
   }
 
+  /**
+   * Bidding is the only part of a turn with nothing to show for itself, so it is
+   * the only part that gets a spoken bubble. Plays and passes land on the felt
+   * in front of whoever made them and need no caption.
+   */
   reportBotAction(acted) {
+    if (acted.kind !== 'bid') return;
     const name = this.state.players[acted.seat]?.name ?? 'Bot';
-    if (acted.kind === 'bid') {
-      this.view.say(acted.seat, acted.value === 0 ? 'No call' : `${acted.value} point${acted.value > 1 ? 's' : ''}`);
-      announce(`${name} ${acted.value === 0 ? 'passes the call' : `calls ${acted.value}`}`);
-    } else if (acted.kind === 'pass') {
-      this.view.say(acted.seat, 'Pass');
-    } else if (acted.cards) {
-      const combo = this.state.plays[this.state.plays.length - 1]?.combo;
-      this.view.say(acted.seat, combo ? describeCombo(combo) : 'Plays');
-    }
+    this.view.say(acted.seat, acted.value === 0 ? 'No call' : `${acted.value}`);
+    announce(`${name} ${acted.value === 0 ? 'passes the call' : `calls ${acted.value}`}`);
   }
 
   onBid(value) {
