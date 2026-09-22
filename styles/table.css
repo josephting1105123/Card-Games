@@ -184,8 +184,8 @@
   animation-delay: calc(var(--i, 0) * 12ms);
 }
 .dealer.is-flying .dealer__card {
-  animation: deal-out 380ms var(--ease) forwards;
-  animation-delay: calc(var(--i, 0) * 38ms);
+  animation: deal-out 260ms var(--ease) forwards;
+  animation-delay: calc(var(--i, 0) * 45ms);
 }
 
 @keyframes deal-shuffle {
@@ -194,22 +194,26 @@
   70% { transform: translate(calc(-50% - var(--sx)), calc(-50% + 6px)) rotate(calc(var(--sr) * -1)); }
 }
 @keyframes deal-out {
-  from { transform: translate(-50%, -50%) rotate(0deg) scale(1); opacity: 1; }
-  to {
-    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(var(--dr)) scale(0.7);
-    opacity: 0;
-  }
+  /* --dx/--dy/--ds come from tableview.js's one measurement pass, in px off the
+     dealer stack's own centre — never a guessed vw/vh. Opacity stays at 1 the
+     whole flight: a card lands, it does not fade away mid-air. */
+  from { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(var(--ds, 1)); opacity: 1; }
 }
 
-/* The table holds its breath while the deck is being dealt. */
-.hand, .bid-panel, .controls, .seat__backs, .bottom-cards {
-  transition: opacity var(--dur-slow) var(--ease-std);
-}
-.table.is-dealing .hand,
-.table.is-dealing .bid-panel,
-.table.is-dealing .controls,
-.table.is-dealing .seat__backs,
-.table.is-dealing .bottom-cards {
+/* The table holds its breath per seat, not all at once: a seat's real cards
+   replace its last flyer on the same frame (see dealIn's revealSeat), so nothing
+   here ever fades from visible to hidden — only the reverse, once. No
+   transition on any of these: the bid panel's `hidden` attribute flips in the
+   same tick this class is added, and a transition there would run from the
+   opacity it had while display:none, flashing it in and fading it back out
+   before its real reveal. */
+.table.is-dealing-left .seat--left .seat__backs,
+.table.is-dealing-right .seat--right .seat__backs,
+.table.is-dealing-self .hand,
+.table.is-dealing-self .controls,
+.table.is-dealing-self .bottom-cards,
+.table.is-dealing-bid .bid-panel {
   opacity: 0;
   /* Invisible but still clickable would let a fast tap bid before the cards
      have landed. */
