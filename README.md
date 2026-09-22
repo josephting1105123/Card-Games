@@ -25,10 +25,18 @@ node server/server.js     # host for local network play, also serves the app
 ## Installing
 
 **From GitHub Pages.** Push to `main` and the Pages workflow publishes the repo
-root. In the repository settings, set Pages → Source → *GitHub Actions* once, and
-the site appears at `https://<user>.github.io/Card-Games/`. Open it and use your
-browser's *Install* or *Add to Home Screen*: it is a PWA, caches itself on first
-load, and then runs with no network at all.
+root.
+
+This needs one manual step, once: **Settings → Pages → Source → GitHub Actions**.
+There is no way around it from inside the workflow — creating a Pages site is
+beyond what the default `GITHUB_TOKEN` is allowed to do, and
+`configure-pages`'s `enablement` input fails with *Resource not accessible by
+integration*. Until it is set, the deploy job fails with *Get Pages site failed*;
+after it is set, re-run the workflow and every later push deploys on its own.
+
+The site then appears at `https://<user>.github.io/Card-Games/`. Open it and use
+your browser's *Install* or *Add to Home Screen*: it is a PWA, caches itself on
+first load, and then runs with no network at all.
 
 **From a folder.** Any static server works, or use the bundled one:
 
