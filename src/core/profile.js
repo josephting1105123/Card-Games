@@ -28,7 +28,10 @@ export function defaultProfile() {
     rescueMode: false,
     lastLobby: 'starter',
     games: {},
-    settings: { lang: 'en', animations: true, sound: false, hints: true },
+    // Only settings something actually reads belong here. There is no settings
+    // screen yet; `animations` is consulted by the solo table to decide how long
+    // to pause between bot turns.
+    settings: { animations: true },
     created: Date.now(),
   };
 }

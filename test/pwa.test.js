@@ -144,3 +144,32 @@ test('the interface quotes the thresholds rather than hard-coding them', () => {
     }
   }
 });
+
+test('every stored setting is read by something', () => {
+  // Settings that nothing consults are a promise the app does not keep; three
+  // of them accumulated before anyone noticed.
+  const profileSource = read('src/core/profile.js');
+  const block = profileSource.slice(profileSource.indexOf('settings: {'), profileSource.indexOf('}', profileSource.indexOf('settings: {')));
+  const keys = [...block.matchAll(/(\w+):/g)].map((m) => m[1]).filter((k) => k !== 'settings');
+  assert.ok(keys.length > 0, 'could not find the default settings');
+  const ui = ['src/ui/screens.js', 'src/ui/solo.js', 'src/ui/lan.js', 'src/ui/tableview.js', 'src/main.js']
+    .map(read).join('\n');
+  for (const key of keys) {
+    assert.ok(new RegExp(`settings\\??\\.${key}\\b`).test(ui), `nothing reads profile setting "${key}"`);
+  }
+});
+
+test('the table view only reads fields a seat view actually sends', () => {
+  // The hint highlight silently stopped clearing because this read view.plays,
+  // which seatView has never emitted.
+  const engine = read('src/games/doudizhu/engine.js');
+  const viewBlock = engine.slice(engine.indexOf('export function seatView'), engine.indexOf('/** Deep copy'));
+  // [:,] so shorthand properties such as `seat,` are counted as sent too.
+  const sent = new Set([...viewBlock.matchAll(/^\s{4}(\w+)[:,]/gm)].map((m) => m[1]));
+  for (const extra of ['you', 'players', 'trick', 'bidding', 'result']) sent.add(extra);
+  const tableview = read('src/ui/tableview.js');
+  const readFields = [...tableview.matchAll(/\bview\.(\w+)/g)].map((m) => m[1]);
+  for (const field of new Set(readFields)) {
+    assert.ok(sent.has(field), `tableview reads view.${field}, which seatView does not send`);
+  }
+});
