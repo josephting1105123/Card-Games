@@ -1,7 +1,15 @@
 # Card Games
 
+### [▶ Play it here](https://josephting1105123.github.io/Card-Games/)
+
+[![Deploy](https://github.com/josephting1105123/Card-Games/actions/workflows/pages.yml/badge.svg)](https://github.com/josephting1105123/Card-Games/actions/workflows/pages.yml)
+[![Tests](https://github.com/josephting1105123/Card-Games/actions/workflows/ci.yml/badge.svg)](https://github.com/josephting1105123/Card-Games/actions/workflows/ci.yml)
+
 A collection of classic card games in the browser. Dou Di Zhu (斗地主) is playable
 now; the rest are queued and keep their place in the menu.
+
+Open the link above on a phone and add it to your home screen: it installs like
+an app, opens full screen in landscape, and runs with no signal at all.
 
 No build step, no dependencies, no accounts. The whole app is ES modules served
 as-is, which is why it installs straight from GitHub Pages and why the local
@@ -34,9 +42,9 @@ beyond what the default `GITHUB_TOKEN` is allowed to do, and
 integration*. Until it is set, the deploy job fails with *Get Pages site failed*;
 after it is set, re-run the workflow and every later push deploys on its own.
 
-The site then appears at `https://<user>.github.io/Card-Games/`. Open it and use
-your browser's *Install* or *Add to Home Screen*: it is a PWA, caches itself on
-first load, and then runs with no network at all.
+The site then appears at **<https://josephting1105123.github.io/Card-Games/>**. Open it and use your browser's *Install* or
+*Add to Home Screen*: it is a PWA, caches itself on first load, and then runs
+with no network at all.
 
 **From a folder.** Any static server works, or use the bundled one:
 
