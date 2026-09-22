@@ -15,6 +15,8 @@ jobs:
           node-version: '22'
       - name: Run the test suite
         run: npm test
+      - name: Check the service worker stamp is current
+        run: node tools/stamp-sw.mjs --check
       - name: Check the icons still regenerate identically
         run: |
           node tools/make-icons.mjs

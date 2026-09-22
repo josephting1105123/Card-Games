@@ -6,10 +6,14 @@
  * index.html so a deep link still opens offline. Anything else (the /lan
  * WebSocket, /api/info) is left alone.
  *
- * Bump CACHE whenever a file changes; the old cache is deleted on activate.
+ * CACHE carries a hash of everything in PRECACHE, written by
+ * tools/stamp-sw.mjs and checked by the test suite. It must change whenever a
+ * shipped file does, or a returning visitor is served the old app for ever: the
+ * browser only installs a new worker when sw.js itself differs. Do not edit the
+ * stamp by hand.
  */
 
-const CACHE = 'card-games-v3';
+const CACHE = 'card-games-1aecb861cb07';
 
 const PRECACHE = [
   './',

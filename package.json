@@ -9,6 +9,7 @@
     "test": "node --test \"test/*.test.js\"",
     "serve": "node server/server.js",
     "icons": "node tools/make-icons.mjs",
+    "stamp": "node tools/stamp-sw.mjs",
     "sim": "node tools/sim.mjs"
   },
   "engines": {

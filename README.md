@@ -223,6 +223,8 @@ audit.
 ```
 index.html              app shell
 sw.js                   service worker: precache everything, run offline
+                        (its cache name is a hash of what it caches, stamped by
+                        tools/stamp-sw.mjs and checked by the tests)
 manifest.webmanifest    PWA manifest (installs landscape)
 styles/tokens.css       palette, type scale, motion, elevation — the only :root
 src/core/               cards, seeded RNG, Elo, chips and lobbies, coins, profile

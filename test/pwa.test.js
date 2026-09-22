@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { currentStamp, precacheHash } from '../tools/stamp-sw.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (file) => readFileSync(join(ROOT, file), 'utf8');
@@ -172,4 +174,28 @@ test('the table view only reads fields a seat view actually sends', () => {
   for (const field of new Set(readFields)) {
     assert.ok(sent.has(field), `tableview reads view.${field}, which seatView does not send`);
   }
+});
+
+test('the service worker cache name tracks what it caches', () => {
+  // Cache-first means a returning visitor keeps the old app until this name
+  // changes, and the browser only installs a new worker when sw.js itself
+  // differs. Shipping a change to any other file without touching sw.js would
+  // freeze every existing installation on the previous version, silently.
+  const source = read('sw.js');
+  assert.equal(currentStamp(source), precacheHash(source),
+    'sw.js stamp is stale \u2014 run: node tools/stamp-sw.mjs');
+});
+
+test('the stamp actually moves when a precached file moves', () => {
+  const source = read('sw.js');
+  const before = precacheHash(source);
+  const target = join(ROOT, 'styles/app.css');
+  const original = readFileSync(target);
+  try {
+    writeFileSync(target, Buffer.concat([original, Buffer.from('\n/* stamp probe */\n')]));
+    assert.notEqual(precacheHash(source), before, 'editing a shipped file must change the stamp');
+  } finally {
+    writeFileSync(target, original);
+  }
+  assert.equal(precacheHash(read('sw.js')), before, 'and restoring it must put the stamp back');
 });
