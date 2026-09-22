@@ -116,7 +116,7 @@
 /* The trick is over: readable, but plainly in the past. */
 .play.is-stale { opacity: 0.4; filter: saturate(0.6); }
 /* The play everyone is trying to beat. */
-.play.is-standing .play__cards .card { filter: drop-shadow(0 0 6px rgba(239, 219, 166, 0.5)) drop-shadow(var(--shadow-1)); }
+.play.is-standing .play__cards .card { box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.55), var(--shadow-1); }
 
 .play__name {
   position: absolute; left: 50%; bottom: -1.5em; transform: translateX(-50%);
@@ -158,6 +158,53 @@
   to { opacity: 1; transform: none; }
 }
 
+/* --- shuffle and deal ------------------------------------------------------
+   Transform and opacity only, so the whole flourish stays on the compositor. */
+
+.dealer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.dealer__card {
+  position: absolute; left: 50%; top: 46%;
+  width: clamp(34px, 5.6vw, 60px);
+  transform: translate(-50%, -50%);
+  will-change: transform, opacity;
+}
+.dealer.is-shuffling .dealer__card {
+  animation: deal-shuffle 260ms var(--ease-std) 2 both;
+  animation-delay: calc(var(--i, 0) * 12ms);
+}
+.dealer.is-flying .dealer__card {
+  animation: deal-out 380ms var(--ease) forwards;
+  animation-delay: calc(var(--i, 0) * 38ms);
+}
+
+@keyframes deal-shuffle {
+  0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+  35% { transform: translate(calc(-50% + var(--sx)), calc(-50% - 9px)) rotate(var(--sr)); }
+  70% { transform: translate(calc(-50% - var(--sx)), calc(-50% + 6px)) rotate(calc(var(--sr) * -1)); }
+}
+@keyframes deal-out {
+  from { transform: translate(-50%, -50%) rotate(0deg) scale(1); opacity: 1; }
+  to {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(var(--dr)) scale(0.7);
+    opacity: 0;
+  }
+}
+
+/* The table holds its breath while the deck is being dealt. */
+.hand, .bid-panel, .controls, .seat__backs, .bottom-cards {
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.table.is-dealing .hand,
+.table.is-dealing .bid-panel,
+.table.is-dealing .controls,
+.table.is-dealing .seat__backs,
+.table.is-dealing .bottom-cards {
+  opacity: 0;
+  /* Invisible but still clickable would let a fast tap bid before the cards
+     have landed. */
+  pointer-events: none;
+}
+
 .bid-panel {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   text-align: center; padding: 18px 26px; border-radius: var(--r-lg);
@@ -186,20 +233,22 @@
   --card-w: clamp(44px, 7.4vw, 82px);
   width: var(--card-w); aspect-ratio: 100 / 140; padding: 0; border: 0;
   background: none; display: block; line-height: 0;
-  filter: drop-shadow(var(--shadow-1));
-}
-.card-svg, .cg-card-svg { width: 100%; height: 100%; display: block; }
-.cg-face.cg-red { color: #b4232c; fill: #b4232c; }
-.cg-face.cg-black { color: #1d1b17; fill: #1d1b17; }
-.cg-index, .cg-court-letter, .cg-joker {
-  font-family: var(--font); font-weight: 600; fill: currentColor;
-  /* Lining figures only: an old-style 3 or 4 hanging below the baseline reads
-     as the wrong card at a glance. */
+  /* A box-shadow on the element beats a drop-shadow on the artwork: the filter
+     is evaluated per pixel of a forty-card table, the shadow is not. */
+  border-radius: 6px;
+  box-shadow: var(--shadow-1);
+  /* Everything below is inherited into the <use> shadow tree, which outer
+     selectors cannot reach. It is how the artwork gets its suit colour and its
+     typeface. */
+  font-family: var(--font);
+  font-weight: 600;
   font-variant-numeric: lining-nums;
   font-feature-settings: 'lnum' 1;
 }
-.cg-index-suit, .cg-joker-star { fill: currentColor; }
-.cg-court rect[fill="#fdf8ec"] { fill: #fdf8ec; }
+.card--red { color: #b4232c; }
+.card--black { color: #1d1b17; }
+.card--down { color: #d8b86a; }
+.card-svg, .cg-card-svg { width: 100%; height: 100%; display: block; }
 
 .hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
@@ -207,9 +256,14 @@
   cursor: pointer; border-radius: var(--r-xs);
 }
 .hand .card:hover { transform: translateY(-9px); }
-.hand .card.is-selected { transform: translateY(-22px); filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.5)); }
+.hand .card.is-selected { transform: translateY(-22px); box-shadow: 0 10px 12px rgba(0, 0, 0, 0.5); }
 .hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--gold-bright); outline-offset: -2px; border-radius: var(--r-xs); }
 .hand .card:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+
+/* No legal answer: the whole fan greys and stops responding, so Pass is plainly
+   the only move left. Said without a sentence. */
+.hand.is-stuck .card { filter: grayscale(1) brightness(0.62); cursor: default; }
+.hand.is-stuck .card:hover { transform: none; }
 
 .controls { display: flex; align-items: center; justify-content: center; gap: clamp(8px, 1.6vw, 16px); flex-wrap: wrap; }
 .controls__you { font-size: 14.5px; color: var(--text-tertiary); }

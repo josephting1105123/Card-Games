@@ -9,7 +9,7 @@
  * <use>, which keeps a twenty-card fan cheap to build and repaint.
  */
 
-import { JOKER_COLOUR, SUIT_COLOUR, SUIT_SYMBOL, isJoker, rankIndex, rankLabel } from '../core/cards.js';
+import { JOKER_COLOUR, SUIT_COLOUR, SUIT_SYMBOL, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
 
 const VB_W = 100;
 const VB_H = 140;
@@ -84,7 +84,33 @@ export function installCardDefs(doc = globalThis.document) {
     </symbol>
   </defs>
 </svg>`;
+  // Every card in the deck, and the back, defined once. A card element is then
+  // a <use> of one of these: the browser builds the artwork once and instances
+  // it, instead of parsing a fresh SVG document per card. Before this, one table
+  // update parsed forty-four of them and cost 136ms on a phone.
+  const sheet = holder.querySelector('svg');
+  const symbols = [];
+  for (let id = 0; id < 54; id++) {
+    symbols.push(`<symbol id="cg-card-${id}" viewBox="0 0 ${VB_W} ${VB_H}">${cardFaceBody(cardFromId(id))}</symbol>`);
+  }
+  symbols.push(`<symbol id="cg-card-back" viewBox="0 0 ${VB_W} ${VB_H}">${cardBackBody()}</symbol>`);
+  sheet.insertAdjacentHTML('beforeend', symbols.join(''));
   doc.body.appendChild(holder);
+}
+
+/** Prototype nodes, cloned per card. Built lazily, once each. */
+const protos = new Map();
+
+function cardProto(key, symbolId, extraClass) {
+  let proto = protos.get(key);
+  if (!proto) {
+    proto = globalThis.document.createElement('div');
+    proto.className = `card${extraClass ? ` ${extraClass}` : ''}`;
+    proto.innerHTML = `<svg class="cg-card-svg" viewBox="0 0 ${VB_W} ${VB_H}" aria-hidden="true">`
+      + `<use href="#${symbolId}" width="${VB_W}" height="${VB_H}"/></svg>`;
+    protos.set(key, proto);
+  }
+  return proto;
 }
 
 function pip(suit, x, y, scale = 1, flipped = false) {
@@ -170,7 +196,10 @@ export function cardFaceBody(card) {
     + `<text class="cg-index" x="12.5" y="23" font-size="14.5" text-anchor="middle">★</text></g>`;
   const indices = isJoker(card) ? star(false) + star(true) : cornerIndex(card, false) + cornerIndex(card, true);
 
-  return `<g class="cg-face cg-${colour}">${frame}${indices}${centre}</g>`;
+  // fill="currentColor" and nothing else: a <use> shadow tree cannot be styled
+  // by outer selectors, only reached by inherited properties, so the suit colour
+  // arrives as `color` on the host .card element.
+  return `<g fill="currentColor" data-colour="${colour}">${frame}${indices}${centre}</g>`;
 }
 
 /** A complete face as an SVG string. */
@@ -180,15 +209,19 @@ export function cardFaceSVG(card) {
 
 /** A complete back as an SVG string. */
 export function cardBackSVG() {
-  return `<svg class="cg-card-svg" viewBox="0 0 ${VB_W} ${VB_H}" role="img" aria-label="Face-down card">
+  return `<svg class="cg-card-svg" viewBox="0 0 ${VB_W} ${VB_H}" role="img" aria-label="Face-down card">${cardBackBody()}</svg>`;
+}
+
+/** The back's contents, without the <svg> wrapper. */
+export function cardBackBody() {
+  return `
     <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-back-field)" stroke="url(#cg-gold)" stroke-width="1.5"/>
     <rect x="5" y="5" width="${VB_W - 10}" height="${VB_H - 10}" rx="5" fill="url(#cg-guilloche)"/>
     <rect x="5" y="5" width="${VB_W - 10}" height="${VB_H - 10}" rx="5" fill="url(#cg-back-glow)"/>
     <rect x="5" y="5" width="${VB_W - 10}" height="${VB_H - 10}" rx="5" fill="none" stroke="#d8b86a" stroke-width="0.8" opacity="0.8"/>
     <ellipse cx="50" cy="70" rx="24" ry="34" fill="#5c1320" opacity="0.55" stroke="#d8b86a" stroke-width="0.8"/>
     <g color="#d8b86a"><use href="#cg-filigree" x="26" y="46" width="48" height="48"/></g>
-    <g color="#e8d49a"><use href="#cg-crown" x="36" y="58" width="28" height="17"/></g>
-  </svg>`;
+    <g color="#e8d49a"><use href="#cg-crown" x="36" y="58" width="28" height="17"/></g>`;
 }
 
 export function cardAria(card) {
@@ -202,21 +235,33 @@ export function cardAria(card) {
  * @param {{selectable?: boolean, index?: number, faceDown?: boolean}} [opts]
  */
 export function cardElement(card, opts = {}) {
-  const doc = globalThis.document;
-  const el = doc.createElement(opts.selectable ? 'button' : 'div');
-  el.className = 'card';
+  const down = !card || opts.faceDown;
+  const colour = down ? '' : isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
+  const key = down ? 'back' : `${card.id}:${colour}`;
+  const el = cardProto(
+    key,
+    down ? 'cg-card-back' : `cg-card-${card.id}`,
+    down ? 'card--down' : `card--${colour}`,
+  ).cloneNode(true);
+
   if (opts.selectable) {
-    el.type = 'button';
-    el.setAttribute('aria-pressed', 'false');
+    // A button cannot be cloned from a div prototype, so the interactive case
+    // wraps the same artwork rather than reparsing it.
+    const button = globalThis.document.createElement('button');
+    button.className = el.className;
+    button.type = 'button';
+    button.setAttribute('aria-pressed', 'false');
+    button.append(...el.childNodes);
+    if (!down) {
+      button.dataset.cardId = String(card.id);
+      button.dataset.rank = String(card.rank);
+      button.setAttribute('aria-label', cardAria(card));
+    }
+    return button;
   }
-  if (!card || opts.faceDown) {
-    el.classList.add('card--down');
-    el.innerHTML = cardBackSVG();
-  } else {
+  if (!down) {
     el.dataset.cardId = String(card.id);
     el.dataset.rank = String(card.rank);
-    el.innerHTML = cardFaceSVG(card);
-    if (opts.selectable) el.setAttribute('aria-label', cardAria(card));
   }
   return el;
 }

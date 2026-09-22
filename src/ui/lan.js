@@ -286,9 +286,13 @@ class LanScreens {
   }
 
   onView(message) {
+    const firstOfDeal = this.view?.deal !== message.view.deal;
     this.view = message.view;
     if (!this.table) this.renderTable();
     this.table.update(message.view);
+    // The host drives the hand, so the flourish runs alongside rather than
+    // holding anything up.
+    if (firstOfDeal) this.table.dealIn();
   }
 
   onEvent(message) {

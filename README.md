@@ -8,7 +8,7 @@ as-is, which is why it installs straight from GitHub Pages and why the local
 network host is a single `node` command with nothing to install first.
 
 ```
-npm test                  # 91 tests, about 1.5 seconds
+npm test                  # 93 tests, about 1.5 seconds
 node server/server.js     # host for local network play, also serves the app
 ```
 
@@ -249,12 +249,44 @@ where the cards are and how they got there. The play still standing is the brigh
 one; a finished trick greys out rather than blinking away, so you can see what
 just happened.
 
+A hand is dealt with a short shuffle-and-deal flourish, and when nothing in your
+hand can answer what is on the table the whole fan greys out and stops
+responding, leaving Pass as the only live control — said without a sentence.
+
 There is exactly one caption on the felt: two words naming the play you have to
 beat, under the play that stands. Everything else the table used to say — a
 running commentary of "Rong (Casual): Pair 3", a bubble by each seat repeating
 it, a pill for whose turn it is — is gone. The seat on turn is ringed, the pot
 rides along with the table's name, and the only words left in the head-up display
 are the coin you are counting in.
+
+### Keeping it fast
+
+The table is drawn for phones, so the render path is built around two rules.
+
+**The deck's artwork exists once.** All 54 faces and the back are defined as SVG
+`<symbol>`s at start-up; every card on the table is a `<use>` of one of them,
+cloned from a two-node prototype. Before that, each card parsed a fresh SVG
+document, and a single table update parsed forty-four of them. Colour and
+typeface reach the artwork as inherited properties (`color`, `font-family`),
+because outer CSS cannot select inside a `<use>` shadow tree.
+
+**Nothing is rebuilt unless it changed.** The hand, the bottom three and the
+bidding panel each carry a signature and skip the work when it matches; the
+opponents' card backs are added and removed by the difference rather than torn
+down. A bot playing one card used to re-make the whole twenty-card fan.
+
+Shadows are `box-shadow` on the element rather than `filter: drop-shadow` on the
+artwork, and every animation moves only `transform` and `opacity`.
+
+Measured at 844x390 with the CPU throttled 6x, which is roughly a mid-range
+phone:
+
+| | Before | After |
+| --- | --- | --- |
+| One table update | 136 ms | 2.2 ms |
+| Tap a card to painted | 260 ms | 20 ms |
+| Building the deck's artwork | — | 33 ms, once |
 
 ### The cards
 

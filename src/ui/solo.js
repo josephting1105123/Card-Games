@@ -42,6 +42,7 @@ export class SoloGame {
         bankroll: this.app.profile.bankroll,
         baseMultiplier: this.lobby.baseMultiplier,
         currency: SOLO_CURRENCY,
+        animations: this.app.profile.settings?.animations !== false,
       },
       handlers: {
         onBid: (value) => this.onBid(value),
@@ -74,7 +75,10 @@ export class SoloGame {
     });
     this.settled = false;
     this.refresh();
-    this.drive();
+    // Shuffle and deal first; the bots wait for the cards to land.
+    this.view.dealIn().then(() => {
+      if (!this.stopped) this.drive();
+    });
   }
 
   refresh() {
