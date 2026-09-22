@@ -52,7 +52,7 @@ export function renderMenu(app, root) {
 
   const doudizhu = gameStats(profile, 'doudizhu');
   const record = el('div.card-panel',
-    el('h2', { style: 'font-family:var(--serif);margin:0 0 12px;font-size:20px' }, 'Your record'),
+    el('h2', { style: 'font-family:var(--font);margin:0 0 12px;font-size:20px' }, 'Your record'),
     el('div.stat-grid',
       stat('Chips', formatChips(profile.bankroll)),
       stat('Dou Di Zhu Elo', `${doudizhu.rating}`),
@@ -115,7 +115,7 @@ export function renderMode(app, root, gameId) {
       ),
       el('div.rule'),
       el('div.card-panel',
-        el('h2', { style: 'font-family:var(--serif);margin:0 0 10px;font-size:19px' }, 'House rules'),
+        el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'House rules'),
         el('ul', { style: 'margin:0;padding-left:20px;line-height:1.75;color:#cfc9ba;font-size:14px' },
           ...(game.ruleNotes ?? []).map((note) => el('li', note)),
         ),
@@ -164,7 +164,7 @@ export function renderLobby(app, root, gameId) {
       grid,
       el('div.rule'),
       el('div.card-panel',
-        el('h2', { style: 'font-family:var(--serif);margin:0 0 10px;font-size:19px' }, 'How the caps work'),
+        el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'How the caps work'),
         el('ul', { style: 'margin:0;padding-left:20px;line-height:1.75;color:#cfc9ba;font-size:14px' },
           el('li', 'A single hand can never take more than 60% of your chips, whatever the table.'),
           el('li', 'Each table also has its own ceiling: the pot times its cap factor.'),

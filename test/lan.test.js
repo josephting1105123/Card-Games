@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { acceptKey, attachWebSocket } from '../server/ws.js';
+import { EventEmitter } from 'node:events';
+import { WsConnection, acceptKey, attachWebSocket } from '../server/ws.js';
 import { RoomHub } from '../server/rooms.js';
 import { S2C } from '../src/net/protocol.js';
+import { DEFAULT_ROOM_CURRENCY, SOLO_CURRENCY } from '../src/core/currency.js';
 import { ALPHABET, CODE_LENGTH, formatCode, generateCode, parseCode, socketUrlFor } from '../src/net/roomcode.js';
 import { legalPlays } from '../src/games/doudizhu/moves.js';
 
@@ -85,6 +87,21 @@ class Client {
     });
   }
 
+  /** Drop anything already buffered, so next() waits for a genuinely new message. */
+  drain(type) {
+    this.inbox = this.inbox.filter((m) => m.t !== type);
+  }
+
+  /** Wait for a message of `type` that satisfies `predicate`, skipping earlier ones. */
+  async until(type, predicate, timeoutMs = 4_000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const message = await this.next(type, Math.max(50, deadline - Date.now()));
+      if (predicate(message)) return message;
+      if (Date.now() > deadline) throw new Error(`no matching "${type}" arrived`);
+    }
+  }
+
   close() {
     this.socket.close();
   }
@@ -118,6 +135,8 @@ test('two clients share a room and play a hand to a settled result', async (t) =
   const created = await alice.next(S2C.ROOM);
   assert.equal(created.room.settings.pot, 2_000);
   assert.equal(created.room.seats[0].name, 'Alice');
+  assert.equal(created.room.settings.currency, DEFAULT_ROOM_CURRENCY,
+    'a room the host did not price keeps score in the room default, not chips');
   const code = created.room.code;
 
   const bob = new Client(host.url);
@@ -238,4 +257,90 @@ test('a capped hand still conserves chips in a room', async (t) => {
   const startingTotal = 75_000;
   assert.equal(settlement.rows.reduce((sum, row) => sum + row.chips, 0), startingTotal,
     'the chips in the room are the same before and after');
+});
+
+test('a room carries the host\'s chosen currency to everyone in it', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = new Client(host.url);
+  await alice.ready();
+  await alice.next(S2C.WELCOME);
+  alice.send({ t: 'create', name: 'Alice', settings: { currency: 'points', pot: 5, startingChips: 100, humanSeats: 2 } });
+  const created = await alice.next(S2C.ROOM);
+  assert.equal(created.room.settings.currency, 'points');
+  assert.equal(created.room.settings.pot, 5, 'a small pot is allowed for real-world stakes');
+  assert.notEqual(created.room.settings.currency, SOLO_CURRENCY);
+
+  const bob = new Client(host.url);
+  await bob.ready();
+  await bob.next(S2C.WELCOME);
+  bob.send({ t: 'join', code: created.room.code, name: 'Bob' });
+  const joined = await bob.next(S2C.ROOM);
+  assert.equal(joined.room.settings.currency, 'points', 'a joiner is told what the room counts in');
+
+  bob.drain(S2C.ROOM);
+  alice.send({ t: 'settings', settings: { currency: 'gbp' } });
+  const changed = await bob.next(S2C.ROOM);
+  assert.equal(changed.room.settings.currency, 'gbp', 'the host can change it and everyone sees it');
+  alice.close();
+  bob.close();
+});
+
+/** The parts of a net.Socket that WsConnection actually touches. */
+class FakeSocket extends EventEmitter {
+  constructor() {
+    super();
+    this.writable = true;
+    this.destroyed = false;
+    this.written = [];
+  }
+
+  setTimeout() {}
+  setNoDelay() {}
+  write(chunk, callback) { this.written.push(chunk); callback?.(null); return true; }
+  end() { this.destroyed = true; this.writable = false; }
+}
+
+test('a client that vanishes does not take the host down with it', () => {
+  const socket = new FakeSocket();
+  const conn = new WsConnection(socket);
+  let closed = false;
+  conn.on('close', () => { closed = true; });
+
+  // An EventEmitter with no 'error' listener rethrows, and a reset socket is an
+  // everyday event: a phone sleeping, Wi-Fi dropping, a tab being killed.
+  assert.doesNotThrow(() => {
+    socket.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+  });
+  assert.equal(conn.open, false, 'the connection is closed out');
+  assert.equal(closed, true, 'and its close is reported so the seat can be handled');
+});
+
+test('a reset client frees its seat and the room plays on', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = new Client(host.url);
+  await alice.ready();
+  await alice.next(S2C.WELCOME);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 2 } });
+  const created = await alice.next(S2C.ROOM);
+
+  const bob = new Client(host.url);
+  await bob.ready();
+  await bob.next(S2C.WELCOME);
+  bob.send({ t: 'join', code: created.room.code, name: 'Bob' });
+  await bob.next(S2C.ROOM);
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
+
+  bob.close();
+  const after = await alice.until(S2C.ROOM, (m) => m.room.seats[1].id === null);
+  assert.equal(after.room.seats[1].id, null, "Bob's seat is free again");
+
+  // The host is still healthy enough to deal.
+  alice.send({ t: 'start' });
+  const view = await alice.next(S2C.VIEW);
+  assert.equal(view.view.you.hand.length, 17);
+  alice.close();
 });

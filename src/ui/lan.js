@@ -7,7 +7,7 @@
  * failing mysteriously.
  */
 
-import { formatChips } from '../core/economy.js';
+import { CURRENCIES, DEFAULT_ROOM_CURRENCY, formatMoney } from '../core/currency.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { LanClient } from '../net/client.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, S2C } from '../net/protocol.js';
@@ -54,6 +54,11 @@ class LanScreens {
     this.renderChoice();
   }
 
+  /** Amounts in the room's currency; falls back to the default before a join. */
+  money(value, compact = false) {
+    return formatMoney(value, this.room?.settings?.currency ?? DEFAULT_ROOM_CURRENCY, compact);
+  }
+
   shell(...children) {
     clear(this.root);
     this.root.append(
@@ -89,7 +94,7 @@ class LanScreens {
           el('span.tile__accent'),
           el('h2.tile__name', 'Create a room'),
           el('p.tile__tag', 'You are the host'),
-          el('p.tile__desc', 'Set the pot, the starting chips, the multiplier and how many seats the bots fill, then hand out the code.'),
+          el('p.tile__desc', 'Set the currency, the pot, the starting stack, the multiplier and how many seats the bots fill, then hand out the code.'),
         ),
         el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => this.renderJoin() },
           el('span.tile__accent'),
@@ -100,7 +105,7 @@ class LanScreens {
       ),
       el('div.rule'),
       el('div.card-panel',
-        el('h2', { style: 'font-family:var(--serif);margin:0 0 10px;font-size:19px' }, 'Hosting, in three steps'),
+        el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'Hosting, in three steps'),
         el('ol', { style: 'margin:0;padding-left:20px;line-height:1.8;color:#cfc9ba;font-size:14px' },
           el('li', 'On the host machine: ', el('code', 'node server/server.js')),
           el('li', 'Everyone opens the http://… address it prints, on the same Wi-Fi'),
@@ -113,7 +118,7 @@ class LanScreens {
   renderJoin() {
     const codeInput = el('input.input', {
       id: 'join-code', placeholder: 'ABCDE', maxlength: 32, autocapitalize: 'characters', spellcheck: 'false',
-      style: 'font-family:var(--serif);font-size:24px;letter-spacing:0.18em;text-align:center',
+      style: 'font-family:var(--font);font-size:24px;letter-spacing:0.18em;text-align:center',
     });
     const nameInput = el('input.input', { id: 'join-name', value: this.name, maxlength: 18, placeholder: 'Your name' });
     const status = el('p.footnote', '');
@@ -158,8 +163,18 @@ class LanScreens {
   renderCreate() {
     const s = { ...DEFAULT_SETTINGS };
     const nameInput = el('input.input', { value: this.name, maxlength: 18, placeholder: 'Your name' });
+    const currency = select('set-currency',
+      CURRENCIES.map((c) => ({ value: c.code, label: c.name })), s.currency);
     const pot = numberInput('set-pot', s.pot, SETTING_LIMITS.pot);
     const chips = numberInput('set-chips', s.startingChips, SETTING_LIMITS.startingChips);
+    const preview = el('span.field__hint', '');
+    const refreshPreview = () => {
+      const code = currency.value;
+      preview.textContent = `Pot ${formatMoney(Number(pot.value) || 0, code)} · stack ${formatMoney(Number(chips.value) || 0, code)} · a landlord win at ×2 settles ${formatMoney((Number(pot.value) || 0) * 2 * 2, code)}`;
+    };
+    currency.addEventListener('change', refreshPreview);
+    pot.addEventListener('input', refreshPreview);
+    chips.addEventListener('input', refreshPreview);
     const mult = numberInput('set-mult', s.baseMultiplier, SETTING_LIMITS.baseMultiplier);
     const cap = numberInput('set-cap', s.capFactor, SETTING_LIMITS.capFactor);
     const seats = select('set-seats', [
@@ -169,6 +184,7 @@ class LanScreens {
     ], String(s.humanSeats));
     const skill = select('set-skill', Object.entries(SKILLS).map(([id, def]) => ({ value: id, label: def.name })), s.botSkill);
     const status = el('p.footnote', '');
+    refreshPreview();
 
     const go = async () => {
       this.name = nameInput.value.trim() || 'Host';
@@ -177,6 +193,7 @@ class LanScreens {
       try {
         await this.connect(socketUrlFor({ host: null }, location));
         this.client.createRoom(this.name, {
+          currency: currency.value,
           pot: Number(pot.value),
           startingChips: Number(chips.value),
           baseMultiplier: Number(mult.value),
@@ -193,19 +210,21 @@ class LanScreens {
       this.backLink('Local multiplayer', () => this.renderChoice()),
       el('div.page__head',
         el('h1.page__title', 'Create a room'),
-        el('p.page__sub', 'Your settings apply to everyone at the table. Chips here are room chips and do not touch your single-player purse.'),
+        el('p.page__sub', 'Your settings apply to everyone at the table. A room keeps its own score in its own currency — nothing here touches your single-player purse, and no money moves anywhere: the currency is a label on the numbers.'),
       ),
       lanReachable() ? null : this.notReachable(),
       el('div.card-panel',
         el('div.form-grid',
           field('Your name', nameInput),
           field('Seats', seats, 'Bots fill whatever is left of the three'),
+          field('Currency', currency, 'What this room keeps score in'),
           field('Pot per person', pot, 'What each seat puts up'),
-          field('Starting chips', chips, 'Everyone begins with this'),
+          field('Starting stack', chips, 'Everyone begins with this'),
           field('Base multiplier', mult, 'The floor; bombs and springs double it'),
           field('Loss cap (× pot)', cap, 'The most one hand can take off a player'),
           field('Bot strength', skill, 'For any seat a person does not take'),
         ),
+        el('p.field__hint', { style: 'margin:14px 0 0' }, preview),
         el('div.btn-row', { style: 'margin-top:18px' },
           el('button.btn.btn--primary.btn--big', { type: 'button', onclick: go }, 'Open the room'),
         ),
@@ -260,13 +279,13 @@ class LanScreens {
     const mine = message.rows.find((row) => row.seat === this.view?.seat);
     if (!mine || !this.table) return;
     const lines = message.rows.map((row) =>
-      `${row.seat === this.view.seat ? 'You' : row.name}: <span>${row.delta >= 0 ? '+' : '−'}${formatChips(Math.abs(row.delta))}</span> → ${formatChips(row.chips)}${row.capped ? ' (capped)' : ''}`);
+      `${row.seat === this.view.seat ? 'You' : row.name}: <span>${row.delta >= 0 ? '+' : '−'}${this.money(Math.abs(row.delta))}</span> → ${this.money(row.chips)}${row.capped ? ' (capped)' : ''}`);
     lines.unshift(`Winner: <span>${message.result.landlordWon ? 'Landlord' : 'Farmers'}</span> at <span>×${message.multiplier}</span>`);
     const isHost = this.room?.hostId === this.you;
     this.table.showResult({
       title: mine.won ? 'You win' : 'You lose',
       win: mine.won,
-      deltaText: `${mine.delta >= 0 ? '+' : '−'}${formatChips(Math.abs(mine.delta))}`,
+      deltaText: `${mine.delta >= 0 ? '+' : '−'}${this.money(Math.abs(mine.delta))}`,
       lines,
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
@@ -311,7 +330,7 @@ class LanScreens {
         el('span', `Seat ${seat.seat + 1}`),
         el('span', { style: 'flex:1' }, bot ? `Bot (${SKILLS[room.settings.botSkill]?.name ?? room.settings.botSkill})` : seat.name),
         seat.isHost ? el('span', 'host') : null,
-        el('span', { style: 'color:var(--gold)' }, seat.id ? formatChips(seat.chips, true) : '—'),
+        el('span', { style: 'color:var(--gold)' }, seat.id ? this.money(seat.chips, true) : '—'),
       ));
     });
 
@@ -330,8 +349,8 @@ class LanScreens {
           : `Others join with ${room.code}`),
         seatList,
         el('div.stat-grid', { style: 'margin-top:18px' },
-          statTile('Pot per person', formatChips(room.settings.pot)),
-          statTile('Starting chips', formatChips(room.settings.startingChips)),
+          statTile('Pot per person', this.money(room.settings.pot)),
+          statTile('Starting stack', this.money(room.settings.startingChips)),
           statTile('Base multiplier', `×${room.settings.baseMultiplier}`),
           statTile('Loss cap', `${room.settings.capFactor}× pot`),
         ),
@@ -352,9 +371,10 @@ class LanScreens {
       root: this.root,
       meta: {
         lobbyName: `Room ${this.room?.code ?? ''}`,
-        potLabel: formatChips(settings.pot, true),
+        potLabel: formatMoney(settings.pot, settings.currency, true),
         bankroll: mine?.chips ?? settings.startingChips,
         baseMultiplier: settings.baseMultiplier,
+        currency: settings.currency,
       },
       handlers: {
         onBid: (value) => this.client.bid(value),

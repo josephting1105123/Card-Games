@@ -9,7 +9,7 @@
  * Bump CACHE whenever a file changes; the old cache is deleted on activate.
  */
 
-const CACHE = 'card-games-v1';
+const CACHE = 'card-games-v2';
 
 const PRECACHE = [
   './',
@@ -19,6 +19,7 @@ const PRECACHE = [
   './styles/table.css',
   './src/main.js',
   './src/core/cards.js',
+  './src/core/currency.js',
   './src/core/economy.js',
   './src/core/elo.js',
   './src/core/profile.js',
@@ -38,6 +39,9 @@ const PRECACHE = [
   './src/ui/screens.js',
   './src/ui/solo.js',
   './src/ui/tableview.js',
+  './assets/fonts/eb-garamond-latin.woff2',
+  './assets/fonts/eb-garamond-latin-ext.woff2',
+  './assets/fonts/eb-garamond-italic-latin.woff2',
   './assets/icons/favicon.svg',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',

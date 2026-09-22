@@ -105,10 +105,12 @@ function cornerIndex(card, flipped) {
   const label = rankIndex(card.rank);
   const symbol = SUIT_SYMBOL[card.suit];
   const rot = flipped ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : '';
-  const fontSize = label.length > 1 ? 14 : 17;
+  // Garamond sets smaller than the sans face this was first drawn for, so the
+  // indices run a couple of points larger to keep their weight on the card.
+  const fontSize = label.length > 1 ? 16 : 19.5;
   return `<g${rot}>
-    <text class="cg-index" x="12.5" y="21" font-size="${fontSize}" text-anchor="middle">${label}</text>
-    <text class="cg-index-suit" x="12.5" y="33" font-size="11.5" text-anchor="middle">${symbol}</text>
+    <text class="cg-index" x="12.5" y="22" font-size="${fontSize}" text-anchor="middle">${label}</text>
+    <text class="cg-index-suit" x="12.5" y="34.5" font-size="12.5" text-anchor="middle">${symbol}</text>
   </g>`;
 }
 
@@ -120,7 +122,7 @@ function courtPanel(card) {
     <g color="currentColor" opacity="0.85"><use href="#cg-filigree" x="27" y="32" width="46" height="46"/></g>
     <g color="currentColor" opacity="0.85"><use href="#cg-filigree" x="27" y="62" width="46" height="46" transform="rotate(180 50 85)"/></g>
     <g color="url(#cg-gold)"><use href="#cg-crown" x="33" y="34" width="34" height="20"/></g>
-    <text class="cg-court-letter" x="50" y="78" font-size="30" text-anchor="middle">${letter}</text>
+    <text class="cg-court-letter" x="50" y="79" font-size="34" text-anchor="middle">${letter}</text>
     <use href="#cg-pip-${card.suit}" x="41" y="84" width="18" height="18"/>
     <line x1="50" y1="29" x2="50" y2="111" stroke="currentColor" stroke-width="0.4" opacity="0.25"/>
   </g>`;
@@ -165,7 +167,7 @@ export function cardFaceBody(card) {
   }
 
   const star = (flip) => `<g${flip ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : ''}>`
-    + `<text class="cg-index" x="12.5" y="22" font-size="13" text-anchor="middle">★</text></g>`;
+    + `<text class="cg-index" x="12.5" y="23" font-size="14.5" text-anchor="middle">★</text></g>`;
   const indices = isJoker(card) ? star(false) + star(true) : cornerIndex(card, false) + cornerIndex(card, true);
 
   return `<g class="cg-face cg-${colour}">${frame}${indices}${centre}</g>`;

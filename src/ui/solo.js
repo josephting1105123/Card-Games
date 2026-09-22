@@ -6,6 +6,7 @@
  * the lobby, so "harder table" and "bigger pot" are the same choice.
  */
 
+import { SOLO_CURRENCY } from '../core/currency.js';
 import { formatChips, lobbyAccess, settleDouDiZhu } from '../core/economy.js';
 import { ratingTitle } from '../core/elo.js';
 import { gameStats, recordResult } from '../core/profile.js';
@@ -41,6 +42,7 @@ export class SoloGame {
         potLabel: formatChips(this.lobby.pot, true),
         bankroll: this.app.profile.bankroll,
         baseMultiplier: this.lobby.baseMultiplier,
+        currency: SOLO_CURRENCY,
       },
       handlers: {
         onBid: (value) => this.onBid(value),

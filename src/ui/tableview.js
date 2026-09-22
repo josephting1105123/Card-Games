@@ -9,7 +9,7 @@
  */
 
 import { cardsToString, sortCards } from '../core/cards.js';
-import { formatChips } from '../core/economy.js';
+import { SOLO_CURRENCY, currencyLabel, formatMoney } from '../core/currency.js';
 import { Phase } from '../games/doudizhu/engine.js';
 import { beats, classify, describeCombo } from '../games/doudizhu/rules.js';
 import { findHint } from '../games/doudizhu/moves.js';
@@ -27,6 +27,7 @@ export class TableView {
     installCardDefs();
     this.root = root;
     this.meta = meta;
+    this.currency = meta.currency ?? SOLO_CURRENCY;
     this.handlers = handlers;
     this.selected = new Set();
     this.view = null;
@@ -42,7 +43,8 @@ export class TableView {
     n.hudTurn = el('span.hud__pill', el('small', 'On turn'), el('b', { id: 'hud-turn' }, '—'));
     n.hudMult = el('span.hud__pill', el('small', 'Multiplier'), el('b', '×2'));
     n.hudPot = el('span.hud__pill', el('small', 'Pot'), el('b', this.meta.potLabel));
-    n.hudPurse = el('span.hud__pill', el('small', 'Chips'), el('b', formatChips(this.meta.bankroll ?? 0)));
+    n.hudPurse = el('span.hud__pill', el('small', currencyLabel(this.currency)),
+      el('b', formatMoney(this.meta.bankroll ?? 0, this.currency)));
 
     const hud = el('div.hud',
       el('button.back-link', { type: 'button', onclick: () => this.handlers.onLeave?.() }, '← Leave table'),
@@ -114,7 +116,12 @@ export class TableView {
 
   setBankroll(value) {
     this.meta.bankroll = value;
-    this.nodes.hudPurse.querySelector('b').textContent = formatChips(value);
+    this.nodes.hudPurse.querySelector('b').textContent = formatMoney(value, this.currency);
+  }
+
+  /** Amounts shown at this table, in this table's currency. */
+  money(value, compact = false) {
+    return formatMoney(value, this.currency, compact);
   }
 
   /** A short line above an opponent, e.g. "Pass" or "Three of a kind". */

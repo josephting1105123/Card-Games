@@ -35,9 +35,15 @@ export class WsConnection extends EventEmitter {
     this.fragmentOp = null;
     this.data = {}; // room code, seat, name: whatever the app wants to hang here
 
+    // An EventEmitter with no 'error' listener throws, which would take the whole
+    // host down the first time a phone slept mid-hand and the socket reset. A
+    // dropped client is routine, so there is always a listener.
+    this.on('error', () => {});
+
     socket.on('data', (chunk) => this.onData(chunk));
     socket.on('close', () => this.onClose());
     socket.on('error', (error) => {
+      this.lastError = error;
       this.emit('error', error);
       this.destroy();
     });

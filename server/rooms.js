@@ -59,6 +59,9 @@ export class RoomHub {
       return undefined;
     });
     conn.on('close', () => this.disconnect(conn));
+    // A reset from a client that vanished is normal; the seat is handled by the
+    // close that follows, and nothing about it should reach the console.
+    conn.on('error', () => {});
   }
 
   fail(conn, message) {

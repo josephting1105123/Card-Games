@@ -24,6 +24,8 @@
  *    take the balance below zero, until the balance reaches RESCUE_EXIT.
  */
 
+import { SOLO_CURRENCY, formatMoney } from './currency.js';
+
 export const STARTING_BANKROLL = 10_000;
 /** Below this you cannot afford the cheapest normal lobby, so you are bankrupt. */
 export const BANKRUPT_THRESHOLD = 1_000;
@@ -161,16 +163,10 @@ export function applyToBankroll(bankroll, delta, rescueMode) {
   return { bankroll: next, rescueMode: nextRescue, wentBankrupt, leftRescue };
 }
 
-/** 1234567 -> "1,234,567"; 1_500_000 -> "1.5M" when compact. */
+/**
+ * Single-player amounts, which are always plain chips. A local network room has
+ * its own currency and formats with formatMoney() from core/currency.js.
+ */
 export function formatChips(value, compact = false) {
-  const n = Math.round(value);
-  if (!compact) return n.toLocaleString('en-GB');
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `${trim(n / 1_000_000)}M`;
-  if (abs >= 10_000) return `${trim(n / 1_000)}K`;
-  return n.toLocaleString('en-GB');
-}
-
-function trim(x) {
-  return (Math.round(x * 10) / 10).toString();
+  return formatMoney(value, SOLO_CURRENCY, compact);
 }

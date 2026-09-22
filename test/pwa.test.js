@@ -23,9 +23,36 @@ const precache = (() => {
 })();
 
 test('every shipped source file is precached, so the app runs offline', () => {
-  const shipped = [...walk('src'), ...walk('styles'), ...walk('assets')];
+  // Documentation that ships beside an asset (a font licence, a README) is not
+  // fetched at run time, so it has no business in the offline cache.
+  const isRuntimeAsset = (file) => !/\.(md|txt)$/i.test(file);
+  const shipped = [...walk('src'), ...walk('styles'), ...walk('assets')].filter(isRuntimeAsset);
   const missing = shipped.filter((file) => !precache.includes(file));
   assert.deepEqual(missing, [], `these files would 404 offline: ${missing.join(', ')}`);
+});
+
+test('the font files are real woff2 and are precached', () => {
+  const fonts = walk('assets/fonts').filter((file) => file.endsWith('.woff2'));
+  assert.ok(fonts.length >= 2, 'the app self-hosts its font rather than linking a CDN');
+  for (const file of fonts) {
+    assert.ok(precache.includes(file), `${file} is not precached, so an offline install loses Garamond`);
+    const buf = readFileSync(join(ROOT, file));
+    assert.equal(buf.subarray(0, 4).toString('ascii'), 'wOF2', `${file} is not a woff2`);
+  }
+  const css = read('styles/app.css');
+  for (const file of fonts) {
+    assert.ok(css.includes(file.replace('assets/', '../assets/')), `no @font-face references ${file}`);
+  }
+  assert.equal(/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(css + read('index.html')), false,
+    'the app must not fetch its font from a CDN at run time');
+  assert.doesNotThrow(() => statSync(join(ROOT, 'assets/fonts/OFL.txt')), 'the font licence must ship with the font');
+});
+
+test('nothing is set in a sans face', () => {
+  for (const file of ['styles/app.css', 'styles/table.css']) {
+    const css = read(file);
+    assert.equal(/sans-serif/.test(css), false, `${file} still falls back to a sans face`);
+  }
 });
 
 test('nothing in the precache list is missing from disk', () => {

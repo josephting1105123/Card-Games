@@ -8,7 +8,7 @@ as-is, which is why it installs straight from GitHub Pages and why the local
 network host is a single `node` command with nothing to install first.
 
 ```
-npm test                  # 64 tests, about 1.5 seconds
+npm test                  # 78 tests, about 1.5 seconds
 node server/server.js     # host for local network play, also serves the app
 ```
 
@@ -151,8 +151,14 @@ Two things worth knowing:
   loaded from GitHub Pages over HTTPS is not allowed by the browser to open a
   plain `ws://` connection to a private address, so LAN play needs everyone on the
   host's own address. The app says this rather than failing mysteriously.
-- **Room chips are room chips.** They come from the host's settings and never
-  touch your single-player purse or your Elo.
+- **A room keeps its own score, in its own currency.** Single player is always in
+  Chips; a room defaults to ringgit and the host can pick from ringgit, Singapore
+  and US dollars, pounds, euro, yuan, Taiwan dollars, points or matchsticks. The
+  minimum pot is 1, so a room can be priced at RM 5 rather than five thousand of
+  something. Room balances never touch your single-player purse or your Elo.
+- **The currency is a label.** There are no payments, no transfers and no way to
+  move a balance off the device. Choosing "RM" writes RM in front of a number,
+  exactly like writing it on a scorepad.
 
 The WebSocket server is implemented here (`server/ws.js`, ~230 lines) rather than
 pulled from npm, so hosting needs no install and there is no dependency tree to
@@ -164,11 +170,12 @@ audit.
 index.html              app shell
 sw.js                   service worker: precache everything, run offline
 manifest.webmanifest    PWA manifest (installs landscape)
-src/core/               cards, seeded RNG, Elo, chips and lobbies, profile
+src/core/               cards, seeded RNG, Elo, chips and lobbies, currency, profile
 src/games/doudizhu/     rules, move generation, engine, bot, match runner
 src/ui/                 card art, table view, screens, solo controller
 src/net/                room codes, wire protocol, LAN client
 server/                 static + WebSocket host, rooms, LAN addresses
+assets/fonts/           EB Garamond, self-hosted (OFL)
 tools/                  icon generator, bot simulator
 test/                   64 tests, node:test, no runner to install
 ```
@@ -179,11 +186,29 @@ same files — and a test enforces it.
 ### The cards
 
 Drawn as SVG at run time (`src/ui/cardart.js`): ivory stock with a double gold
-rule, engraved serif indices, traditional pip layouts for the spot cards,
-quatrefoil cartouches on the courts and aces, and a guilloche back in burgundy and
-gold. Suit shapes live in one hidden symbol sheet that every card references, so a
+rule, engraved indices, traditional pip layouts for the spot cards, quatrefoil
+cartouches on the courts and aces, and a guilloche back in burgundy and gold. Suit
+shapes live in one hidden symbol sheet that every card references, so a
 twenty-card fan is cheap to build. The icons are drawn pixel by pixel and written
 as PNG by `tools/make-icons.mjs` with nothing but `node:zlib`.
+
+### The type
+
+Everything is set in **EB Garamond** — menus, table, buttons and the card indices
+alike. Nothing in the app uses a sans face, and a test enforces that.
+
+The font is committed to the repository rather than linked from a font CDN
+(`assets/fonts/`, SIL Open Font License, see the README there). A `<link>` to
+Google Fonts would mean the installed app fell back to Times with no network, and
+would tell a third party every time somebody opened a table. The Latin subsets
+come to about 200 KB and are precached with everything else.
+
+Two consequences worth knowing. Garamond has a small x-height, so the interface
+runs a size or two larger than it would in a sans face and the small uppercase
+labels are tracked out rather than shrunk. And anything outside the Latin subsets
+— the suit pips ♠♥♣♦, the arrows, the Chinese titles — falls through to the next
+serif in the stack, which is why `--font` lists a serif CJK face before the
+generic fallbacks.
 
 ## Tests
 
@@ -195,9 +220,11 @@ node tools/sim.mjs 3000      # bot ladder report
 
 Covered: every combination type and rejection, the beats relation, move
 generation, bidding, turn order, springs, deck conservation over 100 bot games,
-the loss caps and the bankruptcy cycle, Elo, room codes, the WebSocket handshake
-and framing, a full two-client LAN hand over a real socket, chip conservation when
-caps bite, and the offline manifest.
+the loss caps and the bankruptcy cycle, Elo, currency formatting and the room
+default, room codes, the WebSocket handshake and framing, a full two-client LAN
+hand over a real socket, chip conservation when caps bite, a client vanishing
+without a close frame, the offline manifest, and that no module imports a Node
+built-in into the browser or sets anything in a sans face.
 
 ## Licence
 

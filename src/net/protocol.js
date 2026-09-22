@@ -7,6 +7,8 @@
  * seat only its own hand.
  */
 
+import { DEFAULT_ROOM_CURRENCY, isCurrency } from '../core/currency.js';
+
 export const C2S = {
   HELLO: 'hello',
   CREATE: 'create',
@@ -34,8 +36,11 @@ export const S2C = {
 
 export const DEFAULT_SETTINGS = {
   game: 'doudizhu',
-  pot: 1_000,
-  startingChips: 10_000,
+  // A room keeps score in its own currency, not the single-player purse, so the
+  // default is deliberately something other than chips. See core/currency.js.
+  currency: DEFAULT_ROOM_CURRENCY,
+  pot: 10,
+  startingChips: 200,
   baseMultiplier: 2,
   capFactor: 6,
   botSkill: 'steady',
@@ -43,8 +48,10 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const SETTING_LIMITS = {
-  pot: { min: 100, max: 1_000_000, step: 100 },
-  startingChips: { min: 1_000, max: 100_000_000, step: 1_000 },
+  // Low minimums on purpose: a room keeping score in ringgit wants a pot of 5,
+  // not 5,000. Amounts are whole units in every currency.
+  pot: { min: 1, max: 10_000_000, step: 1 },
+  startingChips: { min: 1, max: 1_000_000_000, step: 10 },
   baseMultiplier: { min: 1, max: 8, step: 1 },
   capFactor: { min: 1, max: 20, step: 0.5 },
 };
@@ -52,6 +59,7 @@ export const SETTING_LIMITS = {
 /** Clamp whatever a host typed into something the table can actually run. */
 export function sanitiseSettings(input = {}) {
   const out = { ...DEFAULT_SETTINGS };
+  if (isCurrency(input.currency)) out.currency = String(input.currency).toLowerCase();
   for (const [key, limit] of Object.entries(SETTING_LIMITS)) {
     const value = Number(input[key]);
     if (Number.isFinite(value)) out[key] = Math.min(limit.max, Math.max(limit.min, value));
