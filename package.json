@@ -1,0 +1,17 @@
+{
+  "name": "card-games",
+  "version": "0.1.0",
+  "description": "A collection of classic card games. Dou Di Zhu first, more to follow. Zero dependencies, installable as a PWA, with LAN multiplayer.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "serve": "node server/server.js",
+    "icons": "node tools/make-icons.mjs",
+    "sim": "node tools/sim.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

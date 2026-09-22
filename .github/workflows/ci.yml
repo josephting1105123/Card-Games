@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run the test suite
+        run: npm test
+      - name: Check the icons still regenerate identically
+        run: |
+          node tools/make-icons.mjs
+          git diff --exit-code assets/icons || {
+            echo "::error::assets/icons differs from what tools/make-icons.mjs produces"
+            exit 1
+          }
