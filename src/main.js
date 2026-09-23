@@ -165,12 +165,30 @@ function showUpdatePill() {
   updatePill.classList.add('is-visible');
 }
 
-/** Apply a waiting update now, or hold it until the match is no longer live. */
+/**
+ * Apply a waiting update now, or hold it until the match is no longer live.
+ *
+ * The cooldown has to sit below the inMatch() branch, not above it. It exists
+ * to stop a flapping deploy from chaining reload after reload — it says
+ * nothing about whether *this* player is mid-hand. Checked first, it would
+ * swallow a perfectly good update that happens to arrive within ten seconds of
+ * some earlier, unrelated reload (the very first install reloads once on its
+ * own): no pill, no reload, and updateWaiting never gets set, so nothing ever
+ * retries it. The player is left on the old build for the rest of the tab's
+ * life, which is the exact fault this file exists to close.
+ */
 function applyUpdate() {
-  if (reloaded || recentlyAutoReloaded()) return;
+  if (reloaded) return; // this page has already reloaded for an update; never a second time
   if (inMatch()) {
     updateWaiting = true;
     showUpdatePill();
+    return;
+  }
+  if (recentlyAutoReloaded()) {
+    // Not stuck — retried as soon as the cooldown clears, or sooner if a route
+    // change or another visibilitychange fires applyUpdate() again first.
+    updateWaiting = true;
+    setTimeout(() => { if (updateWaiting) applyUpdate(); }, RELOAD_COOLDOWN_MS);
     return;
   }
   reloaded = true; // exactly one reload per update, so a bad deploy can't loop
@@ -186,7 +204,10 @@ function maybeCheckForUpdate() {
   swRegistration.update().catch(() => {});
 }
 
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+// navigator.serviceWorker, not the 'in' check: some hardened browsers and
+// extensions leave the key in place but set the value itself to null or
+// undefined, which 'in' still reports as present.
+if (navigator.serviceWorker && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register(new URL('../sw.js', import.meta.url))
       .then((reg) => {
