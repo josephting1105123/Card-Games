@@ -237,3 +237,156 @@ export function describeCombo(combo, lang = 'en') {
   if (combo.length > 1) return `${name} ×${combo.length} (${top} high)`;
   return `${name} ${top}`;
 }
+
+// --- felt caption -----------------------------------------------------
+//
+// describeCombo() above answers "what kind of thing is this" for a screen
+// reader or a tooltip, and a chain's length is enough for that ("Aeroplane
+// ×2"). The felt caption answers a different question — "who played what" —
+// and a count does not answer it: "Trio + pair x5" does not say the trio was
+// jacks and the pair was fours, so a player reads it as naming one rank when
+// it names neither. feltLabel() below names every rank a player would want
+// named, using the cards themselves (COMBO_NAMES/ComboInfo carry only the
+// combo's own top rank, never a kicker's).
+
+const EN_DASH = '–';
+
+/** The bare shape word this function builds each label from. Deliberately its
+ * own vocabulary rather than COMBO_NAMES: COMBO_NAMES's compound entries read
+ * as whole phrases ("Trio + pair"), but a kicker's rank has to land *inside*
+ * that phrase ("Trio J + pair 4"), so the shape word alone is what's needed.
+ * The zh side reuses COMBO_NAMES's own characters wherever that reads
+ * cleanly (single/pair/trio/straight/pair chain/aeroplane/bomb/rocket keep
+ * their existing zh name outright); trio-with-a-kicker and four-with-a-kicker
+ * fall back to the shared leading character of their COMBO_NAMES family
+ * (三/四) because the full compound name (e.g. 三不带, "trio carrying
+ * nothing") would contradict a kicker actually being named right after it. */
+const FELT_BASE = {
+  [Combo.SINGLE]: { en: 'Single', zh: COMBO_NAMES[Combo.SINGLE].zh },
+  [Combo.PAIR]: { en: 'Pair', zh: COMBO_NAMES[Combo.PAIR].zh },
+  [Combo.TRIO]: { en: 'Trio', zh: COMBO_NAMES[Combo.TRIO].zh },
+  [Combo.TRIO_SINGLE]: { en: 'Trio', zh: '三' },
+  [Combo.TRIO_PAIR]: { en: 'Trio', zh: '三' },
+  [Combo.STRAIGHT]: { en: 'Straight', zh: COMBO_NAMES[Combo.STRAIGHT].zh },
+  [Combo.PAIR_CHAIN]: { en: 'Pairs', zh: COMBO_NAMES[Combo.PAIR_CHAIN].zh },
+  [Combo.TRIO_CHAIN]: { en: 'Aeroplane', zh: COMBO_NAMES[Combo.TRIO_CHAIN].zh },
+  [Combo.TRIO_CHAIN_SINGLES]: { en: 'Aeroplane', zh: COMBO_NAMES[Combo.TRIO_CHAIN].zh },
+  [Combo.TRIO_CHAIN_PAIRS]: { en: 'Aeroplane', zh: COMBO_NAMES[Combo.TRIO_CHAIN].zh },
+  [Combo.FOUR_TWO]: { en: 'Four', zh: '四' },
+  [Combo.FOUR_TWO_PAIRS]: { en: 'Four', zh: '四' },
+  [Combo.BOMB]: { en: 'Bomb', zh: COMBO_NAMES[Combo.BOMB].zh },
+  [Combo.ROCKET]: { en: 'Rocket', zh: COMBO_NAMES[Combo.ROCKET].zh },
+};
+
+const KICKER_WORD = {
+  single: { en: 'single', zh: '单' },
+  pair: { en: 'pair', zh: '对' },
+  singles: { en: 'singles', zh: '单' },
+  pairs: { en: 'pairs', zh: '对' },
+};
+
+/** "3-7" / "5-8", low to high, from a chain's top rank and its length in
+ * links (pairs or trios — not cards; see ComboInfo). An en dash, not a
+ * hyphen, so it never reads as a minus sign next to a rank number. */
+function rangeLabel(topRank, length) {
+  const low = topRank - length + 1;
+  return low === topRank ? rankLabel(topRank) : `${rankLabel(low)}${EN_DASH}${rankLabel(topRank)}`;
+}
+
+/**
+ * What is left of `cards`, by rank, once `usedFor(rank)` copies of each rank
+ * are removed — i.e. the kicker(s) once the combo's own trio/four/chain is
+ * subtracted out. A kicker rank that coincides with a chain rank (splitting a
+ * bomb into an aeroplane's wings, legal if unwise) still shows up here with
+ * whatever the chain did not consume.
+ */
+function leftoverAfter(cards, usedFor) {
+  const leftover = new Map();
+  for (const [rank, n] of countByRank(cards)) {
+    const remain = n - usedFor(rank);
+    if (remain > 0) leftover.set(rank, remain);
+  }
+  return leftover;
+}
+
+/**
+ * The kicker half of a label: a single rank named outright when there is
+ * only one of it ("single 4", "pair 4" — the count is read straight off how
+ * many cards of that one rank are left, not off `family`), or a plain count
+ * when the kickers are several different ranks ("2 singles", "2 pairs"),
+ * since a count can never name the wrong rank. `family` says whether this
+ * combo's kicker slots are naturally single cards or pairs, and only matters
+ * for that count phrasing.
+ */
+function kickerPhrase(leftover, family, lang) {
+  const entries = [...leftover.entries()];
+  if (entries.length === 1) {
+    const [rank, count] = entries[0];
+    const word = count >= 2 ? KICKER_WORD.pair : KICKER_WORD.single;
+    return lang === 'zh' ? `${word.zh}${rankLabel(rank)}` : `${word.en} ${rankLabel(rank)}`;
+  }
+  const group = family === 'pair' ? KICKER_WORD.pairs : KICKER_WORD.singles;
+  const count = family === 'pair' ? entries.length : entries.reduce((sum, [, c]) => sum + c, 0);
+  return lang === 'zh' ? `${count}${group.zh}` : `${count} ${group.en}`;
+}
+
+/**
+ * The felt caption for a played combo, e.g. "Trio J + pair 4",
+ * "Aeroplane 7-8 + 2 singles", "Straight 3-7". Unlike describeCombo(), this
+ * names every rank a player would want named rather than a chain's length,
+ * so it needs the actual cards the combo was built from — a kicker's rank
+ * never made it into ComboInfo.
+ * @param {ComboInfo|null} combo
+ * @param {object[]} cards   the cards the combo was classified from (e.g.
+ *                           the play's entry.cards at the call site)
+ * @param {'en'|'zh'} [lang]
+ */
+export function feltLabel(combo, cards, lang = 'en') {
+  if (!combo) return lang === 'zh' ? '不要' : 'Pass';
+  const base = FELT_BASE[combo.type];
+  if (!base) return comboName(combo.type, lang);
+  const name = lang === 'zh' ? base.zh : base.en;
+  const sep = lang === 'zh' ? '' : ' ';
+  const plus = lang === 'zh' ? '+' : ' + ';
+
+  switch (combo.type) {
+    case Combo.ROCKET:
+      return name;
+
+    case Combo.SINGLE:
+    case Combo.PAIR:
+    case Combo.TRIO:
+    case Combo.BOMB:
+      return `${name}${sep}${rankLabel(combo.rank)}`;
+
+    case Combo.STRAIGHT:
+    case Combo.PAIR_CHAIN:
+    case Combo.TRIO_CHAIN:
+      return `${name}${sep}${rangeLabel(combo.rank, combo.length)}`;
+
+    case Combo.TRIO_SINGLE:
+    case Combo.TRIO_PAIR: {
+      const family = combo.type === Combo.TRIO_PAIR ? 'pair' : 'single';
+      const leftover = leftoverAfter(cards, (r) => (r === combo.rank ? 3 : 0));
+      return `${name}${sep}${rankLabel(combo.rank)}${plus}${kickerPhrase(leftover, family, lang)}`;
+    }
+
+    case Combo.FOUR_TWO:
+    case Combo.FOUR_TWO_PAIRS: {
+      const family = combo.type === Combo.FOUR_TWO_PAIRS ? 'pair' : 'single';
+      const leftover = leftoverAfter(cards, (r) => (r === combo.rank ? 4 : 0));
+      return `${name}${sep}${rankLabel(combo.rank)}${plus}${kickerPhrase(leftover, family, lang)}`;
+    }
+
+    case Combo.TRIO_CHAIN_SINGLES:
+    case Combo.TRIO_CHAIN_PAIRS: {
+      const family = combo.type === Combo.TRIO_CHAIN_PAIRS ? 'pair' : 'single';
+      const low = combo.rank - combo.length + 1;
+      const leftover = leftoverAfter(cards, (r) => (r >= low && r <= combo.rank ? 3 : 0));
+      return `${name}${sep}${rangeLabel(combo.rank, combo.length)}${plus}${kickerPhrase(leftover, family, lang)}`;
+    }
+
+    default:
+      return comboName(combo.type, lang);
+  }
+}
