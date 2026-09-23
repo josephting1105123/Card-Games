@@ -11,10 +11,18 @@
 import { cardsToString, sortCards } from '../core/cards.js';
 import { SOLO_CURRENCY, currencyLabel, currencyTint, formatAmount, formatMoney } from '../core/currency.js';
 import { Phase } from '../games/doudizhu/engine.js';
-import { beats, classify, comboName, describeCombo } from '../games/doudizhu/rules.js';
+import { beats, classify, describeCombo, feltLabel } from '../games/doudizhu/rules.js';
 import { findHint, legalPlays } from '../games/doudizhu/moves.js';
 import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
+
+// Breathing room a landing area keeps from whatever it must not touch.
+const FELT_GAP = 6;
+// Left/right zones sit at this fraction of the felt's width in the common
+// case (styles/table.css keeps the matching 24%/76%); used here only to work
+// out how much of that width a wide play can safely use before it reaches a
+// felt edge.
+const SIDE_FRAC = 0.24;
 
 export class TableView {
   /**
@@ -33,6 +41,12 @@ export class TableView {
     this.view = null;
     this.hinted = new Set();
     this.build();
+    // Seat height and felt height both move with the viewport, so the trick's
+    // landing areas have to be re-measured whenever it changes shape, not just
+    // whenever a card is played.
+    this.onResize = () => this.layoutFelt();
+    globalThis.addEventListener?.('resize', this.onResize);
+    this.layoutFelt();
   }
 
   build() {
@@ -132,6 +146,7 @@ export class TableView {
     this.renderHand();
     this.renderControls();
     this.renderHud();
+    this.layoutFelt();
   }
 
   setBankroll(value) {
@@ -349,7 +364,7 @@ export class TableView {
       zone.classList.toggle('is-standing', standing);
       // Exactly one caption on the felt: what the play you have to beat is. Two
       // words at most, and only while it still stands.
-      zone.querySelector('.play__name').textContent = standing ? shortName(entry.combo) : '';
+      zone.querySelector('.play__name').textContent = standing ? feltLabel(entry.combo, entry.cards) : '';
       zone.title = entry && !entry.pass ? describeCombo(entry.combo) : '';
     }
   }
@@ -383,6 +398,82 @@ export class TableView {
     const who = seat === view.seat ? 'You' : view.players[seat]?.name ?? 'Opponent';
     if (entry.pass) return `${who} passed`;
     return `${who} played ${describeCombo(entry.combo)}: ${cardsToString(entry.cards)}`;
+  }
+
+  /**
+   * Where the trick lands, read off the seats and the hand around it rather
+   * than a fraction of the felt: the felt's own height swings by hundreds of
+   * pixels across the supported viewports while the seat block barely moves,
+   * which is exactly why a percentage of it used to land the trick on top of
+   * the seats on anything shorter than the viewport this was eyeballed at.
+   *
+   * Below the seat, above the hand, is the default. On a landscape phone too
+   * short to fit a card row in that gap, the zone moves beside the seat
+   * instead — width is the resource those viewports actually have to spare.
+   * Either way, each zone's card row is then compressed, the same trick the
+   * hand's fan already uses, to whatever room it actually landed in, so nine
+   * cards never outgrow the lane a five-card play was measured for.
+   */
+  layoutFelt() {
+    const { felt, dock, leftSeat, rightSeat, bottom, plays } = this.nodes;
+    const feltRect = felt.getBoundingClientRect();
+    if (!feltRect.height) return; // behind the rotate gate, or not yet in the document
+    const dockTop = dock.getBoundingClientRect().top - feltRect.top;
+    const leftSeatRect = leftSeat.wrap.getBoundingClientRect();
+    const rightSeatRect = rightSeat.wrap.getBoundingClientRect();
+    const bottomCardsRect = bottom.getBoundingClientRect();
+    const seatBottom = Math.max(leftSeatRect.bottom, rightSeatRect.bottom) - feltRect.top;
+    const seatWidth = Math.max(leftSeatRect.width, rightSeatRect.width);
+
+    // The three zones share one card size, so whichever already holds cards
+    // says how tall a full one really is — an empty zone's min-height alone
+    // would understate it and let a later, taller play land somewhere already
+    // spoken for.
+    const zoneHeight = Math.max(
+      plays.left.getBoundingClientRect().height,
+      plays.right.getBoundingClientRect().height,
+      plays.self.getBoundingClientRect().height,
+    );
+
+    // Anchored to the felt's own bottom edge, which is exactly where the hand's
+    // row begins (a separate grid row, not a sibling sharing the felt's box) —
+    // so this can never reach the hand no matter how short the felt gets.
+    const selfTop = dockTop - FELT_GAP - zoneHeight;
+    plays.self.style.top = `${selfTop + zoneHeight / 2}px`;
+    // Never as wide as the seat columns either, so a long aeroplane can't
+    // reach sideways into a seat regardless of how the two overlap vertically.
+    fitRow(plays.self, feltRect.width - 2 * (seatWidth + FELT_GAP * 2));
+
+    const belowRoom = selfTop - FELT_GAP - (seatBottom + FELT_GAP);
+    const beside = belowRoom < zoneHeight;
+    const edgeSafeWidth = 2 * Math.min(SIDE_FRAC, 1 - SIDE_FRAC) * feltRect.width - FELT_GAP * 2;
+    for (const [side, seatRect] of [['left', leftSeatRect], ['right', rightSeatRect]]) {
+      const zone = plays[side];
+      zone.classList.toggle('play--beside', beside);
+      if (!beside) {
+        zone.style.top = `${seatBottom + FELT_GAP + zoneHeight / 2}px`;
+        zone.style.removeProperty('--side-offset');
+        fitRow(zone, edgeSafeWidth);
+      } else {
+        // Vertically centred on the seat it belongs to, but never low enough
+        // to reach the self zone's own lane above the hand.
+        const seatCenter = (seatRect.top + seatRect.bottom) / 2 - feltRect.top;
+        const minCenter = FELT_GAP + zoneHeight / 2;
+        const maxCenter = selfTop - FELT_GAP - zoneHeight / 2;
+        zone.style.top = `${Math.min(maxCenter, Math.max(minCenter, seatCenter))}px`;
+        const offset = FELT_GAP + (side === 'left' ? seatRect.right - feltRect.left : feltRect.right - seatRect.left);
+        zone.style.setProperty('--side-offset', `${offset}px`);
+        // From the seat's edge to whichever comes first, the felt's own centre
+        // or the landlord's three (also centred) — so the two sides can never
+        // grow wide enough to meet in the middle or reach the bottom cards.
+        const feltCenterX = feltRect.left + feltRect.width / 2;
+        const boundary = side === 'left'
+          ? Math.min(feltCenterX, bottomCardsRect.left)
+          : Math.max(feltCenterX, bottomCardsRect.right);
+        const available = side === 'left' ? boundary - seatRect.right : seatRect.left - boundary;
+        fitRow(zone, available - FELT_GAP * 2);
+      }
+    }
   }
 
   renderBidding() {
@@ -552,13 +643,23 @@ export class TableView {
   destroy() {
     this.dealer?.remove();
     this.dealer = null;
+    globalThis.removeEventListener?.('resize', this.onResize);
     clear(this.root);
   }
 }
 
-/** "Pair", "Straight ×5" — short enough to sit under a play without shouting. */
-function shortName(combo) {
-  if (!combo) return '';
-  const name = comboName(combo.type);
-  return combo.length > 1 ? `${name} ×${combo.length}` : name;
+/**
+ * Compress a card row's overlap so it never grows wider than `available` px —
+ * the hand's fan solves the same problem (N cards, a fixed lane) by shrinking
+ * its step instead of its cards; this shrinks the same -0.5 overlap margin
+ * the same way, only ever pulling cards tighter than their default overlap,
+ * never spreading them further apart than it.
+ */
+function fitRow(zone, available) {
+  const cards = zone.querySelectorAll('.play__cards .card');
+  if (cards.length < 2) return;
+  const width = cards[0].getBoundingClientRect().width;
+  const defaultStep = width * 0.5;
+  const step = Math.max(1, Math.min(defaultStep, (available - width) / (cards.length - 1)));
+  for (let i = 1; i < cards.length; i++) cards[i].style.marginLeft = `${step - width}px`;
 }

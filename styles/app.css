@@ -202,3 +202,36 @@ body {
 
 .footnote { color: var(--text-faint); font-size: 14px; line-height: 1.65; }
 a { color: var(--gold); }
+
+/* --- update pill ------------------------------------------------------------
+   Tells a player a build is waiting without asking anything of them. It has to
+   read over both the menu's topbar and the table's HUD, which are different
+   heights everywhere, so it does not try to sit flush against either — a few
+   px in from the top clears the shortest of the two (the table HUD, 48px at
+   667x375) while sitting well inside the taller topbar too. Centred on the
+   viewport, it lands in the gap the HUD's own flex spacer leaves between the
+   room/pot pill and the multiplier and purse pills; that gap is real estate
+   nothing else claims, at every width down to 667px, even with the longest
+   room name, the richest purse and a hot multiplier all showing at once.
+   pointer-events: none because it is status text, not a control — it must
+   never be the thing standing between a tap and the button under it. */
+.update-pill {
+  position: fixed;
+  top: 9px;
+  left: 50%;
+  z-index: var(--z-overlay);
+  max-width: min(80vw, 210px);
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--hairline-strong);
+  background: rgba(6, 22, 17, 0.92);
+  color: var(--text-secondary);
+  font-size: var(--t-label);
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -6px);
+  transition: opacity var(--dur-slow) var(--ease-std), transform var(--dur-slow) var(--ease-std);
+}
+.update-pill.is-visible { opacity: 1; transform: translate(-50%, 0); }

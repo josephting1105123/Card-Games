@@ -68,7 +68,6 @@ const app = {
       default:
         renderMenu(this, root);
     }
-    document.documentElement.classList.toggle('at-table', this.route === 'table' || this.route === 'lanplay');
     window.scrollTo(0, 0);
     return undefined;
   },
@@ -130,10 +129,17 @@ let updateWaiting = false;
 let reloaded = false;
 let updatePill = null;
 
-/** Mid-hand: at the table, and no result screen up yet. */
+/**
+ * Mid-hand: a table is on screen, and no result screen up yet.
+ *
+ * This reads the DOM rather than app.route on purpose. A solo table renders
+ * under route 'table', but a LAN match mounts its TableView straight into
+ * #app from inside ui/lan.js without ever changing app.route — a route-based
+ * check would leave every LAN hand unprotected. TableView always names its
+ * root element .table, in both modes, so that is the one thing worth asking.
+ */
 function inMatch() {
-  if (!document.documentElement.classList.contains('at-table')) return false;
-  return !root.querySelector('.result');
+  return !!root.querySelector('.table') && !root.querySelector('.result');
 }
 
 function recentlyAutoReloaded() {
@@ -148,8 +154,13 @@ function recentlyAutoReloaded() {
 function showUpdatePill() {
   if (!updatePill) {
     updatePill = el('div.update-pill', { role: 'status', 'aria-live': 'polite' },
-      'An update is ready — it will load once you leave the table.');
+      'Update ready — leaving applies it.');
     document.body.append(updatePill);
+    // Two frames so the browser commits the opacity:0 starting state before the
+    // class flips it to 1 — added and shown in the same tick, as this was
+    // before, means there is nothing for the transition to animate from.
+    requestAnimationFrame(() => requestAnimationFrame(() => updatePill.classList.add('is-visible')));
+    return;
   }
   updatePill.classList.add('is-visible');
 }

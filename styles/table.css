@@ -109,9 +109,23 @@
   min-height: clamp(54px, 11vh, 116px);
   transition: opacity var(--dur-slow) var(--ease-std), filter var(--dur-slow) var(--ease-std);
 }
-.play--left { left: 24%; top: 44%; transform: translate(-50%, -50%); }
-.play--right { left: 76%; top: 44%; transform: translate(-50%, -50%); }
-.play--self { left: 50%; top: 68%; transform: translate(-50%, -50%); }
+/* `top` on all three is set by tableview.js's layoutFelt(), read off the real
+   height of the seat block and the felt's own bottom edge (where the hand's
+   row begins) rather than a fraction of the felt — the felt's height swings
+   by hundreds of pixels across the supported viewports while the seat barely
+   moves, which is what used to land the trick on top of the seats. The 24%/
+   76% below are only the horizontal split for the common case; layoutFelt()
+   reads the matching fraction to know how much width that split leaves
+   before a wide play would reach a felt edge. */
+.play--left { left: 24%; transform: translate(-50%, -50%); }
+.play--right { left: 76%; transform: translate(-50%, -50%); }
+.play--self { left: 50%; transform: translate(-50%, -50%); }
+/* No room below the seat at this height: the zone sits beside it instead,
+   anchored to its own edge (--side-offset, also from layoutFelt()) rather
+   than centred, since it now grows away from the seat instead of around a
+   fixed point. */
+.play--left.play--beside { left: var(--side-offset, 0px); transform: translateY(-50%); }
+.play--right.play--beside { left: auto; right: var(--side-offset, 0px); transform: translateY(-50%); }
 
 .play__cards { display: flex; justify-content: center; }
 .play__cards .card {
@@ -315,15 +329,15 @@
   .rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
 }
 
-/* Very short landscape windows (phones) get smaller cards so the fan still fits,
-   and the landing areas pull in and down to clear the seats' card backs. */
+/* Very short landscape windows (phones) get smaller cards so the fan still
+   fits. The landing areas themselves no longer need a rule here: layoutFelt()
+   measures the real seat and felt geometry on every layout change, so it
+   already pulls them in — and, once there's no room left below the seat at
+   all, moves them beside it — at whatever height actually needs it. */
 @media (orientation: landscape) and (max-height: 460px) {
   .table { --card-w: clamp(38px, 6vw, 58px); }
   .seat { top: 4px; }
   .hud { padding-top: 5px; padding-bottom: 5px; }
   .play { min-height: clamp(44px, 9vh, 80px); }
-  .play--left { left: 29%; top: 56%; }
-  .play--right { left: 71%; top: 56%; }
-  .play--self { top: 74%; }
   .play__cards .card { --card-w: clamp(30px, 4.6vw, 46px); }
 }
