@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cardFromId, parseHand } from '../src/core/cards.js';
-import { Combo, beats, classify, describeCombo } from '../src/games/doudizhu/rules.js';
+import { Combo, beats, classify, describeCombo, feltLabel } from '../src/games/doudizhu/rules.js';
 
 const c = (s) => classify(parseHand(s));
 const type = (s) => c(s)?.type ?? null;
@@ -103,4 +103,77 @@ test('describeCombo reads sensibly', () => {
   assert.equal(describeCombo(c('33')), 'Pair 3');
   assert.match(describeCombo(c('34567')), /Straight/);
   assert.equal(describeCombo(c('xX')), 'Rocket');
+});
+
+// feltLabel() is the felt caption, not describeCombo()'s screen-reader text: it
+// has to name a kicker's rank, which never made it into ComboInfo. Every hand
+// below is run through classify() for real, so the label helper breaks the
+// moment classify()'s output shape changes, not just when feltLabel() itself
+// regresses.
+const DASH = '–'; // en dash — feltLabel must never fall back to a hyphen
+const label = (hand, lang) => {
+  const cards = parseHand(hand);
+  return feltLabel(classify(cards), cards, lang);
+};
+
+test('feltLabel: one assertion per combo shape, en', () => {
+  assert.equal(label('7', 'en'), 'Single 7');
+  assert.equal(label('99', 'en'), 'Pair 9');
+  assert.equal(label('QQQ', 'en'), 'Trio Q');
+  assert.equal(label('JJJ4', 'en'), 'Trio J + single 4');
+  assert.equal(label('JJJ44', 'en'), 'Trio J + pair 4');
+  assert.equal(label('34567', 'en'), `Straight 3${DASH}7`);
+  assert.equal(label('55667788', 'en'), `Pairs 5${DASH}8`);
+  assert.equal(label('777888', 'en'), `Aeroplane 7${DASH}8`);
+  assert.equal(label('77788845', 'en'), `Aeroplane 7${DASH}8 + 2 singles`);
+  assert.equal(label('7778884455', 'en'), `Aeroplane 7${DASH}8 + 2 pairs`);
+  assert.equal(label('999945', 'en'), 'Four 9 + 2 singles');
+  assert.equal(label('99994455', 'en'), 'Four 9 + 2 pairs');
+  assert.equal(label('8888', 'en'), 'Bomb 8');
+  assert.equal(label('xX', 'en'), 'Rocket');
+});
+
+test('feltLabel: one assertion per combo shape, zh', () => {
+  assert.equal(label('7', 'zh'), '单张7');
+  assert.equal(label('99', 'zh'), '对子9');
+  assert.equal(label('QQQ', 'zh'), '三不带Q');
+  assert.equal(label('JJJ4', 'zh'), '三J+单4');
+  assert.equal(label('JJJ44', 'zh'), '三J+对4');
+  assert.equal(label('34567', 'zh'), `顺子3${DASH}7`);
+  assert.equal(label('55667788', 'zh'), `连对5${DASH}8`);
+  assert.equal(label('777888', 'zh'), `飞机7${DASH}8`);
+  assert.equal(label('77788845', 'zh'), `飞机7${DASH}8+2单`);
+  assert.equal(label('7778884455', 'zh'), `飞机7${DASH}8+2对`);
+  assert.equal(label('999945', 'zh'), '四9+2单');
+  assert.equal(label('99994455', 'zh'), '四9+2对');
+  assert.equal(label('8888', 'zh'), '炸弹8');
+  assert.equal(label('xX', 'zh'), '王炸');
+});
+
+test('feltLabel: a kicker rank that coincides with the combo\'s own rank', () => {
+  // Splitting two bombs (3333 4444) into an aeroplane with single wings is
+  // legal (see the "aeroplanes with and without wings" test above), and it
+  // leaves one leftover 3 and one leftover 4 — the same two ranks the
+  // aeroplane itself spans. The label must still show both leftover cards,
+  // not swallow them because their ranks already appear in the range.
+  assert.equal(type('33334444'), Combo.TRIO_CHAIN_SINGLES);
+  assert.equal(label('33334444', 'en'), `Aeroplane 3${DASH}4 + 2 singles`);
+  assert.equal(label('33334444', 'zh'), `飞机3${DASH}4+2单`);
+});
+
+test('feltLabel: a chain of length 1 never prints a nonsense range', () => {
+  // classify() can never itself hand back length === 1 for a chain type —
+  // straights need 5 ranks, pair chains 3, aeroplanes 2 — so this reaches the
+  // collapse branch of the internal range builder directly, by taking a real
+  // classify() result and touching only the field under test.
+  const cards = parseHand('55');
+  const real = c('55');
+  assert.equal(real.type, Combo.PAIR);
+  const degenerate = { ...real, type: Combo.PAIR_CHAIN, length: 1 };
+  const en = feltLabel(degenerate, cards, 'en');
+  const zh = feltLabel(degenerate, cards, 'zh');
+  assert.equal(en, 'Pairs 5');
+  assert.equal(zh, '连对5');
+  assert.ok(!en.includes(DASH), 'a single-rank chain must not read as a range');
+  assert.ok(!zh.includes(DASH), 'a single-rank chain must not read as a range');
 });
