@@ -41,11 +41,17 @@ export class TableView {
     this.view = null;
     this.hinted = new Set();
     this.build();
-    // Seat height and felt height both move with the viewport, so the trick's
-    // landing areas have to be re-measured whenever it changes shape, not just
-    // whenever a card is played.
+    // The felt's landing areas are read off real geometry (see layoutFelt()),
+    // which means they go stale the moment that geometry does: the viewport
+    // resizing, or a seat gaining its role label the instant bidding ends. A
+    // resize event catches the first; a MutationObserver on the felt catches
+    // the second along with everything renderPlays() itself changes, so the
+    // trick is always re-measured against what is on screen right now rather
+    // than what was on screen the last time something else called update().
     this.onResize = () => this.layoutFelt();
     globalThis.addEventListener?.('resize', this.onResize);
+    this.feltObserver = new MutationObserver(() => this.layoutFelt());
+    this.feltObserver.observe(this.nodes.felt, { childList: true, subtree: true, characterData: true });
     this.layoutFelt();
   }
 
@@ -146,7 +152,6 @@ export class TableView {
     this.renderHand();
     this.renderControls();
     this.renderHud();
-    this.layoutFelt();
   }
 
   setBankroll(value) {
@@ -410,9 +415,9 @@ export class TableView {
    * Below the seat, above the hand, is the default. On a landscape phone too
    * short to fit a card row in that gap, the zone moves beside the seat
    * instead — width is the resource those viewports actually have to spare.
-   * Either way, each zone's card row is then compressed, the same trick the
-   * hand's fan already uses, to whatever room it actually landed in, so nine
-   * cards never outgrow the lane a five-card play was measured for.
+   * Either way, each zone is then told (via setOverlap(), see below) the
+   * tightest its card row may safely overlap, so a twelve-card aeroplane
+   * never outgrows the lane a five-card play was measured for.
    */
   layoutFelt() {
     const { felt, dock, leftSeat, rightSeat, bottom, plays } = this.nodes;
@@ -442,7 +447,7 @@ export class TableView {
     plays.self.style.top = `${selfTop + zoneHeight / 2}px`;
     // Never as wide as the seat columns either, so a long aeroplane can't
     // reach sideways into a seat regardless of how the two overlap vertically.
-    fitRow(plays.self, feltRect.width - 2 * (seatWidth + FELT_GAP * 2));
+    setOverlap(plays.self, feltRect.width - 2 * (seatWidth + FELT_GAP * 2));
 
     const belowRoom = selfTop - FELT_GAP - (seatBottom + FELT_GAP);
     const beside = belowRoom < zoneHeight;
@@ -453,7 +458,7 @@ export class TableView {
       if (!beside) {
         zone.style.top = `${seatBottom + FELT_GAP + zoneHeight / 2}px`;
         zone.style.removeProperty('--side-offset');
-        fitRow(zone, edgeSafeWidth);
+        setOverlap(zone, edgeSafeWidth);
       } else {
         // Vertically centred on the seat it belongs to, but never low enough
         // to reach the self zone's own lane above the hand.
@@ -471,7 +476,7 @@ export class TableView {
           ? Math.min(feltCenterX, bottomCardsRect.left)
           : Math.max(feltCenterX, bottomCardsRect.right);
         const available = side === 'left' ? boundary - seatRect.right : seatRect.left - boundary;
-        fitRow(zone, available - FELT_GAP * 2);
+        setOverlap(zone, available - FELT_GAP * 2);
       }
     }
   }
@@ -644,22 +649,40 @@ export class TableView {
     this.dealer?.remove();
     this.dealer = null;
     globalThis.removeEventListener?.('resize', this.onResize);
+    this.feltObserver?.disconnect();
     clear(this.root);
   }
 }
 
 /**
- * Compress a card row's overlap so it never grows wider than `available` px —
- * the hand's fan solves the same problem (N cards, a fixed lane) by shrinking
- * its step instead of its cards; this shrinks the same -0.5 overlap margin
- * the same way, only ever pulling cards tighter than their default overlap,
- * never spreading them further apart than it.
+ * How many cards a landing area's overlap has to make room for — the worst
+ * case the spec names (a twelve-card aeroplane with wings), not however many
+ * happen to be on it right now.
  */
-function fitRow(zone, available) {
-  const cards = zone.querySelectorAll('.play__cards .card');
-  if (cards.length < 2) return;
-  const width = cards[0].getBoundingClientRect().width;
-  const defaultStep = width * 0.5;
-  const step = Math.max(1, Math.min(defaultStep, (available - width) / (cards.length - 1)));
-  for (let i = 1; i < cards.length; i++) cards[i].style.marginLeft = `${step - width}px`;
+const MAX_CARDS = 12;
+
+/**
+ * Tell a zone the tightest its cards may safely overlap, as a CSS custom
+ * property rather than a per-card inline style. A card dropped straight into
+ * `.play__cards` — by a real trick, or by a check that bypasses this class
+ * entirely — reads it the instant it renders, because inheritance is how
+ * every browser resolves a fresh element's style; no JS has to run again once
+ * it lands, which setting margin-left on each card directly would need (and
+ * did need, until this was measured against a script that injects cards
+ * exactly that way — see the felt-spec section 2 writeup for how that showed
+ * up as a stale, uncompressed row half a frame after the cards it belonged to
+ * had already rendered).
+ *
+ * Sized for MAX_CARDS rather than the zone's actual count, so the number in
+ * it right now never has to be read back out of the DOM: a five-card play
+ * simply never reaches the cap and keeps its normal spacing (the stylesheet's
+ * `min()` picks whichever overlap is tighter), and nothing here has to change
+ * when a sixth card lands.
+ */
+function setOverlap(zone, available) {
+  const probe = zone.querySelector('.play__cards .card');
+  const width = probe ? probe.getBoundingClientRect().width : 0;
+  if (!width) { zone.style.removeProperty('--overlap'); return; }
+  const margin = (available - MAX_CARDS * width) / (MAX_CARDS - 1);
+  zone.style.setProperty('--overlap', `${margin}px`);
 }
