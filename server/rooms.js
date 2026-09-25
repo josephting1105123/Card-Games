@@ -188,7 +188,7 @@ export class RoomHub {
       }
     }
     const seed = randomBytes(8).toString('hex');
-    room.state = createGame({ seed, players });
+    room.state = createGame({ seed, players, baseMultiplier: room.settings.baseMultiplier });
     room.rng = makeRng(`${seed}:bots`);
     room.phase = 'playing';
     room.lastActivity = Date.now();
@@ -294,7 +294,9 @@ export class RoomHub {
       delete row.bankroll;
     }
     room.phase = 'finished';
-    this.broadcast(room, { t: S2C.RESULT, result, rows, multiplier: Math.max(result.multiplier, room.settings.baseMultiplier) });
+    // result.multiplier already carries the room's base factor — the engine was
+    // created with it — so there is no floor left to apply here.
+    this.broadcast(room, { t: S2C.RESULT, result, rows, multiplier: result.multiplier });
     this.broadcastRoom(room);
   }
 

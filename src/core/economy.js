@@ -10,14 +10,21 @@
  *    between tables, only the size of the numbers.
  *
  * 2. Every game carries a multiplier. It starts at the lobby's base multiplier
- *    (2 by default) and is raised by the points called, by each bomb or rocket,
- *    and by a spring. The engine reports its own multiplier; the base acts as a
- *    floor so a timid 1-point hand still settles at x2.
+ *    (2 by default) — a real factor, not a floor applied after the fact — and is
+ *    then multiplied by the points called, by each bomb or rocket, and by a
+ *    spring. The engine reports the finished number; settleDouDiZhu trusts it
+ *    outright. Because the base is baked in from the start, a bomb on even a
+ *    timid 1-point call visibly doubles what is on the table, instead of
+ *    vanishing behind a floor that was already higher than the raw number.
  *
  * 3. A single hand moves at most HAND_CAP_FACTOR pots, in either direction. The
- *    landlord's exposure is 2 x multiplier pots, so a 50-pot ceiling only bites
- *    above a multiplier of 32 — three bombs and a spring on a 3-point call. It
- *    is a backstop against an absurd chain, not a routine clamp.
+ *    landlord's exposure is 2 x multiplier pots, so a 100-pot ceiling only bites
+ *    above a multiplier of 50 — four bombs on a 3-point call, or three bombs and
+ *    a spring. It is a backstop against an absurd chain, not a routine clamp.
+ *    (HAND_CAP_FACTOR was doubled from 50 alongside the multiplier itself: since
+ *    the base is now a real factor rather than a floor, an ordinary game with a
+ *    bomb or two settles at roughly twice the multiplier it used to, and the
+ *    ceiling had to move with it or it would start biting on ordinary hands.)
  *
  *    This matters more than it sounds. An earlier version capped at 6 pots,
  *    which bites above a multiplier of 4: every bomb past the first paid
@@ -61,6 +68,10 @@ export const STARTING_BANKROLL = STARTER_POT * STARTING_STACK_MULTIPLE;
  * No single game may take more than this share of the bankroll. Raised from
  * 0.6: at 0.75 a pair of bad landlord hands from a fresh stack really does put
  * you on the rescue table, which is the risk that makes the rest mean anything.
+ *
+ * Left alone when the multiplier stopped treating the base as a floor: it is a
+ * fraction of the bankroll, not of a pot count, so it does not move just
+ * because the multiplier's arithmetic changed underneath it.
  */
 export const MAX_LOSS_FRACTION = 0.75;
 
@@ -68,9 +79,11 @@ export const MAX_LOSS_FRACTION = 0.75;
  * Pots you must hold to sit down at a table.
  *
  * Six is not a taste: it is the smallest number at which an ordinary hand is
- * settled in full. A landlord at the base x2 multiplier risks 4 pots, and the
- * bankroll cap allows MAX_LOSS_FRACTION of the stack, so at five pots or fewer
- * (0.75 x 5 = 3.75 pots) the emergency cap fires on a perfectly normal loss.
+ * settled in full. A landlord at the base x2 multiplier risks 4 pots — the
+ * pre-bidding base times the landlord's double, unchanged by the multiplier
+ * rework — and the bankroll cap allows MAX_LOSS_FRACTION of the stack, so at
+ * five pots or fewer (0.75 x 5 = 3.75 pots) the emergency cap fires on a
+ * perfectly normal loss.
  * A table you cannot lose an ordinary hand at is a table you should not be
  * sitting at, and the cap should be for disasters, not for Tuesdays.
  */
@@ -93,8 +106,14 @@ export const RESCUE_EXIT = STARTER_POT * ENTRY_POTS;
  * The most one hand can move, as a multiple of the pot, win or lose. Uniform
  * across the ladder: the bankroll cap already scales the protection with what a
  * player actually holds, so a second sliding scale would only obscure it.
+ *
+ * Doubled from 50 when the multiplier stopped treating the base as a floor and
+ * started treating it as a real factor: the
+ * same game now reports roughly twice the multiplier it used to, so the ceiling
+ * has to rise with it to keep landing on the same hands (freak chains of bombs)
+ * rather than starting to bite on an ordinary bomb or two.
  */
-export const HAND_CAP_FACTOR = 50;
+export const HAND_CAP_FACTOR = 100;
 
 /**
  * @typedef {object} Lobby
@@ -184,7 +203,10 @@ export function lobbyAccess(bankroll, rescueMode) {
  * @returns {{delta: number, gross: number, capped: boolean, multiplier: number, stake: number, won: boolean, cap: number}}
  */
 export function settleDouDiZhu({ lobby, result, seat, bankroll, rescueMode = false }) {
-  const multiplier = Math.max(result.multiplier, lobby.baseMultiplier);
+  // The engine already factors in the lobby's base multiplier (it is passed
+  // in as baseMultiplier when the game is created), so result.multiplier is
+  // the real number, not a value that still needs a floor applied to it.
+  const multiplier = result.multiplier;
   const stake = lobby.pot * multiplier;
   const isLandlord = seat === result.landlordSeat;
   const magnitude = isLandlord ? stake * 2 : stake;

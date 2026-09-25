@@ -21,14 +21,25 @@
  *   partnerAware   a farmer stops beating its own partner's lead
  *   countsCards    the bot tracks the played pile and knows when a card of its
  *                  own is the highest of that rank still live
- *   bombDiscipline how strongly it refuses to break a bomb for a small gain
+ *   bombDiscipline how strongly it refuses to break a bomb for a small gain —
+ *                  and, the same thing in disguise, how strongly it refuses to
+ *                  play a four-with-kickers or split a four into a smaller
+ *                  combo, both of which spend the bomb without ever doubling
+ *                  the stake. master and grandmaster (strictFourDiscipline)
+ *                  refuse it outright unless it empties the hand or leaves a
+ *                  single remaining play the unseen cards cannot beat.
  *
- * Evaluation is a hand-shape heuristic, not a search: cost(hand) approximates
- * the number of tricks needed to shed it, computed by greedy decomposition in
- * O(r^2) over the 15 distinct ranks. There is no minimax, which is why the top
- * lobby plays a strong club game rather than perfectly — exact Dou Di Zhu
- * endgames are a search problem well beyond a heuristic, and a bot that never
- * erred would make the 1M table unplayable rather than hard.
+ * Evaluation is mostly a hand-shape heuristic, not a search: cost(hand)
+ * approximates the number of tricks needed to shed it, computed by greedy
+ * decomposition in O(r^2) over the 15 distinct ranks. That is why the top
+ * lobby plays a strong club game rather than perfectly — a full-hand minimax
+ * is a search problem well beyond it, and a bot that never erred would make
+ * the 1M table unplayable rather than hard. The one exception is the bounded
+ * endgame search in findForcedWin(): once a countsCards bot is down to a
+ * handful of cards it checks, exactly, whether some ordering of its remaining
+ * cards can go out without ever offering a play the unseen pool could beat —
+ * sound but not complete (it only proves wins built entirely from unanswerable
+ * plays), and cheap enough to run on every such turn.
  */
 
 import {
@@ -39,9 +50,9 @@ import {
   cardFromId,
   countByRank,
 } from '../../core/cards.js';
-import { weightedPick } from '../../core/rng.js';
-import { Combo, beats } from './rules.js';
-import { legalPlays, moveCost } from './moves.js';
+import { makeRng, shuffle, weightedPick } from '../../core/rng.js';
+import { Combo, beats, classify } from './rules.js';
+import { enumerateLeads, legalPlays, moveCost } from './moves.js';
 
 /**
  * @typedef {object} Skill
@@ -51,18 +62,22 @@ import { legalPlays, moveCost } from './moves.js';
  * @property {boolean} countsCards
  * @property {boolean} partnerAware
  * @property {number} bombDiscipline 0..1
+ * @property {boolean} strictFourDiscipline never spend a four (with kickers, or
+ *                      split into a smaller combo) unless it wins outright or
+ *                      is provably safe; below this, bombDiscipline just makes
+ *                      it a worse-scoring option, same as a real bomb
  * @property {number} bidNoise       added to hand strength when calling points
  */
 
 /** Ready-made profiles. economy.js maps a lobby to one of these. */
 export const SKILLS = {
-  novice:   { name: 'Novice',   accuracy: 0.45, temperature: 26, countsCards: false, partnerAware: false, bombDiscipline: 0.1, bidNoise: 0.30 },
-  casual:   { name: 'Casual',   accuracy: 0.62, temperature: 18, countsCards: false, partnerAware: true,  bombDiscipline: 0.3, bidNoise: 0.22 },
-  steady:   { name: 'Steady',   accuracy: 0.72, temperature: 14, countsCards: false, partnerAware: true,  bombDiscipline: 0.5, bidNoise: 0.16 },
-  sharp:    { name: 'Sharp',    accuracy: 0.80, temperature: 11, countsCards: true,  partnerAware: true,  bombDiscipline: 0.65, bidNoise: 0.12 },
-  expert:   { name: 'Expert',   accuracy: 0.86, temperature: 8,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.78, bidNoise: 0.08 },
-  master:   { name: 'Master',   accuracy: 0.92, temperature: 6,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.88, bidNoise: 0.05 },
-  grandmaster: { name: 'Grandmaster', accuracy: 0.97, temperature: 4, countsCards: true, partnerAware: true, bombDiscipline: 0.95, bidNoise: 0.02 },
+  novice:      { name: 'Novice',      accuracy: 0.45, temperature: 26, countsCards: false, partnerAware: false, bombDiscipline: 0.1,  strictFourDiscipline: false, bidNoise: 0.30 },
+  casual:      { name: 'Casual',      accuracy: 0.62, temperature: 18, countsCards: false, partnerAware: true,  bombDiscipline: 0.3,  strictFourDiscipline: false, bidNoise: 0.22 },
+  steady:      { name: 'Steady',      accuracy: 0.72, temperature: 14, countsCards: false, partnerAware: true,  bombDiscipline: 0.5,  strictFourDiscipline: false, bidNoise: 0.16 },
+  sharp:       { name: 'Sharp',       accuracy: 0.80, temperature: 11, countsCards: true,  partnerAware: true,  bombDiscipline: 0.65, strictFourDiscipline: false, bidNoise: 0.12 },
+  expert:      { name: 'Expert',      accuracy: 0.86, temperature: 8,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.78, strictFourDiscipline: false, bidNoise: 0.08 },
+  master:      { name: 'Master',      accuracy: 0.92, temperature: 6,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.88, strictFourDiscipline: true,  bidNoise: 0.05 },
+  grandmaster: { name: 'Grandmaster', accuracy: 0.97, temperature: 4,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.95, strictFourDiscipline: true,  bidNoise: 0.02 },
 };
 
 export function skillByName(name) {
@@ -228,6 +243,315 @@ function unanswerable(move, unseen) {
   return legalPlays(unseen, move, { kickerChoices: 1 }).length === 0;
 }
 
+// --- spending a bomb without playing one --------------------------------------
+
+/**
+ * True when `move` uses one or more cards from a rank this hand holds all four
+ * of, without the move itself being the bomb (or the rocket). Covers both
+ * four-with-kickers (all four cards, plus two more) and splitting a four —
+ * using only one, two or three of them in some other combo. Either way the
+ * bomb is gone from the hand and the stake was never doubled for it, which is
+ * the thing worth discouraging.
+ */
+function spendsFour(hand, move) {
+  if (move.bomb) return false;
+  const handCounts = countByRank(hand);
+  const moveCounts = countByRank(move.cards);
+  for (const [rank, used] of moveCounts) {
+    if (used >= 1 && (handCounts.get(rank) ?? 0) === 4) return true;
+  }
+  return false;
+}
+
+/**
+ * Spending a four early is provably fine, without trusting a heuristic, in two
+ * cases: it empties the hand outright, or the cards left over, played as a
+ * single combo, are something the unseen pool cannot beat ("leaves exactly one
+ * play that cannot be beaten"). A third case is not provable but is not
+ * frivolous either: stopping an opponent who is about to go out, or closing
+ * out a hand that is itself down to its last few cards — the same "urgent"
+ * test scoreMove uses to decide a real bomb is worth it. Measured against the
+ * naive reading (drop the urgent case too): that version is not measurably
+ * stronger than the bot it replaces, because it also gives up the defensive
+ * bombs a human would still play; this one is (see the sim report in the
+ * commit this landed in).
+ */
+function fourSpendJustified(remaining, unseen, urgent) {
+  if (remaining.length === 0 || urgent) return true;
+  if (!unseen) return false;
+  const combo = classify(remaining);
+  return !!combo && unanswerable(combo, unseen);
+}
+
+/**
+ * For master and grandmaster (strictFourDiscipline): drop any move that spends
+ * or splits a four unless it is justified, rather than merely scoring it down.
+ * Never returns an empty list — if every legal move happens to touch a four
+ * (a hand made of nothing else) the filter backs off instead of leaving the
+ * bot with nothing to play.
+ */
+function filterFourDiscipline(view, skill, moves, unseen) {
+  if (!skill.strictFourDiscipline) return moves;
+  const hand = view.you.hand;
+  const seat = view.seat;
+  const me = view.players[seat];
+  const opponentLow = Math.min(...view.players.filter((p) => p.seat !== seat && !sameSide(me, p)).map((p) => p.cards));
+  const allowed = moves.filter((move) => {
+    if (!spendsFour(hand, move)) return true;
+    const remaining = removeByIds(hand, move.cards);
+    const urgent = opponentLow <= 2 || remaining.length <= 3;
+    return fourSpendJustified(remaining, unseen, urgent);
+  });
+  return allowed.length ? allowed : moves;
+}
+
+const FORCED_WIN_MAX_HAND = 8;
+const FORCED_WIN_NODE_BUDGET = 20_000;
+
+/**
+ * Bounded exact endgame search. Looks for an ordering of `hand` into leads
+ * that are each unanswerable by the unseen pool — so nobody can ever beat one,
+ * meaning every one of them is passed on and the lead simply comes straight
+ * back — all the way down to an empty hand. If one exists, that is a proven
+ * win regardless of how the unseen cards are actually split between the two
+ * opponents. Returns the first move of such a sequence, or null.
+ *
+ * Sound, not complete: a real forced win that requires offering an answerable
+ * play (because the opponent who could beat it can be shown to never hold the
+ * lead again) would be missed. Only ever tried on hands of FORCED_WIN_MAX_HAND
+ * cards or fewer, where the search is cheap regardless; the node budget is a
+ * backstop against a pathological hand, not something expected to bind.
+ */
+function findForcedWin(hand, unseen) {
+  if (!hand.length || hand.length > FORCED_WIN_MAX_HAND) return null;
+  let budget = FORCED_WIN_NODE_BUDGET;
+  const search = (cards) => {
+    if (cards.length === 0) return [];
+    if (--budget < 0) return null;
+    const leads = enumerateLeads(cards, { kickerChoices: 1 }).filter((m) => unanswerable(m, unseen));
+    // Try the plays that shed the most cards first: not needed for correctness
+    // (any successful decomposition proves the win), just finds one faster.
+    leads.sort((a, b) => b.size - a.size || moveCost(a) - moveCost(b));
+    for (const move of leads) {
+      const rest = search(removeByIds(cards, move.cards));
+      if (rest) return [move, ...rest];
+    }
+    return null;
+  };
+  const sequence = search(hand);
+  return sequence && sequence.length ? sequence[0] : null;
+}
+
+// --- determinized endgame search ----------------------------------------------
+
+/**
+ * How many trailing passes the trick now in progress already carries, read
+ * back out of trickPlays. Needed to resume a search mid-trick with the same
+ * "how many more passes end it" state the real engine has, rather than
+ * silently resetting it to zero and giving the search one pass too many.
+ */
+function currentPassStreak(view) {
+  const plays = view.trickPlays ?? [];
+  let streak = 0;
+  for (let i = plays.length - 1; i >= 0; i--) {
+    if (!plays[i].pass) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+const ENDGAME_TOTAL_MAX = 12;       // sum of all three hands left in play
+const ENDGAME_DETERMINIZATIONS = 6; // sampled splits of the unseen pool
+const ENDGAME_NODE_BUDGET = 3_000;  // per determinization
+
+/**
+ * Exact two-player alpha-beta (landlord maximising, the two farmers on one
+ * side minimising — chip-wise they win and lose together, so it really is a
+ * two-player zero-sum game once every hand is known) over one fully-known
+ * deal. `hands` is indexed by seat and mutated then restored as the search
+ * backtracks. Values are boolean-as-number: 1 means the landlord goes out
+ * first, 0 means a farmer does, so a maximiser that reaches 1 or a minimiser
+ * that reaches 0 can stop immediately — the cheap substitute for numeric
+ * alpha-beta bounds that a two-valued game affords.
+ *
+ * Returns { value, choice } where choice is { cards } or { pass: true }, or
+ * { value: null, choice: null } once the node budget runs out — every caller
+ * must treat null as "unknown" and bail the whole search, not as a result.
+ */
+function alphaBetaEndgame(hands, turn, current, leader, passStreak, roles, budget) {
+  if (--budget.n < 0) return { value: null, choice: null };
+  const hand = hands[turn];
+  const maximizing = roles[turn] === 'landlord';
+  const moves = legalPlays(hand, current, { kickerChoices: 2 });
+  // Try the moves that end the hand outright first: they are the fastest way
+  // to hit the stop-immediately case above, and legalPlays' own cost-ordering
+  // is otherwise unrelated to which of these is actually best to search first.
+  moves.sort((a, b) => (b.cards.length === hand.length ? 1 : 0) - (a.cards.length === hand.length ? 1 : 0));
+
+  let bestValue = maximizing ? -Infinity : Infinity;
+  let best = null;
+  const better = (v) => (maximizing ? v > bestValue : v < bestValue);
+  const done = () => (maximizing ? bestValue === 1 : bestValue === 0);
+
+  for (const move of moves) {
+    let value;
+    if (move.cards.length === hand.length) {
+      value = maximizing ? 1 : 0; // this seat empties its hand and the deal ends
+    } else {
+      const saved = hands[turn];
+      hands[turn] = removeByIds(hand, move.cards);
+      const res = alphaBetaEndgame(hands, (turn + 1) % 3, move, turn, 0, roles, budget);
+      hands[turn] = saved;
+      if (res.value === null) return { value: null, choice: null };
+      value = res.value;
+    }
+    if (better(value)) { bestValue = value; best = { cards: move.cards }; }
+    if (done()) break;
+  }
+
+  if (current && !done()) {
+    const streak = passStreak + 1;
+    const [nextTurn, nextCurrent, nextLeader, nextStreak] = streak >= 2
+      ? [leader, null, leader, 0]
+      : [(turn + 1) % 3, current, leader, streak];
+    const res = alphaBetaEndgame(hands, nextTurn, nextCurrent, nextLeader, nextStreak, roles, budget);
+    if (res.value === null) return { value: null, choice: null };
+    if (better(res.value)) { bestValue = res.value; best = { pass: true }; }
+  }
+
+  if (best === null) return { value: maximizing ? 0 : 1, choice: null }; // must lead, nothing legal: cannot happen with a non-empty hand
+  return { value: bestValue, choice: best };
+}
+
+/** How many of my own candidate moves get the full determinized evaluation. */
+const ENDGAME_CANDIDATE_LIMIT = 8;
+
+/**
+ * Apply one candidate (a move, or pass) to a fully-determined world and read
+ * off whether the seat that owns this decision goes on to win it, with both
+ * sides playing the rest out exactly (alphaBetaEndgame). Emptying the hand
+ * outright is resolved without a search — there is nothing left to play.
+ * Returns null when the search could not finish inside its node budget.
+ */
+function evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles) {
+  const budget = { n: ENDGAME_NODE_BUDGET };
+  if (choice === null) {
+    // Pass: only legal mid-trick. Work out where the turn and the trick
+    // itself land next, exactly as pass() in engine.js does.
+    const streak = passStreak + 1;
+    const [nextTurn, nextCurrent, nextLeader, nextStreak] = streak >= 2
+      ? [leader, null, leader, 0]
+      : [(seat + 1) % 3, current, leader, streak];
+    const res = alphaBetaEndgame(hands, nextTurn, nextCurrent, nextLeader, nextStreak, roles, budget);
+    return res.value;
+  }
+  if (choice.cards.length === hand.length) return roles[seat] === 'landlord' ? 1 : 0; // goes out now
+  const saved = hands[seat];
+  hands[seat] = removeByIds(hand, choice.cards);
+  const res = alphaBetaEndgame(hands, (seat + 1) % 3, choice, seat, 0, roles, budget);
+  hands[seat] = saved;
+  return res.value;
+}
+
+/**
+ * Sample ENDGAME_DETERMINIZATIONS ways the unseen pool could actually be split
+ * between the two opponents (their hand sizes are known, exactly, from the
+ * seat view — only which cards is hidden). For each of my own legal moves —
+ * shortlisted to ENDGAME_CANDIDATE_LIMIT by the ordinary heuristic, so the
+ * search spends its budget on plausible plays rather than everything legal —
+ * solve every sampled world exactly with alphaBetaEndgame() and see how often
+ * that specific move wins. The same set of sampled worlds is reused for every
+ * candidate (common random numbers), so the comparison between them is not
+ * fighting its own sampling noise. Returns the move with the best win rate, or
+ * null if none of them could be evaluated at all.
+ *
+ * Only tried once the total cards left across the table is small — the point
+ * in the hand where "what if the split were different" has few enough answers
+ * that a handful of full searches per candidate is still cheap.
+ */
+function endgameDecision(view, skill, unseen, rng) {
+  const seat = view.seat;
+  const opponents = view.players.filter((p) => p.seat !== seat);
+  const opponentTotal = opponents.reduce((sum, p) => sum + p.cards, 0);
+  const totalRemaining = view.you.hand.length + opponentTotal;
+  if (totalRemaining > ENDGAME_TOTAL_MAX || totalRemaining <= 1) return null;
+
+  // The bottom three are public — everyone at the table saw them go down —
+  // and they always started in the landlord's hand. unseenCards() takes them
+  // back out of the unseen pool unconditionally for that reason, whether or
+  // not the landlord has since played one. So when the landlord is one of the
+  // two seats being dealt for (true exactly when I am a farmer), the pool is
+  // short by however many of the three the landlord is still holding: those
+  // are pinned to the landlord's determinized hand instead of drawn at random,
+  // rather than assumed to still all be there.
+  const landlordOpponent = opponents.find((p) => p.role === 'landlord');
+  const playedIds = new Set((view.playedCards ?? []).map((c) => c.id));
+  const knownBottom = view.bottomRevealed ? (view.bottom ?? []).filter(Boolean) : [];
+  const bottomOwed = landlordOpponent ? knownBottom.filter((c) => !playedIds.has(c.id)) : [];
+  // Every card not in my hand, played, or the revealed bottom must be in one
+  // of the two opponents' hands — if that count does not match what the seat
+  // view says they are holding, something upstream is inconsistent and the
+  // search has no reliable pool to deal from.
+  if (unseen.length + bottomOwed.length !== opponentTotal) return null;
+  if (bottomOwed.length > (landlordOpponent?.cards ?? 0)) return null; // paranoia: never pin more than the hand holds
+
+  const hand = view.you.hand;
+  const roles = view.players.map((p) => p.role);
+  const current = view.trick ? view.trick.combo : null;
+  const leader = view.trick ? view.trick.leader : seat;
+  const passStreak = view.trick ? currentPassStreak(view) : 0;
+  const iAmLandlord = roles[seat] === 'landlord';
+
+  const legal = legalPlays(hand, current, { kickerChoices: 2 });
+  const ranked = legal
+    .map((move) => ({ move, score: scoreMove(view, skill, move, unseen) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, ENDGAME_CANDIDATE_LIMIT)
+    .map((e) => e.move);
+  /** @type {(object|null)[]} candidate choices; null stands for pass */
+  const shortlist = current ? [...ranked, null] : ranked;
+  if (!shortlist.length) return null;
+
+  // Common random numbers: the same K worlds for every candidate, so "move A
+  // won 5/6" versus "move B won 3/6" is a real difference and not two
+  // candidates that happened to draw different pools.
+  const worldSeeds = [];
+  for (let k = 0; k < ENDGAME_DETERMINIZATIONS; k++) worldSeeds.push(shuffle([...unseen], rng));
+
+  let best = null;
+  for (const choice of shortlist) {
+    let wins = 0;
+    let evaluated = 0;
+    for (const pool of worldSeeds) {
+      const hands = [];
+      let cursor = 0;
+      for (const p of view.players) {
+        if (p.seat === seat) { hands[p.seat] = hand; continue; }
+        if (p === landlordOpponent && bottomOwed.length) {
+          const need = p.cards - bottomOwed.length;
+          hands[p.seat] = [...bottomOwed, ...pool.slice(cursor, cursor + need)];
+          cursor += need;
+          continue;
+        }
+        hands[p.seat] = pool.slice(cursor, cursor + p.cards);
+        cursor += p.cards;
+      }
+      const value = evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles);
+      if (value === null) continue; // this world's search ran out of budget; skip rather than guess
+      evaluated += 1;
+      if (iAmLandlord ? value === 1 : value === 0) wins += 1;
+    }
+    if (!evaluated) continue;
+    const rate = wins / evaluated;
+    // Ties favour whichever candidate the ordinary heuristic already ranked
+    // first (shortlist is heuristic-sorted), so the search only overrides it
+    // when it actually found something better.
+    if (!best || rate > best.rate) best = { choice, rate, evaluated };
+  }
+  if (!best || best.evaluated < ENDGAME_DETERMINIZATIONS) return null; // not enough of the sample finished to trust this
+  return best.choice === null ? { pass: true } : { cards: best.choice.cards };
+}
+
 // --- decisions ---------------------------------------------------------------
 
 /**
@@ -264,7 +588,23 @@ export function chooseMove(view, skill, rng) {
   if (!moves.length) return canPass ? { pass: true } : null;
 
   const unseen = skill.countsCards ? unseenCards(view) : null;
-  const scored = moves.map((move) => ({ move, score: scoreMove(view, skill, move, unseen) }));
+
+  // A proven win takes priority over the heuristic outright, the same way a
+  // human who has counted the table out would just take it. The cheap
+  // unanswerable-decomposition check first, since it is nearly free when it
+  // does not apply; the determinized search second, since it also covers
+  // responding to a trick, which the first check cannot.
+  if (unseen) {
+    if (!current && hand.length > 1) {
+      const forced = findForcedWin(hand, unseen);
+      if (forced) return { cards: forced.cards };
+    }
+    const deep = endgameDecision(view, skill, unseen, rng);
+    if (deep) return deep.pass ? { pass: true } : { cards: deep.cards };
+  }
+
+  const candidates = filterFourDiscipline(view, skill, moves, unseen);
+  const scored = candidates.map((move) => ({ move, score: scoreMove(view, skill, move, unseen) }));
   if (canPass) scored.push({ move: null, score: scorePass(view, skill) });
   scored.sort((a, b) => b.score - a.score);
 
@@ -293,9 +633,12 @@ function scoreMove(view, skill, move, unseen) {
   const partner = view.players.find((p) => p.seat !== seat && sameSide(me, p));
   const opponentLow = Math.min(...opponents.map((p) => p.cards));
 
-  // Spending a bomb: only worth it to stop someone who is about to go out, or to
-  // win outright. bombDiscipline decides how strict the bot is about that.
-  if (move.bomb) {
+  // Spending a bomb — playing it outright, playing a four-with-kickers, or
+  // splitting a four into some other combo — is only worth it to stop someone
+  // who is about to go out, or to win outright. bombDiscipline decides how
+  // strict the bot is about that; strictFourDiscipline (master and up) has
+  // already ruled the frivolous cases out before this is even reached.
+  if (move.bomb || spendsFour(view.you.hand, move)) {
     const urgent = opponentLow <= 2 || remaining.length <= 3;
     if (!urgent) score -= W.play * 3.5 * skill.bombDiscipline;
     else score += W.chokeOpponent * skill.bombDiscipline;
@@ -330,6 +673,26 @@ function scoreMove(view, skill, move, unseen) {
     const partnerNearlyOut = partner.cards <= 2;
     if (partnerNearlyOut || partner.cards <= landlordCards) score -= W.partnerLead;
   }
+
+  // As a farmer, taking the trick back from the landlord (not from your own
+  // partner) is worth a little extra: it denies the landlord the lead, which
+  // is the one seat both farmers actually want to keep away from it.
+  if (view.trick && skill.partnerAware && me.role === 'farmer' && view.trick.leader !== partner?.seat && !move.bomb) {
+    score += W.chokeOpponent * 0.35;
+  }
+
+  // A farmer down to one or two cards is much likelier to hold a stray single
+  // than a matching pair or chain. As the landlord, leading with size presses
+  // that farmer harder than doling out singles one at a time.
+  if (!view.trick && me.role === 'landlord' && opponentLow <= 2 && !move.bomb) {
+    if (move.size >= 2) score += W.chokeOpponent * 0.5;
+    else score -= W.chokeOpponent * 0.4;
+  }
+
+  // Between two leads that shed the same amount and cost the same shape, take
+  // the lower one: it is less likely to be the top of its rank still live, so
+  // it is cheaper to lose and cheaper to have wasted if the trick is contested.
+  if (!view.trick && !move.bomb) score -= move.rank * 0.15;
 
   return score;
 }
@@ -370,14 +733,27 @@ function brokenSets(hand, cards) {
   return broken;
 }
 
-/** Exposed for the simulator: rank moves without the randomness. */
+/** Exposed for the simulator: rank moves without the randomness of accuracy
+ * and temperature. The endgame search still has its own internal sampling —
+ * seeded from the hand itself, so the same view always resolves the same way. */
 export function bestMove(view, skill) {
   const current = view.trick?.combo ?? null;
-  const moves = legalPlays(view.you.hand, current, { kickerChoices: 2 });
+  const hand = view.you.hand;
+  const moves = legalPlays(hand, current, { kickerChoices: 2 });
   if (!moves.length) return current ? { pass: true } : null;
   const unseen = skill.countsCards ? unseenCards(view) : null;
+  if (unseen) {
+    if (!current && hand.length > 1) {
+      const forced = findForcedWin(hand, unseen);
+      if (forced) return { cards: forced.cards };
+    }
+    const rng = makeRng(hand.map((c) => c.id).sort((a, b) => a - b).join(','));
+    const deep = endgameDecision(view, skill, unseen, rng);
+    if (deep) return deep.pass ? { pass: true } : { cards: deep.cards };
+  }
+  const candidates = filterFourDiscipline(view, skill, moves, unseen);
   let best = null;
-  for (const move of moves) {
+  for (const move of candidates) {
     const score = scoreMove(view, skill, move, unseen);
     if (!best || score > best.score) best = { move, score };
   }
