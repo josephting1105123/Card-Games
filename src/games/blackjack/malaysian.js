@@ -267,29 +267,31 @@ export function randomBotBet(table, rng) {
 
 /**
  * A bot's decision on its turn: 'run' (opening 15 only), 'hit' or 'stand'.
- * Deliberately simple and documented rather than optimal:
+ * Deliberately simple and documented rather than optimal, and — this is
+ * load-bearing, not a style choice — decided from the bot's own hand alone.
+ * The dealer's cards are face down to every bot until the human dealer
+ * chooses to open it; a bot AI that consulted round.dealer.cards would be
+ * peeking at hidden cards no real player at this table could see. So this
+ * function, and everything that calls it, takes no dealer information at
+ * all:
  *  - Below 16 (and not an opening 15) it always hits — it has no choice, the
  *    same floor the human player and the human dealer both play under.
- *  - An opening 15 runs about half the time; more (70%) against a dealer
- *    already showing a strong two-card total (18+), where pushing the
- *    guaranteed bet back is worth more than a hand unlikely to beat what's
- *    already on the table.
+ *  - An opening 15 runs half the time — a flat coin flip, since the bot has
+ *    nothing else of its own to weigh the guaranteed push against.
  *  - At 16-17 with four cards or fewer, it keeps drawing for a shot at Five
  *    Dragon about a third of the time — standing at 16-17 is a near-certain
  *    loss once the dealer opens it, so chasing the 2:1/3:1 is worth the bust
  *    risk while there are still cards left to draw.
  *  - Anything else (18+, or no more room to chase Five Dragon) stands.
  */
-function wantsToRun(cards, dealerCards, rng) {
-  const dealerStrong = malaysianTotal(dealerCards).total >= 18;
-  const runChance = dealerStrong ? 0.7 : 0.5;
-  return rng() < runChance;
+function wantsToRun(rng) {
+  return rng() < 0.5;
 }
 
-export function botDecide(cards, dealerCards, rng) {
+export function botDecide(cards, rng) {
   const { total } = malaysianTotal(cards);
   if (cards.length === 2 && total === 15) {
-    return wantsToRun(cards, dealerCards, rng) ? 'run' : 'hit';
+    return wantsToRun(rng) ? 'run' : 'hit';
   }
   if (total < 16) return 'hit';
   if (total <= 17 && cards.length <= 4) {
@@ -302,12 +304,15 @@ export function botDecide(cards, dealerCards, rng) {
  * own hand is applied — the same precedence the player seat follows. A bot
  * that runs is opened (a push, cards.length still 2) and is untouched by
  * whatever the dealer turns out to hold; a bot that declines is marked
- * runDeclined so its later turn (playBotTurn) does not ask again. */
+ * runDeclined so its later turn (playBotTurn) does not ask again. The
+ * decision itself never looks at round.dealer.cards — those are face down
+ * to the bots, same as to a real player, right up until the human dealer
+ * opens a hand. */
 function decideOpeningRuns(round, rng) {
   for (const bot of round.bots) {
     if (bot.special) continue; // a special hand is always 21, never 15
     if (bot.cards.length === 2 && malaysianTotal(bot.cards).total === 15) {
-      if (wantsToRun(bot.cards, round.dealer.cards, rng)) {
+      if (wantsToRun(rng)) {
         bot.result = 'run';
         bot.payout = 0;
         bot.opened = true;
@@ -398,7 +403,9 @@ export function startDealerSeatRound({ deck, table, rng }) {
 /** Plays one bot's whole turn to a decision point (run, stand, a hidden
  * bust, or an instant 777/Five Dragon payout), logging each decision in
  * bot.actions so the UI can pace revealing them without knowing card faces
- * — everything here is face-down to the human dealer regardless. */
+ * — everything here is face-down to the human dealer regardless. Decisions
+ * come from botDecide(bot.cards, rng) alone: the dealer's own cards, still
+ * face down to every bot at this point, never reach it. */
 export function playBotTurn(round, botIndex, deck, rng) {
   const bot = round.bots[botIndex];
   if (!bot || bot.opened) return { ok: false, error: 'bot already resolved' };
@@ -408,7 +415,7 @@ export function playBotTurn(round, botIndex, deck, rng) {
     // The run/no-run call for an opening 15 already happened in
     // decideOpeningRuns(), ahead of the dealer's own special — a bot that
     // declined it just takes the resulting hit, without being asked again.
-    const decision = (first && bot.runDeclined) ? 'hit' : botDecide(bot.cards, round.dealer.cards, rng);
+    const decision = (first && bot.runDeclined) ? 'hit' : botDecide(bot.cards, rng);
     first = false;
     bot.actions.push(decision);
     if (decision === 'run') {

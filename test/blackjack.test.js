@@ -418,7 +418,7 @@ test('malaysian dealer seat: a dealer special ends the round, settling every bot
 });
 
 test('malaysian dealer seat: a bot on an opening 15 decides Run before the dealer\'s special is applied', () => {
-  // bot0 = 9,6 = 15 (runs, favoured by a strong dealer total of 21); bot1 =
+  // bot0 = 9,6 = 15 (rng()=0 always wins the flat 50% run chance); bot1 =
   // A,K = Ban Luck (loses to the dealer's Ban Ban, ranked below it); bot2/3 plain.
   const deck = stack(9, A, 9, 9, A, 6, K, 3, 4, A);
   const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: () => 0 });
@@ -428,6 +428,54 @@ test('malaysian dealer seat: a bot on an opening 15 decides Run before the deale
   assert.equal(round.bots[1].result, 'lose');
   assert.equal(round.bots[1].payout, -round.bots[1].bet * 3);
   assert.equal(round.phase, 'settled');
+});
+
+test('malaysian dealer seat: a bot\'s Run decision never depends on the dealer\'s hidden cards', () => {
+  // Same bot cards (bot0 opens at 15, bots 1-3 at 16 so they never touch
+  // wantsToRun), same seed, two decks that differ only in the dealer's own
+  // two cards — one a weak 12, one a strong 20, neither a special. If a bot
+  // decision ever reads round.dealer.cards, these two would diverge; they
+  // must not, across every seed, because the dealer's hand is face down to
+  // every bot until the human dealer opens it.
+  const buildDeck = (dealerRanks) => stack(9, 9, 9, 9, dealerRanks[0], 6, 7, 7, 7, dealerRanks[1]);
+  let sawRun = false;
+  let sawDecline = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    const weakRound = MY.startDealerSeatRound({
+      deck: buildDeck([9, 3]), table: dealerSeatTable, rng: makeRng(seed),
+    });
+    const strongRound = MY.startDealerSeatRound({
+      deck: buildDeck([10, 10]), table: dealerSeatTable, rng: makeRng(seed),
+    });
+    assert.equal(malaysianTotal(weakRound.dealer.cards).total, 12);
+    assert.equal(malaysianTotal(strongRound.dealer.cards).total, 20);
+    assert.equal(weakRound.dealer.special, null);
+    assert.equal(strongRound.dealer.special, null);
+
+    const weakRan = weakRound.bots[0].result === 'run';
+    const strongRan = strongRound.bots[0].result === 'run';
+    assert.equal(weakRan, strongRan, `seed ${seed}: run decision differed between a weak and a strong dealer hand`);
+    // Compare the decision's own outcome, not the two decks' card ids (each
+    // buildDeck() call mints fresh card objects from the module's shared
+    // uid counter, so ids never match between the weak and strong round —
+    // that is deck bookkeeping, not part of the bot's decision).
+    const snapshot = (bot) => ({
+      bet: bot.bet,
+      ranks: bot.cards.map((c) => c.rank),
+      busted: bot.busted,
+      stood: bot.stood,
+      opened: bot.opened,
+      result: bot.result,
+      payout: bot.payout,
+      actions: bot.actions,
+      runDeclined: bot.runDeclined,
+    });
+    assert.deepEqual(snapshot(weakRound.bots[0]), snapshot(strongRound.bots[0]), `seed ${seed}: bot0 state differed`);
+    if (weakRan) sawRun = true; else sawDecline = true;
+  }
+  // A flat 50% chance across 200 seeds should hit both outcomes — otherwise
+  // this test could pass by accident (e.g. if both sides always ran).
+  assert.ok(sawRun && sawDecline, 'expected both run and decline to occur across 200 seeds');
 });
 
 test('malaysian dealer seat: a bot\'s own Five Dragon pays out immediately, mid-turn', () => {
