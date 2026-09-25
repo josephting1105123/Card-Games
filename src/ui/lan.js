@@ -241,7 +241,7 @@ class LanScreens {
           field('Coins', currency, 'Silver for a quick game, gold for a heavy one'),
           field('Pot per person', pot, 'What each seat puts up'),
           field('Starting stack', chips, `Everyone begins with this — ${STARTING_STACK_MULTIPLE} pots unless you say otherwise`),
-          field('Base multiplier', mult, 'The floor; bombs and springs double it'),
+          field('Base multiplier', mult, 'The starting factor; the points called, then each bomb, rocket and spring, multiply it further'),
           field('Hand ceiling (× pot)', cap, 'The most one hand can move, won or lost'),
           field('Bot strength', skill, 'For any seat a person does not take'),
         ),

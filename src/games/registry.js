@@ -39,8 +39,9 @@ export const GAMES = [
     name: 'Blackjack',
     tagline: 'American and Malaysian',
     players: 1,
-    status: 'planned',
+    status: 'ready',
     accent: '#1f7a4d',
+    noElo: true,
     description: 'Two rule sets in one table: the American game, and the Malaysian house game with its own payouts and five-card rules.',
   },
   {

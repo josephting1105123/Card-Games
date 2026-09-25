@@ -31,6 +31,23 @@ test('the same seed deals the same cards', () => {
   assert.notDeepEqual(game('abc').players[0].hand, game('xyz').players[0].hand);
 });
 
+test('the multiplier starts at the base, before and during bidding, and a custom base is honoured', () => {
+  const defaultBase = game('mult-default');
+  assert.equal(defaultBase.multiplier, 2, 'defaults to x2 before a single call is made');
+  const first = defaultBase.bidding.first;
+  bid(defaultBase, first, 1);
+  assert.equal(defaultBase.multiplier, 2, 'still just the base while bidding is unsettled');
+
+  const custom = createGame({ seed: 'mult-custom', players, baseMultiplier: 4 });
+  assert.equal(custom.multiplier, 4);
+  const view = seatView(custom, 0);
+  assert.equal(view.multiplier, 4, 'the seat view reports the same number');
+  bid(custom, custom.bidding.first, 2);
+  bid(custom, (custom.bidding.first + 1) % 3, 0);
+  bid(custom, (custom.bidding.first + 2) % 3, 0);
+  assert.equal(custom.multiplier, 8, 'base x4 times the 2 points called');
+});
+
 test('bidding: three passes redeal', () => {
   const state = game('bidding-redeal');
   const first = state.bidding.first;
@@ -54,7 +71,7 @@ test('bidding: a call of three settles it immediately', () => {
   assert.equal(state.players[first].hand.length, HAND_SIZE + BOTTOM_SIZE);
   assert.equal(state.players[first].role, Role.LANDLORD);
   assert.equal(state.bidValue, 3);
-  assert.equal(state.multiplier, 3);
+  assert.equal(state.multiplier, 6, 'base x2 times the 3 points called');
   assert.equal(state.turn, first, 'the landlord leads');
   assert.equal(state.bottomRevealed, true);
 });
@@ -87,7 +104,7 @@ function riggedGame(hands, { landlord = 0, bidValue = 2 } = {}) {
   state.phase = Phase.PLAYING;
   state.landlord = landlord;
   state.bidValue = bidValue;
-  state.multiplier = bidValue;
+  state.multiplier = state.baseMultiplier * bidValue;
   state.bottomRevealed = true;
   state.bottom = [];
   state.turn = landlord;
@@ -138,10 +155,10 @@ test('play: two passes hand the lead back to the trick winner', () => {
 
 test('bombs double the stake', () => {
   const state = riggedGame(['3333 4', '567 8', '9TJ Q'], { bidValue: 2 });
-  assert.equal(state.multiplier, 2);
+  assert.equal(state.multiplier, 4, 'base x2 times the 2 points called');
   assert.equal(play(state, 0, parseHand('3333').map((c) => c.id)).ok, true);
   assert.equal(state.bombs, 1);
-  assert.equal(state.multiplier, 4);
+  assert.equal(state.multiplier, 8, 'and the bomb doubles it again');
 });
 
 test('a spring doubles again when the farmers never played', () => {
@@ -160,7 +177,7 @@ test('a spring doubles again when the farmers never played', () => {
   }
   assert.equal(state.result.landlordWon, true);
   assert.equal(state.result.spring, true);
-  assert.equal(state.result.multiplier, 2, 'one point called, doubled by the spring');
+  assert.equal(state.result.multiplier, 4, 'base x2, one point called, doubled again by the spring');
 });
 
 test('the anti-spring fires when the landlord only ever played once', () => {
@@ -170,7 +187,7 @@ test('the anti-spring fires when the landlord only ever played once', () => {
   assert.equal(state.phase, Phase.FINISHED);
   assert.equal(state.result.landlordWon, false);
   assert.equal(state.result.antiSpring, true);
-  assert.equal(state.result.multiplier, 2);
+  assert.equal(state.result.multiplier, 4, 'base x2, one point called, doubled again by the anti-spring');
 });
 
 test('seatView hides other hands but shows their counts', () => {
@@ -190,7 +207,7 @@ test('a hundred bot games all finish and conserve the deck', () => {
   for (let i = 0; i < 100; i++) {
     const { state, result } = simulateGame({ seed: `conserve:${i}`, skills: ['casual', 'steady', 'expert'] });
     assert.equal(state.phase, Phase.FINISHED);
-    assert.ok(result.multiplier >= 1);
+    assert.ok(result.multiplier >= 2, 'never below the default base multiplier');
     const dealt = state.players.reduce((n, p) => n + p.hand.length, 0)
       + state.plays.reduce((n, p) => n + (p.cards?.length ?? 0), 0);
     assert.equal(dealt, 54, `deck not conserved on seed ${i}`);

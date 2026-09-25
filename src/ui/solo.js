@@ -67,6 +67,7 @@ export class SoloGame {
     this.rng = makeRng(`${this.seed}:bots`);
     this.state = createGame({
       seed: this.seed,
+      baseMultiplier: this.lobby.baseMultiplier,
       players: [
         { id: 'you', name: this.app.profile.name || 'You' },
         { id: 'bot1', name: names[0], isBot: true, skill: this.skill },

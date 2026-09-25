@@ -13,7 +13,7 @@
  * stamp by hand.
  */
 
-const CACHE = 'card-games-4dde35d2c7e8';
+const CACHE = 'card-games-a84526e50fd8';
 
 const PRECACHE = [
   './',
@@ -22,6 +22,7 @@ const PRECACHE = [
   './styles/tokens.css',
   './styles/app.css',
   './styles/table.css',
+  './styles/blackjack.css',
   './src/main.js',
   './src/core/cards.js',
   './src/core/currency.js',
@@ -30,6 +31,11 @@ const PRECACHE = [
   './src/core/profile.js',
   './src/core/rng.js',
   './src/games/registry.js',
+  './src/games/blackjack/american.js',
+  './src/games/blackjack/cards.js',
+  './src/games/blackjack/malaysian.js',
+  './src/games/blackjack/stats.js',
+  './src/games/blackjack/tables.js',
   './src/games/doudizhu/ai.js',
   './src/games/doudizhu/engine.js',
   './src/games/doudizhu/match.js',
@@ -38,8 +44,10 @@ const PRECACHE = [
   './src/net/client.js',
   './src/net/protocol.js',
   './src/net/roomcode.js',
+  './src/ui/blackjack.js',
   './src/ui/cardart.js',
   './src/ui/dom.js',
+  './src/ui/fullscreen.js',
   './src/ui/lan.js',
   './src/ui/screens.js',
   './src/ui/solo.js',

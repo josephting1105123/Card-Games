@@ -42,6 +42,13 @@
 .hud__pill--table b { color: var(--text); font-weight: 400; }
 .hud__pill--mult b { font-size: 1.35em; }
 .hud .back-link { font-size: 1.3em; padding: 2px 8px; line-height: 1; }
+.fullscreen-toggle {
+  font: inherit; font-size: 1.1em; line-height: 1; color: var(--text-tertiary);
+  background: rgba(0, 0, 0, 0.3); border: 1px solid var(--hairline-strong); border-radius: var(--r-pill);
+  padding: 5px 9px; cursor: pointer;
+}
+.fullscreen-toggle:hover { color: var(--gold); border-color: var(--gold); }
+.fullscreen-toggle.is-on { color: var(--gold-bright); }
 .hud__pill small { font-size: 0.8em; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-tertiary); }
 .hud__pill.is-hot b { color: #ffb37a; }
 
@@ -73,17 +80,22 @@
 .seat__count { color: var(--gold); white-space: nowrap; font-variant-numeric: lining-nums tabular-nums; }
 .seat__role { font-size: var(--t-label); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-tertiary); }
 /* Bidding is the only turn with nothing to show for itself, so it is the only
-   thing that still speaks. */
+   thing that still speaks. Reserving its height permanently (the old
+   min-height) pushed the seat tall enough to overlap the play zone once the
+   hand grew to spec 2's size, so an idle bubble now takes 0 space instead —
+   only opacity animates (house rule), the height/padding just snap. */
 .seat__say {
-  min-height: 1.5em; font-size: clamp(13px, 1.7vw, 16px);
-  color: var(--ivory); text-align: center; padding: 3px 10px; border-radius: 8px;
+  max-height: 0; overflow: hidden; font-size: clamp(13px, 1.7vw, 16px);
+  color: var(--ivory); text-align: center; padding: 0 10px; border-radius: 8px;
   background: rgba(0, 0, 0, 0.32); opacity: 0; transition: opacity var(--dur-med) var(--ease-std);
 }
-.seat__say.is-on { opacity: 1; }
+.seat__say.is-on { opacity: 1; max-height: 2.4em; padding: 3px 10px; }
 
 .seat__backs { display: flex; justify-content: center; max-width: 100%; }
 .seat__backs .card {
-  --card-w: clamp(24px, 3.6vw, 36px);
+  /* Tied to viewport height, like the hand and the played cards, so a phone's
+     browser-bar height (844x330) shrinks every card on the table together. */
+  --card-w: clamp(26px, 6.5vh, 40px);
   /* A percentage margin would resolve against the row, not the card, and the fan
      would collapse across the felt. Keep it proportional to the card instead. */
   margin-left: calc(var(--card-w) * -0.58);
@@ -91,13 +103,20 @@
 }
 .seat__backs .card:first-child { margin-left: 0; }
 
+/* Pinned to the very top, centred, directly under the HUD — small enough
+   that it costs the felt almost nothing, which is what leaves the middle
+   band free for the play zones below. The caption is gone (an aria-label on
+   the container says it instead): at this height a text line was a third of
+   the block's own size. */
 .bottom-cards {
-  position: absolute; top: clamp(6px, 2vh, 18px); left: 50%; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center;
 }
-.bottom-cards__label { font-size: var(--t-label); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-tertiary); }
-.bottom-cards__row { display: flex; gap: 4px; }
-.bottom-cards .card { --card-w: clamp(30px, 5vw, 48px); }
+.bottom-cards__row { display: flex; gap: 3px; }
+/* Height = card-w * 1.4, so 8.6vh of width is ~12vh of height — the 11-13%
+   of viewport height the cards should read at, with a floor (28.6px wide,
+   40px tall) so it never drops below readable even at 844x330. */
+.bottom-cards .card { --card-w: clamp(28.6px, 8.6vh, 62px); }
 
 /* --- the trick, one landing area per seat ---------------------------------
    Cards sit in front of whoever played them, so position answers "who" and the
@@ -111,11 +130,17 @@
 }
 .play--left { left: 24%; top: 44%; transform: translate(-50%, -50%); }
 .play--right { left: 76%; top: 44%; transform: translate(-50%, -50%); }
-.play--self { left: 50%; top: 68%; transform: translate(-50%, -50%); }
+/* Landlord's three moved to a thin strip under the HUD (see .bottom-cards)
+   specifically to free this band: self's own play now sits in the middle of
+   the felt, clear of both it and the floating controls pill below, instead
+   of fighting either for the same few rows. */
+.play--self { left: 50%; top: 54%; transform: translate(-50%, -50%); }
 
 .play__cards { display: flex; justify-content: center; }
 .play__cards .card {
-  --card-w: clamp(34px, 5.6vw, 60px);
+  /* ~55% of the hand card's own vh-based size (20.5vh below), the middle of
+     the spec's 50-60% band, so a play zone scales with the hand it came from. */
+  --card-w: clamp(40px, 11.5vh, 82px);
   /* Never a percentage here: it would resolve against the row rather than the
      card, so every extra card widens the row, widens the margin, and collapses
      the fan into a stack. Keep the overlap proportional to the card. */
@@ -164,55 +189,57 @@
   from { opacity: 0; transform: translate(40%, -60%) scale(0.86) rotate(6deg); }
   to { opacity: 1; transform: none; }
 }
+/* 15%, not the 70% this started at: self's play zone now shares the felt's
+   middle band with the floating controls pill below it, and a card sliding
+   in from most of its own height further down swept straight through that
+   pill's space on the way — the entrance still reads as "from the hand",
+   just without the overshoot. */
 @keyframes play-in-self {
-  from { opacity: 0; transform: translateY(70%) scale(0.88); }
+  from { opacity: 0; transform: translateY(15%) scale(0.88); }
   to { opacity: 1; transform: none; }
 }
 
 /* --- shuffle and deal ------------------------------------------------------
-   Transform and opacity only, so the whole flourish stays on the compositor. */
+   Transform and opacity only, so the whole flourish stays on the compositor.
+   Every phase of the deal — the shuffle flourish, each of the round-robin
+   flights, the hand's gather and sorted re-spread, and the landlord's three —
+   reuses the one cg-fly keyframe below; tableview.js writes the ten --f*/--t*
+   custom properties per call and restarts the animation. Nothing here reads
+   a guessed vw/vh: every from/to pair is pixels off the dealer stack's own
+   measured centre, from tableview.js's single measurement pass. */
 
 .dealer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .dealer__card {
-  position: absolute; left: 50%; top: 46%;
-  width: clamp(34px, 5.6vw, 60px);
+  position: absolute; left: 50%; top: 16%;
+  width: clamp(40px, 9vh, 78px);
   transform: translate(-50%, -50%);
   will-change: transform, opacity;
 }
-.dealer.is-shuffling .dealer__card {
-  animation: deal-shuffle 260ms var(--ease-std) 2 both;
-  animation-delay: calc(var(--i, 0) * 12ms);
-}
-.dealer.is-flying .dealer__card {
-  animation: deal-out 260ms var(--ease) forwards;
-  animation-delay: calc(var(--i, 0) * 45ms);
+
+@keyframes cg-fly {
+  from {
+    transform: translate(calc(-50% + var(--fx, 0px)), calc(-50% + var(--fy, 0px)))
+               rotate(var(--fr, 0deg)) scale(var(--fs, 1));
+    opacity: var(--fo, 1);
+  }
+  to {
+    transform: translate(calc(-50% + var(--tx, 0px)), calc(-50% + var(--ty, 0px)))
+               rotate(var(--tr, 0deg)) scale(var(--ts, 1));
+    opacity: var(--to, 1);
+  }
 }
 
-@keyframes deal-shuffle {
-  0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
-  35% { transform: translate(calc(-50% + var(--sx)), calc(-50% - 9px)) rotate(var(--sr)); }
-  70% { transform: translate(calc(-50% - var(--sx)), calc(-50% + 6px)) rotate(calc(var(--sr) * -1)); }
-}
-@keyframes deal-out {
-  /* --dx/--dy/--ds come from tableview.js's one measurement pass, in px off the
-     dealer stack's own centre — never a guessed vw/vh. Opacity stays at 1 the
-     whole flight: a card lands, it does not fade away mid-air. */
-  from { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-  to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(var(--ds, 1)); opacity: 1; }
-}
-
-/* The table holds its breath per seat, not all at once: a seat's real cards
-   replace its last flyer on the same frame (see dealIn's revealSeat), so nothing
-   here ever fades from visible to hidden — only the reverse, once. No
-   transition on any of these: the bid panel's `hidden` attribute flips in the
-   same tick this class is added, and a transition there would run from the
-   opacity it had while display:none, flashing it in and fading it back out
-   before its real reveal. */
-.table.is-dealing-left .seat--left .seat__backs,
-.table.is-dealing-right .seat--right .seat__backs,
+/* Real destinations stay hidden until dealIn() hands over to them. Seat backs
+   and the landlord's three hide per card (so each can be revealed the instant
+   its own flyer lands, growing the visible count one at a time, per spec);
+   the hand hides as a whole, because its own flyers stand in for it right up
+   until the gather-and-sort finishes and every card is revealed together. No
+   transition on any of these: a transition here would run from whatever
+   opacity a just-unhidden element had a moment before, flashing it. */
+.table.is-dealing-left .seat--left .seat__backs .card,
+.table.is-dealing-right .seat--right .seat__backs .card,
+.table.is-dealing-bottom .bottom-cards .card,
 .table.is-dealing-self .hand,
-.table.is-dealing-self .controls,
-.table.is-dealing-self .bottom-cards,
 .table.is-dealing-bid .bid-panel {
   opacity: 0;
   /* Invisible but still clickable would let a fast tap bid before the cards
@@ -230,19 +257,40 @@
 .bid-panel p { margin: 0 0 14px; font-size: 15px; color: var(--text-tertiary); }
 .bid-panel .btn-row { justify-content: center; }
 
-/* --- your hand ------------------------------------------------------------ */
+/* --- your hand ------------------------------------------------------------
+   Sized off the viewport's height, not its width: a phone's browser bar eats
+   height, not width, so tying the card to vh is what keeps it big at 844x390
+   and still legible at 844x330. Height = width / (100/140), i.e. width*1.4. */
 
 .dock {
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 4px clamp(10px, 2vw, 22px) clamp(8px, 1.6vh, 16px);
+  display: flex; flex-direction: column;
+  padding: 4px clamp(10px, 2vw, 22px) 0;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent);
 }
 
 .hand {
-  position: relative; height: calc(var(--card-w) * 1.4 + 22px);
+  /* A custom property named --hand-card-h, because the house rule reserves
+     the literal name "--card-w" for .table and a .card selector, and .hand
+     is neither. .hand .card below derives its own --card-w from this one
+     number instead of repeating the clamp, so .hand's own height (which the
+     card's --card-w can't reach — custom properties cascade down only, and
+     .hand is the card's ancestor, not its descendant) still matches the
+     card it is sized around. */
+  --hand-card-h: clamp(100.8px, 28.7vh, 207.2px);
+  position: relative; height: var(--hand-card-h);
   margin: 0 auto; width: 100%;
 }
-.hand__inner { position: absolute; left: 50%; transform: translateX(-50%); height: 100%; }
+.hand .card { --card-w: calc(var(--hand-card-h) / 1.4); }
+/* The hand hugs the bottom edge and is let run off it: up to 18% of every
+   card's height, but never the top-left index, which sits in the top 30%. A
+   percentage transform resolves against the element's own box, not the row,
+   so this stays exactly "18% of a card" regardless of how many cards there
+   are — .table's own overflow:hidden (it fills the viewport exactly) is what
+   actually crops it, at the real screen edge rather than a guessed pixel. */
+.hand__inner {
+  position: absolute; left: 50%; height: 100%;
+  transform: translate(-50%, calc(var(--hand-card-h) * 0.18));
+}
 
 .card {
   /* The fallback only matters for a card rendered outside .table. */
@@ -263,6 +311,10 @@
 .card--red { color: #b4232c; }
 .card--black { color: #1d1b17; }
 .card--down { color: #d8b86a; }
+/* The "bold" style (Dou Di Zhu only): exact reds/blacks from the spec, not the
+   engraved deck's softer ink — the whole point of this style is contrast. */
+.card--bold-red { color: #d3122a; }
+.card--bold-black { color: #121212; }
 .card-svg, .cg-card-svg { width: 100%; height: 100%; display: block; }
 
 .hand .card {
@@ -270,8 +322,9 @@
   transition: transform var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
   cursor: pointer; border-radius: var(--r-xs);
 }
-.hand .card:hover { transform: translateY(-9px); }
-.hand .card.is-selected { transform: translateY(-22px); box-shadow: 0 10px 12px rgba(0, 0, 0, 0.5); }
+.hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
+/* ~22% of card height, per spec. */
+.hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 10px 12px rgba(0, 0, 0, 0.5); }
 .hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--gold-bright); outline-offset: -2px; border-radius: var(--r-xs); }
 .hand .card:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
 
@@ -280,9 +333,19 @@
 .hand.is-stuck .card { filter: grayscale(1) brightness(0.62); cursor: default; }
 .hand.is-stuck .card:hover { transform: none; }
 
-.controls { display: flex; align-items: center; justify-content: center; gap: clamp(8px, 1.6vw, 16px); flex-wrap: wrap; }
-.controls__you { font-size: 14.5px; color: var(--text-tertiary); }
-.controls .btn { padding: 9px 18px; font-size: 16px; }
+/* Floats over the felt, just above the hand, instead of costing the dock a
+   row of its own — the reference does the same with its Fight/Skip buttons. */
+.controls {
+  position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); z-index: 4;
+  display: flex; align-items: center; justify-content: center; gap: clamp(6px, 1.2vw, 14px); flex-wrap: nowrap;
+  max-width: 94%; padding: 6px clamp(10px, 1.6vw, 16px); border-radius: var(--r-pill);
+  background: rgba(4, 16, 12, 0.68); border: 1px solid var(--hairline-strong); box-shadow: var(--shadow-3);
+}
+.controls__you { font-size: clamp(12px, 1.6vw, 14.5px); color: var(--text-tertiary); white-space: nowrap; }
+.controls .btn { padding: clamp(6px, 1vh, 9px) clamp(10px, 1.8vw, 18px); font-size: clamp(13px, 1.7vw, 16px); }
+/* Bidding has its own panel (Pass/1/2/3); Hint/Pass/Play do nothing until
+   play starts, and floating both over a short felt is how they overlapped. */
+.controls.is-hidden { display: none; }
 
 /* --- overlays ------------------------------------------------------------- */
 
@@ -318,12 +381,18 @@
 /* Very short landscape windows (phones) get smaller cards so the fan still fits,
    and the landing areas pull in and down to clear the seats' card backs. */
 @media (orientation: landscape) and (max-height: 460px) {
-  .table { --card-w: clamp(38px, 6vw, 58px); }
-  .seat { top: 4px; }
-  .hud { padding-top: 5px; padding-bottom: 5px; }
-  .play { min-height: clamp(44px, 9vh, 80px); }
-  .play--left { left: 29%; top: 56%; }
-  .play--right { left: 71%; top: 56%; }
-  .play--self { top: 74%; }
-  .play__cards .card { --card-w: clamp(30px, 4.6vw, 46px); }
+  /* Card sizes are vh-driven already (see .hand/.play__cards/.seat__backs/
+     .bottom-cards above) and shrink themselves at this height; only the
+     positions that would otherwise collide need a phone-with-a-browser-bar
+     override here. */
+  .seat { top: 2px; }
+  .hud { padding-top: 4px; padding-bottom: 4px; }
+  .play { min-height: clamp(40px, 9vh, 80px); }
+  .play--left { left: 27%; top: 54%; }
+  .play--right { left: 73%; top: 54%; }
+  /* Tighter than the default 54%: at these heights the gap between the
+     (now tiny) landlord's three and the floating controls pill is narrow
+     enough that self's own card needs to sit nearer the top of it to clear
+     both, at 844x330 especially. */
+  .play--self { top: 45%; }
 }

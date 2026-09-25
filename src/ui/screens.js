@@ -14,8 +14,9 @@ import { gameStats } from '../core/profile.js';
 import { GAMES, gameById } from '../games/registry.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { clear, el } from './dom.js';
+import { renderBlackjackLobby, renderBlackjackMode } from './blackjack.js';
 
-function topbar(app) {
+export function topbar(app) {
   const profile = app.profile;
   return el('header.topbar',
     el('div.topbar__brand', el('span.topbar__suits', '♠♥♣♦'), el('b', 'Card Games')),
@@ -46,7 +47,9 @@ export function renderMenu(app, root) {
       el('div.tile__foot',
         el('span', { class: `badge ${ready ? 'badge--ready' : 'badge--soon'}` }, ready ? 'Playable' : 'Planned'),
         stats
-          ? el('span.badge.badge--elo', `Elo ${stats.rating} · ${stats.played} played`)
+          ? el('span.badge.badge--elo', game.noElo
+              ? `Played ${stats.played} · Won ${stats.won} · Net ${formatChips(stats.net ?? 0)}`
+              : `Elo ${stats.rating} · ${stats.played} played`)
           : el('span', ''),
       ),
     );
@@ -92,6 +95,7 @@ function stat(k, v) {
 }
 
 export function renderMode(app, root, gameId) {
+  if (gameId === 'blackjack') return renderBlackjackMode(app, root);
   const game = gameById(gameId);
   clear(root);
   root.append(
@@ -127,7 +131,8 @@ export function renderMode(app, root, gameId) {
   );
 }
 
-export function renderLobby(app, root, gameId) {
+export function renderLobby(app, root, gameId, variant) {
+  if (gameId === 'blackjack') return renderBlackjackLobby(app, root, variant);
   const game = gameById(gameId);
   const profile = app.profile;
   clear(root);
@@ -162,7 +167,7 @@ export function renderLobby(app, root, gameId) {
       el('button.back-link', { type: 'button', onclick: () => app.go('mode', { gameId }) }, `← ${game.name}`),
       el('div.page__head',
         el('h1.page__title', 'Choose a table'),
-        el('p.page__sub', 'The pot is what each of the three seats puts up. Every table starts at a ×2 multiplier, doubled again by each bomb and by a spring; the landlord settles for twice a farmer.'),
+        el('p.page__sub', 'The pot is what each of the three seats puts up. Every table starts at ×2. The points called multiply it, and each bomb, rocket and spring doubles it again; the landlord settles for twice a farmer.'),
       ),
       grid,
       el('div.rule'),

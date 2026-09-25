@@ -4,7 +4,7 @@ import {
   CURRENCIES, DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, SOLO_CURRENCY,
   currencyByCode, currencyLabel, formatAmount, formatMoney, isCurrency, isRoomCurrency,
 } from '../src/core/currency.js';
-import { STARTING_STACK_MULTIPLE, formatChips, suggestedStakes } from '../src/core/economy.js';
+import { HAND_CAP_FACTOR, STARTING_STACK_MULTIPLE, formatChips, suggestedStakes } from '../src/core/economy.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, sanitiseSettings } from '../src/net/protocol.js';
 
 test('rooms keep score in coins, not in the single-player purse', () => {
@@ -76,7 +76,7 @@ test('single player still reads as plain chips', () => {
 
 test('a room can be priced small, and its ceiling is the high one', () => {
   assert.equal(SETTING_LIMITS.pot.min, 1);
-  assert.equal(DEFAULT_SETTINGS.capFactor, 50, 'rooms get the same high ceiling as the solo tables');
+  assert.equal(DEFAULT_SETTINGS.capFactor, HAND_CAP_FACTOR, 'rooms get the same high ceiling as the solo tables');
   assert.deepEqual(
     { pot: DEFAULT_SETTINGS.pot, startingChips: DEFAULT_SETTINGS.startingChips },
     suggestedStakes(DEFAULT_ROOM_CURRENCY),

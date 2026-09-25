@@ -38,11 +38,31 @@ test('a landlord settles for twice a farmer', () => {
   assert.equal(asFarmer.won, false);
 });
 
-test('the base multiplier acts as a floor', () => {
+test('settlement trusts the engine\'s multiplier outright, no floor applied', () => {
+  // The engine bakes the lobby's base multiplier in from the start (createGame
+  // takes baseMultiplier), so settleDouDiZhu must not also clamp it upward: a
+  // hand that genuinely settled below the lobby's base is not something that
+  // can happen once bidding always multiplies by at least 1 point called.
   const result = { landlordWon: true, landlordSeat: 0, multiplier: 1 };
   const settled = settleDouDiZhu({ lobby: starter, result, seat: 1, bankroll: 10_000 });
-  assert.equal(settled.multiplier, 2, 'a one-point hand still settles at x2');
-  assert.equal(settled.delta, -2_000);
+  assert.equal(settled.multiplier, 1, 'whatever the engine reports is what is settled on');
+  assert.equal(settled.delta, -1_000);
+});
+
+test('a one-point call still settles at the lobby base, and a bomb on it visibly doubles', () => {
+  // The bug the base-as-factor change fixes: under the old floor, a 1-point
+  // call with one bomb settled identically to a 1-point call with no bomb at
+  // all (both floored to x2). Now the base is baked into the engine's own
+  // multiplier, so the bomb is never invisible.
+  const noBomb = settleDouDiZhu({
+    lobby: starter, result: { landlordWon: true, landlordSeat: 0, multiplier: starter.baseMultiplier * 1 }, seat: 0, bankroll: 10_000,
+  });
+  const oneBomb = settleDouDiZhu({
+    lobby: starter, result: { landlordWon: true, landlordSeat: 0, multiplier: starter.baseMultiplier * 1 * 2 }, seat: 0, bankroll: 10_000,
+  });
+  assert.equal(noBomb.multiplier, 2);
+  assert.equal(oneBomb.multiplier, 4, 'a bomb on a 1-point call must move the number');
+  assert.ok(oneBomb.delta > noBomb.delta, 'and must actually pay more');
 });
 
 test('a win pays in full, however much more it is than the player holds', () => {
@@ -55,10 +75,10 @@ test('a win pays in full, however much more it is than the player holds', () => 
 });
 
 test('the ceiling on one hand is high enough that bombs still pay', () => {
-  // Landlord exposure is 2 x multiplier pots, so a 50-pot ceiling only bites
-  // above a multiplier of 32. Every ordinary bomb hand pays in full.
-  assert.equal(HAND_CAP_FACTOR, 50);
-  assert.equal(handCap(starter), 50_000);
+  // Landlord exposure is 2 x multiplier pots, so a 100-pot ceiling only bites
+  // above a multiplier of 50. Every ordinary bomb hand pays in full.
+  assert.equal(HAND_CAP_FACTOR, 100);
+  assert.equal(handCap(starter), 100_000);
   for (const multiplier of [2, 4, 8, 12, 24]) {
     const settled = settleDouDiZhu({
       lobby: starter, result: { landlordWon: true, landlordSeat: 0, multiplier }, seat: 0, bankroll: 10_000,
@@ -69,7 +89,7 @@ test('the ceiling on one hand is high enough that bombs still pay', () => {
   const absurd = settleDouDiZhu({
     lobby: starter, result: { landlordWon: true, landlordSeat: 0, multiplier: 64 }, seat: 0, bankroll: 10_000,
   });
-  assert.equal(absurd.delta, 50_000, 'and a runaway chain stops at the ceiling');
+  assert.equal(absurd.delta, 100_000, 'and a runaway chain stops at the ceiling');
   assert.equal(absurd.capped, true);
 });
 
@@ -181,7 +201,7 @@ test('lossCap at the rescue table is simply the balance', () => {
   assert.equal(lossCap(rescue, 750, true), 750);
   // At a fresh stack the bankroll share binds long before the 50-pot ceiling.
   assert.equal(lossCap(starter, 10_000, false), 7_500);
-  assert.equal(lossCap(starter, 1_000_000, false), 50_000);
+  assert.equal(lossCap(starter, 1_000_000, false), 100_000);
 });
 
 test('formatChips', () => {

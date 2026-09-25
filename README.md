@@ -26,7 +26,7 @@ node server/server.js     # host for local network play, also serves the app
 | --- | --- |
 | **Dou Di Zhu** 斗地主 | Playable — single player and local multiplayer |
 | Big Two 锄大地 | Planned, next in the queue |
-| Blackjack (American and Malaysian) | Planned |
+| **Blackjack** (American and Malaysian/Ban Luck) | Playable — single player |
 | Niu Niu 牛牛 | Planned |
 | Texas Hold'em | Planned |
 
