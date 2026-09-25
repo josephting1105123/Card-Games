@@ -2,14 +2,18 @@
  * Card faces and backs, drawn as SVG at run time. No image files, so the whole
  * deck installs offline and stays crisp at any size.
  *
- * House style: ivory stock with a double gold rule, engraved serif indices,
- * traditional pip layouts for the spot cards, mirrored court panels, and a
- * guilloche back in deep burgundy and gold. Suit shapes and the ornaments live
- * in one hidden <svg> of <symbol> definitions that every card references with
- * <use>, which keeps a twenty-card fan cheap to build and repaint.
+ * House style: glossy black stock, a thin gold (or rose-gold, on the red
+ * suits) inner frame, small serif indices top-left/bottom-right, ornate
+ * flourished suit shapes centred on the spot cards and blown large on the
+ * courts and ace, and an original gold art-deco back. Dou Di Zhu's "bold"
+ * style below takes the same black-and-gold palette but keeps its own
+ * oversized, high-contrast layout — colours only, nothing else changes.
+ * Suit shapes and the ornaments live in one hidden <svg> of <symbol>
+ * definitions that every card references with <use>, which keeps a
+ * twenty-card fan cheap to build and repaint.
  */
 
-import { JOKER_COLOUR, RANK_MIN, RANK_TWO, SUIT_COLOUR, SUIT_SYMBOL, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
+import { JOKER_COLOUR, RANK_MIN, RANK_JOKER_BIG, RANK_TWO, SUIT_COLOUR, SUIT_SYMBOL, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
 
 const VB_W = 100;
 const VB_H = 140;
@@ -21,6 +25,35 @@ const PIPS = {
   diamond: 'M50 4 92 50 50 96 8 50z',
   club: 'M50 6c-11 0-19 9-19 20 0 4 1 8 3 11-3-2-7-4-12-4C11 33 3 42 3 53s8 20 19 20c10 0 18-7 20-16-1 12-5 24-12 35h40c-7-11-11-23-12-35 2 9 10 16 20 16 11 0 19-9 19-20s-8-20-19-20c-5 0-9 2-12 4 2-3 3-7 3-11 0-11-8-20-19-20z',
 };
+
+/** A small comma/paisley curl, reused (mirrored, rotated, rescaled) as the
+ * "small curled finials" the ornate suits are drawn with — one shape, many
+ * instances, rather than hand-drawing a curl per suit per corner. */
+const CURL = 'M10 2C15 2 18 6 17 11 16 15 11 18 7 16 4 14 4 10 7 9 9 8 11 9 11 11 11 12 10 13 9 12';
+
+function curlUse(x, y, rot, scale, mirror) {
+  const t = `translate(${x} ${y}) rotate(${rot}) scale(${(mirror ? -1 : 1) * scale} ${scale})`;
+  return `<use href="#cg-curl" x="-10" y="-10" width="20" height="20" transform="${t}"/>`;
+}
+
+/** Ornate suit bodies: the plain PIPS outline plus a few curled finials at
+ * the tips, in the reference's spirit ("flourished, with small curled
+ * finials, not the plain pip") without redrawing the whole silhouette. */
+const ORNATE_FINIALS = {
+  spade: [curlUse(50, 10, -100, 0.55, false), curlUse(50, 10, 100, 0.55, true),
+    curlUse(31, 83, 40, 0.5, false), curlUse(69, 83, 140, 0.5, true)],
+  heart: [curlUse(21, 15, -20, 0.55, false), curlUse(79, 15, 200, 0.55, true),
+    curlUse(50, 88, 90, 0.5, false)],
+  diamond: [curlUse(50, 4, -90, 0.5, false), curlUse(92, 50, 0, 0.5, false),
+    curlUse(50, 96, 90, 0.5, false), curlUse(8, 50, 180, 0.5, false)],
+  club: [curlUse(50, 8, -100, 0.5, false), curlUse(50, 8, 100, 0.5, true),
+    curlUse(9, 51, 200, 0.48, false), curlUse(91, 51, -20, 0.48, true),
+    curlUse(34, 88, 60, 0.45, false), curlUse(66, 88, 120, 0.45, true)],
+};
+
+function ornatePipBody(suit) {
+  return `<path d="${PIPS[suit]}"/>${ORNATE_FINIALS[suit].join('')}`;
+}
 
 /** Standard spot-card pip layouts. x, y in fractions of the face; r = rotated. */
 const LAYOUTS = {
@@ -36,6 +69,164 @@ const LAYOUTS = {
   10: [[0.3, 0.215], [0.7, 0.215], [0.5, 0.31], [0.3, 0.405], [0.7, 0.405], [0.3, 0.595, 1, true], [0.7, 0.595, 1, true], [0.5, 0.69, 1, true], [0.3, 0.785, 1, true], [0.7, 0.785, 1, true]],
 };
 
+/* ==========================================================================
+ * Shared black-and-gold palette. One copy of these gradients and shapes,
+ * defined in the default sheet (installCardDefs, below) and cross-referenced
+ * by the bold sheet exactly the way the bold style already cross-references
+ * the plain PIPS symbols — installBoldCardDefs() guarantees the default
+ * sheet exists first, so the id="cg-..." references below always resolve
+ * regardless of which style a table asks for first.
+ * ========================================================================== */
+
+function sharedGoldDefs() {
+  return `
+    <linearGradient id="cg-face-black" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" style="stop-color:var(--face-top)"/>
+      <stop offset="1" style="stop-color:var(--face-bottom)"/>
+    </linearGradient>
+    <clipPath id="cg-face-clip"><rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7"/></clipPath>
+    <!-- userSpaceOnUse, not the objectBoundingBox default: a stroked straight
+         line (the frame) has a zero-width or zero-height geometric bounding
+         box, and a gradient keyed to a degenerate bounding box paints
+         nothing at all in every browser — the frame line was invisible for
+         exactly this reason. userSpaceOnUse instead resolves against the
+         *current* user-unit space, which for every caller here (the card's
+         own 100x140 symbol, and every nested 100x100 pip/suit symbol it
+         <use>s) starts at (0,0) — so one 0,0-to-100,100 diagonal reads
+         correctly as "top-left to bottom-right" everywhere it is applied,
+         never divides by a zero-area box, and needs no per-caller variant. -->
+    <linearGradient id="cg-gold-index" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+      <stop offset="0" style="stop-color:var(--gold-ink-1)"/>
+      <stop offset="1" style="stop-color:var(--gold-ink-2)"/>
+    </linearGradient>
+    <linearGradient id="cg-rose-index" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+      <stop offset="0" style="stop-color:var(--rose-ink-1)"/>
+      <stop offset="1" style="stop-color:var(--rose-ink-2)"/>
+    </linearGradient>
+    <linearGradient id="cg-gold-ink" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+      <stop offset="0" style="stop-color:var(--gold-ink-1)"/>
+      <stop offset="0.55" style="stop-color:var(--gold-ink-2)"/>
+      <stop offset="1" style="stop-color:var(--gold-ink-3)"/>
+    </linearGradient>
+    <linearGradient id="cg-rose-ink" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+      <stop offset="0" style="stop-color:var(--rose-ink-1)"/>
+      <stop offset="0.55" style="stop-color:var(--rose-ink-2)"/>
+      <stop offset="1" style="stop-color:var(--rose-ink-3)"/>
+    </linearGradient>
+    <linearGradient id="cg-silver-ink" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+      <stop offset="0" style="stop-color:var(--joker-silver-1)"/>
+      <stop offset="1" style="stop-color:var(--joker-silver-2)"/>
+    </linearGradient>
+    <symbol id="cg-curl" viewBox="0 0 20 20"><path d="${CURL}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="cg-crown" viewBox="0 0 100 60">
+      <path d="M8 52 14 14 30 34 50 8 70 34 86 14 92 52z" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linejoin="round"/>
+      <circle cx="14" cy="11" r="4" fill="currentColor"/><circle cx="50" cy="5" r="4.5" fill="currentColor"/><circle cx="86" cy="11" r="4" fill="currentColor"/>
+      <path d="M8 52h84" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+    </symbol>
+    <!-- Back design: a gold border, a repeating scallop/fan band (not the
+         reference's lattice — the brief calls for an original pattern), and
+         a centred medallion. Self-contained here so both styles' backs
+         (cardBackBody, cardBackBoldBody) share one definition. -->
+    <radialGradient id="cg-back-medallion" cx="0.5" cy="0.42" r="0.75">
+      <stop offset="0" style="stop-color:var(--gold-ink-1)"/>
+      <stop offset="1" style="stop-color:var(--gold-ink-3)"/>
+    </radialGradient>
+    <symbol id="cg-scallop" viewBox="0 0 20 20">
+      <path d="M0 20C0 9 9 0 20 0" fill="none" stroke="currentColor" stroke-width="1.1" opacity="0.7"/>
+      <path d="M4 20C4 12 12 4 20 4" fill="none" stroke="currentColor" stroke-width="0.8" opacity="0.5"/>
+    </symbol>`;
+}
+
+/** The black face rect plus a faint diagonal sheen across the upper third —
+ * one clipped, low-opacity white band, not a filter (transform/opacity only
+ * on anything animated elsewhere in this app; this is static, but the same
+ * discipline keeps every card cheap to paint). */
+function faceBody() {
+  return `<rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-face-black)" style="stroke:var(--face-edge)" stroke-width="1"/>
+    <g clip-path="url(#cg-face-clip)"><polygon points="-10,0 60,0 15,50 -10,50" fill="#ffffff" opacity="0.06"/></g>`;
+}
+
+/** Which gradient a card's ink should use. `variant` "index" is the
+ * restricted light two-stop gradient (guaranteed >=4.5:1 on the near-black
+ * face at any point along it — the full three-stop gradient's darkest stop
+ * does not clear 4.5:1, so small text never uses it); "ink" is the full
+ * decorative gradient, used only on shapes big enough that a darker patch
+ * within them is not a legibility problem. */
+function inkUrl(card, variant) {
+  if (isJoker(card)) {
+    const big = card.rank === RANK_JOKER_BIG;
+    return big ? `url(#cg-gold-${variant})` : 'url(#cg-silver-ink)';
+  }
+  const family = SUIT_COLOUR[card.suit] === 'black' ? 'gold' : 'rose';
+  return `url(#cg-${family}-${variant})`;
+}
+
+/** The thin inner frame, inset ~7%, broken at the top-left and bottom-right
+ * corners where the indices sit — drawn as three open sides plus two short
+ * stubs rather than a closed rounded rect, so there is no seam to hide. */
+function brokenFrame(ink, gapTLx, gapTLy, gapBRx, gapBRy) {
+  const x0 = 7, y0 = 9.8, x1 = VB_W - 7, y1 = VB_H - 9.8;
+  return `<g fill="none" stroke="${ink}" stroke-width="0.8" opacity="0.9" stroke-linecap="round">
+    <path d="M ${(x0 + gapTLx).toFixed(1)} ${y0} L ${x1} ${y0}"/>
+    <path d="M ${x1} ${y0} L ${x1} ${(y1 - gapBRy).toFixed(1)}"/>
+    <path d="M ${(x1 - gapBRx).toFixed(1)} ${y1} L ${x0} ${y1}"/>
+    <path d="M ${x0} ${y1} L ${x0} ${(y0 + gapTLy).toFixed(1)}"/>
+  </g>`;
+}
+
+/** Small serif corner index: rank above suit, ~15% of card height, mirrored
+ * at the opposite corner by rotating the same markup 180deg about the card's
+ * centre — the letters and figures both stay in the deck's own EB Garamond
+ * (only the bold style's 2-10 get custom digit paths; see below). */
+function cornerIndexDefault(card, flipped) {
+  const label = rankIndex(card.rank);
+  const symbol = SUIT_SYMBOL[card.suit];
+  const rot = flipped ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : '';
+  const fontSize = label.length > 1 ? 15.5 : 19;
+  return `<g${rot} fill="${inkUrl(card, 'index')}">
+    <text x="12" y="23" font-size="${fontSize}" text-anchor="middle">${label}</text>
+    <text x="12" y="34.5" font-size="12" text-anchor="middle">${symbol}</text>
+  </g>`;
+}
+
+function jokerIndexDefault(card, flipped) {
+  const rot = flipped ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : '';
+  const letters = 'JOKER'.split('');
+  const lines = letters.map((ch, i) => `<text x="9" y="${16 + i * 14.5}" font-size="12.5" text-anchor="middle" font-weight="700">${ch}</text>`).join('');
+  return `<g${rot} fill="${inkUrl(card, 'index')}">${lines}</g>`;
+}
+
+/** A/J/Q/K: one large ornate suit symbol, ~45% of card width, centred. */
+function bigOrnateSuit(card) {
+  const size = 45;
+  const x = (VB_W - size) / 2;
+  const y = (VB_H - size) / 2 + 4;
+  return `<use href="#cg-pip-ornate-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}" fill="${inkUrl(card, 'ink')}"/>`;
+}
+
+/** 2-10: the traditional pip positions, drawn in the ornate suit shape. */
+function ornatePipLayout(card) {
+  const layout = LAYOUTS[card.rank === RANK_TWO ? 2 : card.rank] ?? LAYOUTS[1];
+  const ink = inkUrl(card, 'ink');
+  const uses = layout.map(([x, y, s = 1, flip = false]) => {
+    const size = 17 * s;
+    const cx = x * VB_W, cy = y * VB_H;
+    const transform = flip ? ` transform="rotate(180 ${cx} ${cy})"` : '';
+    return `<use href="#cg-pip-ornate-${card.suit}" x="${(cx - size / 2).toFixed(2)}" y="${(cy - size / 2).toFixed(2)}" width="${size.toFixed(2)}" height="${size.toFixed(2)}"${transform}/>`;
+  }).join('');
+  return `<g fill="${ink}">${uses}</g>`;
+}
+
+/** Jokers: an ornate crown (big) or star (small) centrepiece, flat-coloured
+ * via currentColor — a decorative accent, not a legibility-critical glyph,
+ * so it does not need the gradient machinery the indices and suits use. */
+function jokerCentreDefault(card) {
+  const big = card.rank === RANK_JOKER_BIG;
+  const tone = big ? 'var(--gold-ink-2)' : 'var(--joker-silver-2)';
+  if (big) return `<g style="color:${tone}"><use href="#cg-crown" x="26" y="52" width="48" height="29"/></g>`;
+  return `<text x="50" y="82" font-size="50" text-anchor="middle" style="color:${tone}" fill="currentColor">★</text>`;
+}
+
 /**
  * Add the shared symbol sheet to the document once. Safe to call repeatedly.
  * @param {Document} [doc]
@@ -48,40 +239,8 @@ export function installCardDefs(doc = globalThis.document) {
   holder.innerHTML = `<svg id="${DEFS_ID}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     ${Object.entries(PIPS).map(([suit, path]) => `<symbol id="cg-pip-${suit}" viewBox="0 0 100 100"><path d="${path}"/></symbol>`).join('\n    ')}
-    <linearGradient id="cg-stock" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0" stop-color="#fffdf6"/>
-      <stop offset="0.55" stop-color="#fbf6e9"/>
-      <stop offset="1" stop-color="#f1e8d2"/>
-    </linearGradient>
-    <linearGradient id="cg-gold" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#e8d49a"/>
-      <stop offset="0.5" stop-color="#b8974f"/>
-      <stop offset="1" stop-color="#8a6d2f"/>
-    </linearGradient>
-    <linearGradient id="cg-back-field" x1="0" y1="0" x2="0.6" y2="1">
-      <stop offset="0" stop-color="#8d2334"/>
-      <stop offset="0.5" stop-color="#6d1726"/>
-      <stop offset="1" stop-color="#4a0f1b"/>
-    </linearGradient>
-    <pattern id="cg-guilloche" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <path d="M5 0 10 5 5 10 0 5z" fill="none" stroke="#d8b86a" stroke-width="0.45" opacity="0.55"/>
-      <circle cx="5" cy="5" r="1.1" fill="#d8b86a" opacity="0.32"/>
-    </pattern>
-    <radialGradient id="cg-back-glow" cx="0.5" cy="0.42" r="0.7">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#000000" stop-opacity="0.28"/>
-    </radialGradient>
-    <symbol id="cg-crown" viewBox="0 0 100 60">
-      <path d="M8 52 14 14 30 34 50 8 70 34 86 14 92 52z" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linejoin="round"/>
-      <circle cx="14" cy="11" r="4" fill="currentColor"/><circle cx="50" cy="5" r="4.5" fill="currentColor"/><circle cx="86" cy="11" r="4" fill="currentColor"/>
-      <path d="M8 52h84" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-    </symbol>
-    <symbol id="cg-filigree" viewBox="0 0 100 100">
-      <path d="M50 8a21 21 0 0 1 21 21 21 21 0 0 1 21 21 21 21 0 0 1-21 21 21 21 0 0 1-21 21 21 21 0 0 1-21-21 21 21 0 0 1-21-21 21 21 0 0 1 21-21 21 21 0 0 1 21-21z"
-            fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.68"/>
-      <ellipse cx="50" cy="50" rx="24" ry="30" fill="none" stroke="currentColor" stroke-width="0.9" opacity="0.42"/>
-      <circle cx="50" cy="50" r="33" fill="none" stroke="currentColor" stroke-width="0.5" stroke-dasharray="1.6 3.2" opacity="0.5"/>
-    </symbol>
+    ${Object.keys(PIPS).map((suit) => `<symbol id="cg-pip-ornate-${suit}" viewBox="0 0 100 100">${ornatePipBody(suit)}</symbol>`).join('\n    ')}
+    ${sharedGoldDefs()}
   </defs>
 </svg>`;
   // Every card in the deck, and the back, defined once. A card element is then
@@ -113,93 +272,23 @@ function cardProto(key, symbolId, extraClass) {
   return proto;
 }
 
-function pip(suit, x, y, scale = 1, flipped = false) {
-  const size = 19 * scale;
-  const cx = x * VB_W;
-  const cy = y * VB_H;
-  const transform = flipped ? ` transform="rotate(180 ${cx} ${cy})"` : '';
-  return `<use href="#cg-pip-${suit}" x="${(cx - size / 2).toFixed(2)}" y="${(cy - size / 2).toFixed(2)}" width="${size.toFixed(2)}" height="${size.toFixed(2)}"${transform}/>`;
-}
-
-/**
- * The corner index. Both corners are drawn from the same top-left coordinates;
- * the second is rotated half a turn about the centre of the card, which is how a
- * real card is printed and the only way to keep the two corners identical
- * without hand-tuning offsets that clip at the edge.
- */
-function cornerIndex(card, flipped) {
-  const label = rankIndex(card.rank);
-  const symbol = SUIT_SYMBOL[card.suit];
-  const rot = flipped ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : '';
-  // Garamond sets smaller than the sans face this was first drawn for, so the
-  // indices run a couple of points larger to keep their weight on the card.
-  const fontSize = label.length > 1 ? 16 : 19.5;
-  return `<g${rot}>
-    <text class="cg-index" x="12.5" y="22" font-size="${fontSize}" text-anchor="middle">${label}</text>
-    <text class="cg-index-suit" x="12.5" y="34.5" font-size="12.5" text-anchor="middle">${symbol}</text>
-  </g>`;
-}
-
-function courtPanel(card) {
-  const letter = rankLabel(card.rank);
-  return `<g class="cg-court">
-    <rect x="21" y="26" width="58" height="88" rx="4" fill="none" stroke="url(#cg-gold)" stroke-width="1.1"/>
-    <rect x="24" y="29" width="52" height="82" rx="3" fill="#fdf8ec" stroke="currentColor" stroke-width="0.6" opacity="0.9"/>
-    <g color="currentColor" opacity="0.85"><use href="#cg-filigree" x="27" y="32" width="46" height="46"/></g>
-    <g color="currentColor" opacity="0.85"><use href="#cg-filigree" x="27" y="62" width="46" height="46" transform="rotate(180 50 85)"/></g>
-    <g color="url(#cg-gold)"><use href="#cg-crown" x="33" y="34" width="34" height="20"/></g>
-    <text class="cg-court-letter" x="50" y="79" font-size="34" text-anchor="middle">${letter}</text>
-    <use href="#cg-pip-${card.suit}" x="41" y="84" width="18" height="18"/>
-    <line x1="50" y1="29" x2="50" y2="111" stroke="currentColor" stroke-width="0.4" opacity="0.25"/>
-  </g>`;
-}
-
-function acePanel(card) {
-  return `<g>
-    <g color="url(#cg-gold)"><use href="#cg-filigree" x="14" y="34" width="72" height="72"/></g>
-    <use href="#cg-pip-${card.suit}" x="32" y="50" width="36" height="36"/>
-  </g>`;
-}
-
-function jokerPanel(card) {
-  const big = card.rank === 17;
-  const word = big ? 'JOKER' : 'Joker';
-  return `<g>
-    <g color="url(#cg-gold)"><use href="#cg-filigree" x="18" y="30" width="64" height="64"/></g>
-    <g color="currentColor">
-      <use href="#cg-crown" x="34" y="40" width="32" height="19"/>
-      <text class="cg-joker" x="50" y="88" font-size="14" text-anchor="middle"
-            textLength="56" lengthAdjust="spacingAndGlyphs">${word}</text>
-      <text class="cg-joker-star" x="50" y="106" font-size="14" text-anchor="middle">★</text>
-    </g>
-  </g>`;
-}
-
 /** The inner markup of a card face (without the <svg> wrapper). */
 export function cardFaceBody(card) {
   const colour = isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
-  const frame = `
-    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-stock)" stroke="url(#cg-gold)" stroke-width="1.5"/>
-    <rect x="4.5" y="4.5" width="${VB_W - 9}" height="${VB_H - 9}" rx="5" fill="none" stroke="url(#cg-gold)" stroke-width="0.7" opacity="0.85"/>
-    <rect x="6.5" y="6.5" width="${VB_W - 13}" height="${VB_H - 13}" rx="4" fill="none" stroke="#8a6d2f" stroke-width="0.25" opacity="0.5"/>`;
-
+  const jk = isJoker(card);
+  const bigCentre = !jk && card.rank >= 11; // J, Q, K, A
+  // The index runs roughly x:[3,21] y:[8,42] card units (rank ~15% of card
+  // height plus the suit glyph beneath it) — the frame's gap is sized to
+  // clear that box, not the other way around.
+  const gap = jk ? [18, 44] : [21, 38];
+  const frameLine = brokenFrame(inkUrl(card, 'index'), gap[0], gap[1], gap[0], gap[1]);
+  const corner = jk ? jokerIndexDefault(card, false) : cornerIndexDefault(card, false);
+  const cornerFlip = jk ? jokerIndexDefault(card, true) : cornerIndexDefault(card, true);
   let centre;
-  if (isJoker(card)) centre = jokerPanel(card);
-  else if (card.rank >= 11 && card.rank <= 13) centre = courtPanel(card);
-  else if (card.rank === 14) centre = acePanel(card);
-  else {
-    const layout = LAYOUTS[card.rank === 15 ? 2 : card.rank] ?? LAYOUTS[1];
-    centre = `<g>${layout.map(([x, y, s = 1, flip = false]) => pip(card.suit, x, y, s, flip)).join('')}</g>`;
-  }
-
-  const star = (flip) => `<g${flip ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : ''}>`
-    + `<text class="cg-index" x="12.5" y="23" font-size="14.5" text-anchor="middle">★</text></g>`;
-  const indices = isJoker(card) ? star(false) + star(true) : cornerIndex(card, false) + cornerIndex(card, true);
-
-  // fill="currentColor" and nothing else: a <use> shadow tree cannot be styled
-  // by outer selectors, only reached by inherited properties, so the suit colour
-  // arrives as `color` on the host .card element.
-  return `<g fill="currentColor" data-colour="${colour}">${frame}${indices}${centre}</g>`;
+  if (jk) centre = jokerCentreDefault(card);
+  else if (bigCentre) centre = bigOrnateSuit(card);
+  else centre = ornatePipLayout(card);
+  return `<g data-colour="${colour}">${faceBody()}${frameLine}${corner}${cornerFlip}${centre}</g>`;
 }
 
 /** A complete face as an SVG string. */
@@ -212,16 +301,30 @@ export function cardBackSVG() {
   return `<svg class="cg-card-svg" viewBox="0 0 ${VB_W} ${VB_H}" role="img" aria-label="Face-down card">${cardBackBody()}</svg>`;
 }
 
-/** The back's contents, without the <svg> wrapper. */
+/** The back's contents, without the <svg> wrapper: a black field, a gold
+ * border inset ~6%, a repeating scallop/fan band around it (original —
+ * nothing like the reference's interlocking lattice) and a centred gold
+ * medallion. Shared by both styles: cardBackBoldBody() below calls this
+ * same function, so opponents' backs, the deck and the landlord's three
+ * all read as one deck no matter which table drew them. */
 export function cardBackBody() {
+  const inset = VB_W * 0.06;
+  const insetY = VB_H * 0.06;
+  const bx = inset, by = insetY, bw = VB_W - inset * 2, bh = VB_H - insetY * 2;
+  const step = bw / 7;
+  const scallops = [];
+  for (let i = 0; i < 7; i++) {
+    const x = bx + i * step;
+    scallops.push(`<use href="#cg-scallop" x="${x.toFixed(1)}" y="${by.toFixed(1)}" width="${step.toFixed(1)}" height="${step.toFixed(1)}"/>`);
+    scallops.push(`<use href="#cg-scallop" x="${(x + step).toFixed(1)}" y="${(by + bh - step).toFixed(1)}" width="${step.toFixed(1)}" height="${step.toFixed(1)}" transform="rotate(180 ${(x + step / 2).toFixed(1)} ${(by + bh - step / 2).toFixed(1)})"/>`);
+  }
   return `
-    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-back-field)" stroke="url(#cg-gold)" stroke-width="1.5"/>
-    <rect x="5" y="5" width="${VB_W - 10}" height="${VB_H - 10}" rx="5" fill="url(#cg-guilloche)"/>
-    <rect x="5" y="5" width="${VB_W - 10}" height="${VB_H - 10}" rx="5" fill="url(#cg-back-glow)"/>
-    <rect x="5" y="5" width="${VB_W - 10}" height="${VB_H - 10}" rx="5" fill="none" stroke="#d8b86a" stroke-width="0.8" opacity="0.8"/>
-    <ellipse cx="50" cy="70" rx="24" ry="34" fill="#5c1320" opacity="0.55" stroke="#d8b86a" stroke-width="0.8"/>
-    <g color="#d8b86a"><use href="#cg-filigree" x="26" y="46" width="48" height="48"/></g>
-    <g color="#e8d49a"><use href="#cg-crown" x="36" y="58" width="28" height="17"/></g>`;
+    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-face-black)" style="stroke:var(--face-edge)" stroke-width="1"/>
+    <rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="none" style="stroke:var(--gold-ink-2)" stroke-width="1.4"/>
+    <g style="color:var(--gold-ink-2)" opacity="0.8">${scallops.join('')}</g>
+    <circle cx="${VB_W / 2}" cy="${VB_H / 2}" r="17" fill="url(#cg-back-medallion)" opacity="0.92"/>
+    <circle cx="${VB_W / 2}" cy="${VB_H / 2}" r="17" fill="none" style="stroke:var(--gold-ink-3)" stroke-width="0.8"/>
+    <use href="#cg-pip-ornate-diamond" x="${VB_W / 2 - 10}" y="${VB_H / 2 - 10}" width="20" height="20" style="color:var(--face-bottom)" fill="currentColor" opacity="0.85"/>`;
 }
 
 export function cardAria(card) {
@@ -232,12 +335,11 @@ export function cardAria(card) {
 /* ==========================================================================
  * The "bold" style — opt-in, Dou Di Zhu table only.
  *
- * A plain, high-contrast index card rather than an engraved one: white stock,
- * a hairline border, one oversized rank+suit index pinned to the top-left 34%
- * of the card so it still reads when the fan shows only a sliver, and one big
- * suit glyph bottom-right. No gold rules, no centre pips, no court art — the
- * complaint this answers is "hard to see", so everything here optimises for
- * legibility at a glance over period-correct engraving.
+ * Same black-and-gold palette as the default style, but its own layout:
+ * one oversized rank+suit index pinned to the top-left 34% of the card so it
+ * still reads when the fan shows only a sliver, and one big suit glyph
+ * bottom-right. No centre pips, no court art — the complaint this answers is
+ * "hard to see", so everything here optimises for legibility at a glance.
  *
  * Built in its own <symbol> sheet, installed lazily on first use, so a table
  * that never asks for `style: 'bold'` (Blackjack, on the default style) never
@@ -246,67 +348,178 @@ export function cardAria(card) {
 
 const BOLD_DEFS_ID = 'cg-card-bold-defs';
 
-/** Numeral ranks (2-10) are drawn as fixed-weight paths rather than set in
- * type: EB Garamond's oldstyle figures vary in height and shape (8 and 9
- * dip below the baseline, 10's "1" and "0" don't match either), which reads
- * as uneven next to each other in a fan. Every digit symbol's ink spans the
- * same y=[0, DIGIT_H] box, so placing any of them at the same x/y/height on
- * a card lines up every numeral's top and baseline exactly, whatever rank it
- * is — a seven-segment layout guarantees that by construction, since every
- * digit 0-9 includes a stroke touching both the top and the bottom edge.
- * J/Q/K/A and the jokers are unaffected: they stay in the deck's own type. */
-const DIGIT_H = 62; // card units of 140; 62/140 = 44.3%, inside the letters' own measured 42.9-46.7% cap height
-const DIGIT_Y = 4; // top, card units
-const DIGIT_W = 20; // box width for the digits 0 and 2-9
-const DIGIT_STROKE = 5; // heavy: 25% of DIGIT_W
-const DIGIT_ONE_W = 8; // "1" is a plain bar, narrower — what keeps "10" condensed
-const DIGIT_ONE_BAR = 4;
-const DIGIT_GAP = 1; // between "1" and "0" when the rank is "10"
+/** Numeral ranks (2-10) are drawn as filled, condensed, heavy paths with
+ * real curves — not a font (EB Garamond's oldstyle figures wobbled next to
+ * each other), and not the seven-segment rects this replaced (those read as
+ * hollow wireframe boxes: an "8" with every segment lit IS a hollow
+ * rectangle with a bar through it). Every digit is built from a small set of
+ * primitives — straight, round-capped "bars" and hand-placed curved
+ * "strokes", both offset to a filled outline at a constant stem width — so
+ * the whole set shares one weight and one construction technique. J/Q/K/A
+ * and the jokers are unaffected: they stay in the deck's own type. */
 
-// Seven-segment naming: a=top, b=top-right, c=bottom-right, d=bottom,
-// e=bottom-left, f=top-left, g=middle.
-const DIGIT_SEGMENTS = {
-  0: 'abcdef', 2: 'abged', 3: 'abgcd', 4: 'fgbc', 5: 'afgcd',
-  6: 'afgecd', 7: 'abc', 8: 'abcdefg', 9: 'abcdfg',
-};
-
-/** One segment as a filled rect. Horizontal segments run half a stroke past
- * each end, so a corner (e.g. "a" meeting "f") is fully covered by the
- * horizontal bar alone rather than leaving a one-pixel notch. */
-function digitSegmentRect(kind, xL, xR, yT, yM, yB, half) {
-  // f/b and c/e reach half a stroke past yT/yB too (not just up to them): a
-  // digit missing the top bar ("4": no "a") or the bottom bar ("7": no "d")
-  // would otherwise sit a hair shorter than the rest, breaking "every
-  // numeral has exactly the same top and baseline".
-  switch (kind) {
-    case 'a': return `<rect x="${(xL - half).toFixed(2)}" y="${(yT - half).toFixed(2)}" width="${(xR - xL + half * 2).toFixed(2)}" height="${half * 2}"/>`;
-    case 'd': return `<rect x="${(xL - half).toFixed(2)}" y="${(yB - half).toFixed(2)}" width="${(xR - xL + half * 2).toFixed(2)}" height="${half * 2}"/>`;
-    case 'g': return `<rect x="${(xL - half).toFixed(2)}" y="${(yM - half).toFixed(2)}" width="${(xR - xL + half * 2).toFixed(2)}" height="${half * 2}"/>`;
-    case 'f': return `<rect x="${(xL - half).toFixed(2)}" y="${(yT - half).toFixed(2)}" width="${half * 2}" height="${(yM - yT + half).toFixed(2)}"/>`;
-    case 'b': return `<rect x="${(xR - half).toFixed(2)}" y="${(yT - half).toFixed(2)}" width="${half * 2}" height="${(yM - yT + half).toFixed(2)}"/>`;
-    case 'e': return `<rect x="${(xL - half).toFixed(2)}" y="${yM}" width="${half * 2}" height="${(yB - yM + half).toFixed(2)}"/>`;
-    case 'c': return `<rect x="${(xR - half).toFixed(2)}" y="${yM}" width="${half * 2}" height="${(yB - yM + half).toFixed(2)}"/>`;
-    default: return '';
+/** A filled, constant-width, round-capped stroke along a skeleton polyline —
+ * the same technique for a straight bar (a 2-point polyline) or a hand-drawn
+ * curve (as many points as the curve needs), so every digit's strokes are
+ * built the same way. */
+function offsetSides(points, stem) {
+  const r = stem / 2;
+  const left = [], right = [];
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[Math.max(i - 1, 0)];
+    const next = points[Math.min(i + 1, points.length - 1)];
+    const dx = next[0] - prev[0], dy = next[1] - prev[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const px = -uy, py = ux;
+    left.push([points[i][0] + px * r, points[i][1] + py * r]);
+    right.push([points[i][0] - px * r, points[i][1] - py * r]);
   }
+  return { left, right };
 }
 
-/** The ten digit <symbol>s (0-9), installed once into the bold defs sheet.
- * fill is left unset: each renders inside the same `<g fill="currentColor">`
- * every other bold glyph does, via the <use> that references it — a
- * <use>'s shadow tree inherits from where it sits in the live document, the
- * same handoff the pip symbols already rely on. */
+function fnum(n) { return Number(n.toFixed(2)); }
+
+function strokePath(points, stem) {
+  const { left, right } = offsetSides(points, stem);
+  const r = stem / 2;
+  let d = `M ${fnum(right[0][0])} ${fnum(right[0][1])} `;
+  d += `A ${fnum(r)} ${fnum(r)} 0 0 0 ${fnum(left[0][0])} ${fnum(left[0][1])} `;
+  for (let i = 1; i < left.length; i++) d += `L ${fnum(left[i][0])} ${fnum(left[i][1])} `;
+  d += `A ${fnum(r)} ${fnum(r)} 0 0 0 ${fnum(right[right.length - 1][0])} ${fnum(right[right.length - 1][1])} `;
+  for (let i = right.length - 2; i >= 0; i--) d += `L ${fnum(right[i][0])} ${fnum(right[i][1])} `;
+  return d + 'Z';
+}
+
+function ellipsePath(cx, cy, rx, ry, sweep) {
+  const x0 = cx + rx, y0 = cy;
+  return `M ${fnum(x0)} ${fnum(y0)} A ${fnum(rx)} ${fnum(ry)} 0 1 ${sweep} ${fnum(cx - rx)} ${fnum(cy)} A ${fnum(rx)} ${fnum(ry)} 0 1 ${sweep} ${fnum(x0)} ${fnum(y0)} Z`;
+}
+/** A full ring (outer minus inner, opposite winding) — "0", and the loops
+ * inside "6", "8", "9". Two contours in one path is safe here (unlike
+ * concatenating whole *different* strokes together, below): they are always
+ * each other's hole, never overlapping a third shape's fill. */
+function ringPath(cx, cy, rx, ry, stemX, stemY) {
+  return ellipsePath(cx, cy, rx, ry, 1) + ' ' + ellipsePath(cx, cy, rx - stemX, ry - stemY, 0);
+}
+
+// Design grid: authored at W0 x H (aspect wider than the final on-card box),
+// then every coordinate is condensed by CONDENSE so the *authoring* aspect
+// ratio already matches the final embed (20 x 62 card units) — scaling x and
+// y by different factors only at <use> time would make horizontal strokes a
+// different weight than vertical ones, so the condensing happens once, here,
+// to both the coordinates and the stem width together.
+// DSTEM0 calibrated against the letters' own stem (measured empirically off
+// the rendered "K": ~5.5 card units at the index size) rather than picked by
+// eye — the first cut (16) rendered noticeably heavier than the letters, ~27%
+// over the spec's 15% tolerance.
+// DIGIT_Y/DIGIT_H are pinned to the *letters'* own measured cap line, not
+// picked by eye: J/Q/K/A (boldCornerIndex, font-size 50, baseline y=46) put
+// their cap-top at y=~12.7 and their baseline at y=~46.2 on the rendered
+// card (measured off K and A, the two courts with no descender to skew the
+// baseline reading) — a numeral corner built to its own unrelated box
+// (the previous 4..66 span) sat almost twice as tall and started 9 units
+// higher, so a fanned 9-10-J run visibly jumped size and baseline. Digits
+// now occupy the identical band.
+const DW0 = 46, DH = 100, DSTEM0 = 13.3;
+const DIGIT_W = 20; // card units — matches the original rect-digit box width
+const DIGIT_Y = 12.7; // top, card units — the letters' own cap-top
+const DIGIT_H = 33.5; // card units — the letters' own cap height (46.2 - 12.7)
+const CONDENSE = (DIGIT_W / DIGIT_H * DH) / DW0;
+const DW = DW0 * CONDENSE, DSTEM = DSTEM0 * CONDENSE;
+const dcx = (x) => x * CONDENSE;
+const DIGIT_ONE_W_LOCAL = 14.5; // '1' gets its own narrower box, so "10" stays tight
+const DIGIT_ONE_W = DIGIT_ONE_W_LOCAL * (DIGIT_H / DH); // same H-based uniform scale as the other digits
+const DIGIT_GAP = 1; // between "1" and "0" when the rank is "10"
+
+function dbar(x0, y0, x1, y1, stem = DSTEM) { return strokePath([[dcx(x0), y0], [dcx(x1), y1]], stem); }
+function dcurve(pts, stem = DSTEM) { return strokePath(pts.map(([x, y]) => [dcx(x), y]), stem); }
+function dring(cx, cy, rx, ry, stemX, stemY) { return ringPath(dcx(cx), cy, dcx(rx), ry, dcx(stemX), stemY); }
+
+const dxL = DSTEM / 2, dxR = DW - DSTEM / 2, dyT = DSTEM / 2, dyB = DH - DSTEM / 2;
+
+/** Each digit is an array of independent path fragments (own <path>
+ * elements at build time) rather than one concatenated multi-subpath "d":
+ * concatenating overlapping shapes and trusting nonzero-fill-rule winding to
+ * union them silently cancels out wherever two fragments' winding
+ * directions disagree — found by hand when a hook overlapping its ring
+ * punched a stray hole exactly at the seam. Waypoints are written in the
+ * original W0=46 grid; dbar()/dcurve()/dring() condense them. */
+const DIGIT_PATHS = {
+  0: () => [dring(23, 50, 21, 50, DSTEM0 * 0.875, DSTEM0)],
+  2: () => [
+    dcurve([[14, 20], [16, 8], [30, 8], [38, 16], [38, 28], [28, 40], [10, 52]]),
+    dcurve([[10, 52], [11, 70], [12, 90]], DSTEM * 0.9),
+    dbar(4, 92, 42, 92),
+  ],
+  3: () => [dcurve([
+    [12, 14], [26, 8], [38, 18], [38, 34], [28, 46], [16, 50],
+    [30, 54], [38, 66], [38, 82], [26, 92], [11, 86],
+  ], DSTEM * 0.92)],
+  4: () => [
+    dbar(38, dyT, 38, dyB),
+    dcurve([[30, 8], [8, 62]], DSTEM * 0.95),
+    dbar(8, 62, 38, 62),
+  ],
+  5: () => [
+    dcurve([[38, 8], [10, 8], [10, 45]]),
+    dcurve([[10, 45], [18, 42], [32, 46], [38, 60], [38, 80], [26, 92], [9, 85]], DSTEM * 0.92),
+  ],
+  6: () => [
+    dcurve([[34, 10], [18, 10], [9, 22], [7, 38], [10, 54]], DSTEM * 0.92),
+    dring(23, 70, 19, 30, DSTEM0 * 0.8125, DSTEM0 * 0.9375),
+  ],
+  7: () => [
+    dbar(4, dyT, 42, dyT),
+    dcurve([[34, 8], [13, 92]]),
+  ],
+  8: () => [
+    dring(23, 27, 19, 27, DSTEM0 * 0.8125, DSTEM0 * 0.875),
+    dring(23, 73, 19, 27, DSTEM0 * 0.8125, DSTEM0 * 0.875),
+  ],
+  // "9" is "6" rotated 180deg about the digit's own centre (23, 50 in the
+  // W0=46/H=100 authoring grid) — literally the same hook-plus-ring joint
+  // that already reads correctly for "6", just turned over, rather than a
+  // second hand-fitted curve that drifted into an unrecognisable spiral.
+  9: () => [
+    dring(23, 30, 19, 30, DSTEM0 * 0.8125, DSTEM0 * 0.9375),
+    dcurve([[12, 90], [28, 90], [37, 78], [39, 62], [36, 46]], DSTEM * 0.92),
+  ],
+};
+
+/** Measured bbox (card-local y-units, 0-100 before condensing) of each raw
+ * digit above — a handful of the curved digits land a few units short of
+ * the exact 0/100 extremes their straight-stroke siblings hit exactly.
+ * Every symbol below is wrapped in a translate+scaleY built from this table,
+ * so every digit's ink spans exactly the same top and bottom by
+ * normalisation rather than by hand-nudging waypoints until they agree. */
+const DIGIT_RAW_BBOX = {
+  0: [-0.96, 100.96], 2: [-0.31, 100.63], 3: [0.11, 99.89], 4: [0, 100], 5: [-0.63, 99.87],
+  6: [2.06, 100], 7: [-0.63, 100.63], 8: [0, 100], 9: [0, 97.94],
+};
+
+function digitNormalizeTransform(n) {
+  const [top, bottom] = DIGIT_RAW_BBOX[n];
+  const scale = 100 / (bottom - top);
+  const translate = -top * scale;
+  if (Math.abs(scale - 1) < 0.001 && Math.abs(translate) < 0.01) return '';
+  return ` transform="translate(0 ${fnum(translate)}) scale(1 ${fnum(scale)})"`;
+}
+
+/** The digit <symbol>s (0, 2-9; "1" is a plain bar with its own narrower
+ * box), installed once into the bold defs sheet. fill is left unset: each
+ * renders inside whichever `<g fill="...">` its <use> sits in — the same
+ * handoff the pip symbols already rely on, now carrying a gradient url
+ * instead of currentColor. */
 function digitDefsMarkup() {
-  const half = DIGIT_STROKE / 2;
-  const xL = half, xR = DIGIT_W - half, yT = 0, yM = DIGIT_H / 2, yB = DIGIT_H;
-  const digits = Object.entries(DIGIT_SEGMENTS).map(([n, segs]) => {
-    const body = segs.split('').map((k) => digitSegmentRect(k, xL, xR, yT, yM, yB, half)).join('');
-    return `<symbol id="cg-digit-${n}" viewBox="0 0 ${DIGIT_W} ${DIGIT_H}">${body}</symbol>`;
+  const digits = Object.entries(DIGIT_PATHS).map(([n, fn]) => {
+    const body = fn().map((d) => `<path d="${d}"/>`).join('');
+    return `<symbol id="cg-digit-${n}" viewBox="0 0 ${DW} ${DH}"><g${digitNormalizeTransform(n)}>${body}</g></symbol>`;
   }).join('');
-  // "1" is a single bar with no horizontal segment of its own to anchor the
-  // half-stroke overshoot — it gets the same one directly, so it touches
-  // exactly the same top and bottom as every other digit.
-  const oneX = (DIGIT_ONE_W - DIGIT_ONE_BAR) / 2;
-  const one = `<symbol id="cg-digit-1" viewBox="0 0 ${DIGIT_ONE_W} ${DIGIT_H}"><rect x="${oneX}" y="${-half}" width="${DIGIT_ONE_BAR}" height="${DIGIT_H + half * 2}"/></symbol>`;
+  const oneStem = DSTEM;
+  const oneX = DIGIT_ONE_W_LOCAL / 2;
+  const oneBody = strokePath([[oneX, oneStem / 2], [oneX, DH - oneStem / 2]], oneStem);
+  const one = `<symbol id="cg-digit-1" viewBox="0 0 ${DIGIT_ONE_W_LOCAL} ${DH}"><path d="${oneBody}"/></symbol>`;
   return digits + one;
 }
 
@@ -326,19 +539,20 @@ function boldDigitCorner(card) {
   let x = 2;
   const uses = glyphs.map((d) => {
     const w = d === '1' ? DIGIT_ONE_W : DIGIT_W;
-    const markup = `<use href="#cg-digit-${d}" x="${x.toFixed(2)}" y="${DIGIT_Y}" width="${w}" height="${DIGIT_H}"/>`;
+    const markup = `<use href="#cg-digit-${d}" x="${x.toFixed(2)}" y="${DIGIT_Y}" width="${w.toFixed(2)}" height="${DIGIT_H}"/>`;
     x += w + DIGIT_GAP;
     return markup;
   }).join('');
-  const suitY = DIGIT_Y + DIGIT_H + 4;
-  return `<g>${uses}<use href="#cg-pip-${card.suit}" x="2" y="${suitY}" width="28" height="28"/></g>`;
+  // Fixed at the same x/y/size the letters' suit glyph uses (boldCornerIndex,
+  // below) rather than derived from DIGIT_Y/DIGIT_H — the two corners must
+  // land the suit glyph in the same spot however tall the rank glyph is.
+  return `<g fill="${inkUrl(card, 'index')}">${uses}<use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/></g>`;
 }
 
 /** Left-edge index strip: rank glyph, then suit glyph beneath it. Both must
  * stay inside x=[0, 34] (34% of the 100-unit-wide viewBox) and clear the
  * height minimums the spec sets, so a card showing only its leftmost sliver
- * in the fan still reads. Colours come from .card--bold-red/black in
- * table.css, via currentColor — same handoff the default style uses. */
+ * in the fan still reads. */
 function boldCornerIndex(card) {
   if (isNumeralRank(card.rank)) return boldDigitCorner(card);
   const label = rankIndex(card.rank);
@@ -350,7 +564,7 @@ function boldCornerIndex(card) {
   const rankAttrs = wide
     ? `font-size="46" textLength="27" lengthAdjust="spacingAndGlyphs"`
     : `font-size="50" textLength="25" lengthAdjust="spacingAndGlyphs"`;
-  return `<g>
+  return `<g fill="${inkUrl(card, 'index')}">
     <text class="cg-bold-index" x="2" y="46" ${rankAttrs} font-weight="800" text-anchor="start">${label}</text>
     <use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/>
   </g>`;
@@ -361,14 +575,14 @@ function boldCornerSuit(card) {
   const size = 42;
   const x = VB_W - size - 4;
   const y = VB_H - size - 4;
-  return `<use href="#cg-pip-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}"/>`;
+  return `<use href="#cg-pip-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}" fill="${inkUrl(card, 'ink')}"/>`;
 }
 
 /** JOKER, one letter per line, stacked down the same top-left strip. */
 function boldJokerIndex(card) {
   const letters = 'JOKER'.split('');
   const lines = letters.map((ch, i) => `<text class="cg-bold-index" x="4" y="${22 + i * 20}" font-size="19" font-weight="800" text-anchor="start">${ch}</text>`).join('');
-  return `<g>${lines}</g>`;
+  return `<g fill="${inkUrl(card, 'index')}">${lines}</g>`;
 }
 
 /** A big star (small joker) or crown (big joker), bottom-right. */
@@ -378,51 +592,44 @@ function boldJokerBottom(card) {
   const x = VB_W - size - 4;
   if (big) {
     const h = size * 0.6;
-    return `<use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/>`;
+    return `<g style="color:var(--gold-ink-2)"><use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/></g>`;
   }
-  return `<text x="${x + size / 2}" y="${VB_H - 8}" font-size="${size * 0.85}" text-anchor="middle">★</text>`;
+  return `<text x="${x + size / 2}" y="${VB_H - 8}" font-size="${size * 0.85}" text-anchor="middle" style="color:var(--joker-silver-2)" fill="currentColor">★</text>`;
 }
 
-/** The bold face's inner markup (without the <svg> wrapper). */
+/** The bold face's inner markup (without the <svg> wrapper). Same black
+ * face and gold/rose-gold ink as the default style; the layout — one
+ * oversized top-left index, one big bottom-right suit glyph — is untouched. */
 export function cardFaceBoldBody(card) {
   const colour = isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
-  const frame = `<rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-bold-stock)" stroke="#9a9a9a" stroke-width="1.2"/>`;
   const corner = isJoker(card) ? boldJokerIndex(card) : boldCornerIndex(card);
   const bottom = isJoker(card) ? boldJokerBottom(card) : boldCornerSuit(card);
-  // currentColor, set by .card--bold-red / .card--bold-black — see cardElement.
-  return `<g fill="currentColor" data-colour="${colour}">${frame}${corner}${bottom}</g>`;
+  // The index runs the top-left ~34% wide, ~72% tall strip; the suit glyph
+  // is a 42%-wide box bottom-right — the frame's gaps clear both, leaving
+  // only a sliver bottom-left/top-right for the line itself to occupy.
+  const frameLine = brokenFrame(inkUrl(card, 'index'), 36, 102, 48, 48);
+  return `<g data-colour="${colour}">${faceBody()}${frameLine}${corner}${bottom}</g>`;
 }
 
-/** The bold back's inner markup: white border, blue field, diamond lattice
- * and a centred diamond ornament. Nothing here reads currentColor — a back
- * has no text, so its colours are fixed in the defs below. */
+/** The bold back: identical to the default style's back (see cardBackBody)
+ * — one deck, drawn once, read by both tables. */
 export function cardBackBoldBody() {
-  return `
-    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="#ffffff"/>
-    <rect x="6" y="6" width="${VB_W - 12}" height="${VB_H - 12}" rx="4" fill="url(#cg-bold-back-field)"/>
-    <rect x="6" y="6" width="${VB_W - 12}" height="${VB_H - 12}" rx="4" fill="url(#cg-bold-lattice)"/>
-    <use href="#cg-pip-diamond" x="32" y="47" width="36" height="46" fill="#ffffff" opacity="0.85"/>
-    <use href="#cg-pip-diamond" x="38" y="53" width="24" height="34" fill="#3f74d6" opacity="0.95"/>`;
+  return cardBackBody();
 }
 
 function installBoldCardDefs(doc = globalThis.document) {
+  // The bold sheet cross-references the default sheet's shared gradients,
+  // the plain pip symbols and the crown/curl symbols by plain "cg-..." id
+  // (see sharedGoldDefs) rather than duplicating them — this guarantees
+  // that cross-reference resolves regardless of which style a caller reaches
+  // for first.
+  installCardDefs(doc);
   if (!doc || doc.getElementById(BOLD_DEFS_ID)) return;
   const holder = doc.createElement('div');
   holder.setAttribute('aria-hidden', 'true');
   holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
   holder.innerHTML = `<svg id="${BOLD_DEFS_ID}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <radialGradient id="cg-bold-stock" cx="0.5" cy="0.38" r="0.8">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#f2f2f2"/>
-    </radialGradient>
-    <linearGradient id="cg-bold-back-field" x1="0" y1="0" x2="0.7" y2="1">
-      <stop offset="0" stop-color="#2e63c9"/>
-      <stop offset="1" stop-color="#1f4aa0"/>
-    </linearGradient>
-    <pattern id="cg-bold-lattice" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <path d="M7 0 14 7 7 14 0 7z" fill="none" stroke="#ffffff" stroke-width="0.6" opacity="0.28"/>
-    </pattern>
     ${digitDefsMarkup()}
   </defs>
 </svg>`;
