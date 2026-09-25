@@ -155,7 +155,10 @@ function faceBody() {
 function inkUrl(card, variant) {
   if (isJoker(card)) {
     const big = card.rank === RANK_JOKER_BIG;
-    return big ? `url(#cg-gold-${variant})` : 'url(#cg-silver-ink)';
+    // The big joker reads as the deck's red suits (JOKER_COLOUR marks it
+    // 'red'), not gold — same rose-gold gradients hearts/diamonds use. The
+    // small joker stays the neutral silver/grey it always was.
+    return big ? `url(#cg-rose-${variant})` : 'url(#cg-silver-ink)';
   }
   const family = SUIT_COLOUR[card.suit] === 'black' ? 'gold' : 'rose';
   return `url(#cg-${family}-${variant})`;
@@ -222,7 +225,7 @@ function ornatePipLayout(card) {
  * so it does not need the gradient machinery the indices and suits use. */
 function jokerCentreDefault(card) {
   const big = card.rank === RANK_JOKER_BIG;
-  const tone = big ? 'var(--gold-ink-2)' : 'var(--joker-silver-2)';
+  const tone = big ? 'var(--rose-ink-2)' : 'var(--joker-silver-2)';
   if (big) return `<g style="color:${tone}"><use href="#cg-crown" x="26" y="52" width="48" height="29"/></g>`;
   return `<text x="50" y="82" font-size="50" text-anchor="middle" style="color:${tone}" fill="currentColor">★</text>`;
 }
@@ -543,30 +546,68 @@ function boldDigitCorner(card) {
     x += w + DIGIT_GAP;
     return markup;
   }).join('');
-  // Fixed at the same x/y/size the letters' suit glyph uses (boldCornerIndex,
-  // below) rather than derived from DIGIT_Y/DIGIT_H — the two corners must
-  // land the suit glyph in the same spot however tall the rank glyph is.
-  return `<g fill="${inkUrl(card, 'index')}">${uses}<use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/></g>`;
+  // Fixed at the same x/PIP_Y/size the letters' suit glyph uses
+  // (boldCornerIndex, below) rather than derived from DIGIT_Y/DIGIT_H — the
+  // two corners must land the suit glyph in the same spot however tall the
+  // rank glyph is.
+  return `<g fill="${inkUrl(card, 'index')}">${uses}<use href="#cg-pip-${card.suit}" x="2" y="${PIP_Y}" width="28" height="28"/></g>`;
 }
 
-/** Left-edge index strip: rank glyph, then suit glyph beneath it. Both must
- * stay inside x=[0, 34] (34% of the 100-unit-wide viewBox) and clear the
- * height minimums the spec sets, so a card showing only its leftmost sliver
- * in the fan still reads. */
+// Letter ranks (J, Q, K, A — "10" is a numeral rank, see isNumeralRank, and
+// never reaches this branch) are set in the site's own EB Garamond at 800.
+// SVG getBBox() does not return true per-glyph ink extents in every browser
+// (it fell back to the font's flat ascent/descent box here, identical for
+// every letter), so cap height and descent below come from rendering the
+// real glyph and reading back ink pixels instead. K and J's flat serif top
+// (no overshoot) is the unambiguous cap-height reference — A's pointed apex
+// and Q's round shoulder both overshoot it slightly, by design, same as most
+// type. Q's tail is the deepest natural descender of the four (12.68 units
+// below the baseline at LETTER_FONT_SIZE), J's next (10.17); A and K barely
+// dip past the baseline — see PIP_Y below, which is sized to clear Q's.
+const LETTER_CAP_RATIO = 0.655; // K/J's cap-top, in em, above the baseline
+// One font-size for every letter rank, chosen so that shared cap height
+// equals the digits' own (DIGIT_H) — the same cap line and baseline as
+// 2-10, derived from a measurement rather than picked by eye.
+const LETTER_FONT_SIZE = DIGIT_H / LETTER_CAP_RATIO; // ~51.15 card units
+const LETTER_BASELINE = 46;
+// All four letters take this one shared horizontal scale (never stretched,
+// only narrowed) so their rendered width matches the condensed digits'
+// instead of each letter's own, much wider, natural width — chosen by eye
+// off a side-by-side sheet of candidate factors, the same anchored-transform
+// mechanism as below. A per-glyph textLength/lengthAdjust compromise was
+// tried first and rejected: it rendered Q's overshooting swash tail WIDER
+// under a mild requested compression (52.6) than with no compression at all
+// (47.2 natural) — a genuine rendering bug for that glyph in this engine.
+const LETTER_CONDENSE_SX = 0.72;
+// The suit glyph below the rank sits low enough to clear a letter's full,
+// unclipped natural descender — moved down (from the digits' original 52)
+// by the same amount for every rank alike, digits included, so the pip row
+// still lines up across the fan. Q's tail is the deepest natural descender
+// among the ranks (12.68 units below the baseline at LETTER_FONT_SIZE, J's
+// is 10.21): baseline 46 + 12.68 + a measured 1.5-unit clearance = 60.18
+// required ink-top; the pip's own ink starts 1.68 units below its y
+// attribute (measured off the rendered symbol), so y = 60.18 - 1.68 rounds
+// up to 59 for a touch more margin (~2.0 units clear at render). At y=59 the
+// pip's ink still ends around y=86, well inside both the visible strip of a
+// hand card at the tightest fan (only the top ~114.8 of 140 units survive
+// the 844x330 viewport) and clear of the bottom-right big suit (top at 94).
+const PIP_Y = 59;
+
+/** Left-edge index strip: rank glyph, then suit glyph beneath it. The rank
+ * glyph is never taller than the digits' own cap height, and the suit glyph
+ * (fixed at PIP_Y) sits far enough below the baseline to clear even Q's full,
+ * unclipped tail — so both stay legible however tall a fanned card's own
+ * corner strip runs. */
 function boldCornerIndex(card) {
   if (isNumeralRank(card.rank)) return boldDigitCorner(card);
   const label = rankIndex(card.rank);
-  const wide = label.length > 1; // "10": needs the most horizontal condensing
-  // textLength on every rank, not just "10": at heavy weight some single
-  // glyphs (K, A) render wider than the 34% strip on their own, so every
-  // rank is pinned to a fixed, measured-safe width rather than trusting the
-  // font's natural metrics.
-  const rankAttrs = wide
-    ? `font-size="46" textLength="27" lengthAdjust="spacingAndGlyphs"`
-    : `font-size="50" textLength="25" lengthAdjust="spacingAndGlyphs"`;
+  // Anchored at x=2, the glyph's own left edge, so scaling narrows it toward
+  // where it already starts — the cap-line top and baseline are untouched,
+  // only the width changes.
+  const transformAttr = ` transform="translate(2 0) scale(${LETTER_CONDENSE_SX} 1) translate(-2 0)"`;
   return `<g fill="${inkUrl(card, 'index')}">
-    <text class="cg-bold-index" x="2" y="46" ${rankAttrs} font-weight="800" text-anchor="start">${label}</text>
-    <use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/>
+    <text class="cg-bold-index" x="2" y="${LETTER_BASELINE}" font-size="${LETTER_FONT_SIZE.toFixed(2)}"${transformAttr} font-weight="800" text-anchor="start">${label}</text>
+    <use href="#cg-pip-${card.suit}" x="2" y="${PIP_Y}" width="28" height="28"/>
   </g>`;
 }
 
@@ -592,7 +633,7 @@ function boldJokerBottom(card) {
   const x = VB_W - size - 4;
   if (big) {
     const h = size * 0.6;
-    return `<g style="color:var(--gold-ink-2)"><use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/></g>`;
+    return `<g style="color:var(--rose-ink-2)"><use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/></g>`;
   }
   return `<text x="${x + size / 2}" y="${VB_H - 8}" font-size="${size * 0.85}" text-anchor="middle" style="color:var(--joker-silver-2)" fill="currentColor">★</text>`;
 }
