@@ -8,6 +8,8 @@
 
 import { lobbyById } from './core/economy.js';
 import { loadProfile, reconcileRescue, saveProfile } from './core/profile.js';
+import { tableById as blackjackTableById } from './games/blackjack/tables.js';
+import { BlackjackGame } from './ui/blackjack.js';
 import { installCardDefs } from './ui/cardart.js';
 import { clear, el } from './ui/dom.js';
 import { renderLobby, renderMenu, renderMode } from './ui/screens.js';
@@ -24,7 +26,7 @@ const app = {
     this.teardown();
     this.route = route;
     this.params = params;
-    const hash = `#/${route}${params.gameId ? `/${params.gameId}` : ''}${params.lobbyId ? `/${params.lobbyId}` : ''}`;
+    const hash = `#/${route}${params.gameId ? `/${params.gameId}` : ''}${params.variant ? `/${params.variant}` : ''}${params.lobbyId ? `/${params.lobbyId}` : ''}`;
     if (location.hash !== hash) history.pushState({ route, params }, '', hash);
     this.render();
   },
@@ -48,12 +50,21 @@ const app = {
         renderMode(this, root, this.params.gameId ?? 'doudizhu');
         break;
       case 'lobby':
-        renderLobby(this, root, this.params.gameId ?? 'doudizhu');
+        renderLobby(this, root, this.params.gameId ?? 'doudizhu', this.params.variant);
         break;
       case 'table': {
+        const gameId = this.params.gameId ?? 'doudizhu';
+        if (gameId === 'blackjack') {
+          const table = blackjackTableById(this.params.lobbyId);
+          if (!table) return this.replace('lobby', { gameId, variant: this.params.variant });
+          const game = new BlackjackGame(this, { table, variant: this.params.variant });
+          this.controller = game;
+          game.mount(root);
+          break;
+        }
         const lobby = lobbyById(this.params.lobbyId);
-        if (!lobby) return this.replace('lobby', { gameId: this.params.gameId ?? 'doudizhu' });
-        const game = new SoloGame(this, { lobby, gameId: this.params.gameId ?? 'doudizhu' });
+        if (!lobby) return this.replace('lobby', { gameId });
+        const game = new SoloGame(this, { lobby, gameId });
         this.controller = game;
         game.mount(root);
         break;
@@ -101,7 +112,11 @@ history.replaceState({ route: 'menu', params: {} }, '', location.hash || '#/menu
 // router falls back to the picker rather than guessing.
 const parts = (location.hash || '').replace(/^#\//, '').split('/');
 if (parts[0] === 'mode' || parts[0] === 'lobby' || parts[0] === 'lan') {
-  app.replace(parts[0], { gameId: parts[1] || 'doudizhu' });
+  const gameId = parts[1] || 'doudizhu';
+  const params = { gameId };
+  // Only Blackjack's lobby route carries a variant segment (american/malaysian).
+  if (gameId === 'blackjack' && parts[0] === 'lobby' && parts[2]) params.variant = parts[2];
+  app.replace(parts[0], params);
 } else {
   app.render();
 }
