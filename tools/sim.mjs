@@ -67,9 +67,12 @@ function measure(subject, field, n, seedPrefix) {
     chips += (won ? 1 : -1) * (isLandlord ? 2 : 1) * result.multiplier;
   }
   const sorted = [...decisionMs].sort((a, b) => a - b);
+  const fourFinished = fourEmptied;
+  const fourUnfinished = fourPlays - fourEmptied;
   return {
     subject, field, n, wins, winRate: wins / n, chips, chipsPerGame: chips / n,
     landlordShare: landlordGames / n, fallbacks, fourPlays, fourEmptied, fourPer100: (fourPlays / n) * 100,
+    fourFinishedPer100: (fourFinished / n) * 100, fourUnfinishedPer100: (fourUnfinished / n) * 100,
     p50: percentile(sorted, 0.50), p95: percentile(sorted, 0.95), max: sorted[sorted.length - 1] ?? 0,
   };
 }
@@ -80,15 +83,15 @@ if (pair.length === 2) {
 } else {
   const names = Object.keys(SKILLS);
   console.log(`subject vs a table of "steady" bots, ${games} games each\n`);
-  console.log('skill          win%   chips/game  landlord%  illegal  4+kickers/100  p50ms   p95ms   maxms');
+  console.log('skill          win%   chips/game  landlord%  illegal  4+kick finish/100  4+kick nonfinish/100  p50ms   p95ms   maxms');
   for (const name of names) {
     // Same seed prefix for every skill, so each one faces the identical set of
     // deals. Paired comparison: cuts the variance enough to see the ladder.
     const r = measure(name, 'steady', games, 'ladder');
     console.log(
       `${name.padEnd(13)} ${(r.winRate * 100).toFixed(1).padStart(5)}  ${r.chipsPerGame.toFixed(2).padStart(10)}  `
-      + `${(r.landlordShare * 100).toFixed(1).padStart(8)}  ${String(r.fallbacks).padStart(7)}  ${r.fourPer100.toFixed(2).padStart(12)}  `
-      + `${r.p50.toFixed(3).padStart(6)}  ${r.p95.toFixed(3).padStart(6)}  ${r.max.toFixed(3).padStart(6)}`,
+      + `${(r.landlordShare * 100).toFixed(1).padStart(8)}  ${String(r.fallbacks).padStart(7)}  ${r.fourFinishedPer100.toFixed(2).padStart(16)}  `
+      + `${r.fourUnfinishedPer100.toFixed(2).padStart(20)}  ${r.p50.toFixed(3).padStart(6)}  ${r.p95.toFixed(3).padStart(6)}  ${r.max.toFixed(3).padStart(6)}`,
     );
   }
 }

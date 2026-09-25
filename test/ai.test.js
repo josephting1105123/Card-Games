@@ -27,7 +27,7 @@ function makeView({ hand, opponentCards = [17, 17], playedCards = [] }) {
   };
 }
 
-test('master and grandmaster refuse a four-with-kickers with no urgency and nothing to gain', () => {
+test('master, grandmaster, sharp and expert all refuse a four-with-kickers with no urgency and nothing to gain', () => {
   // Four 3s plus six loose, non-consecutive singles: playing the four with two
   // of them as kickers reads well by cost alone (it clears the least useful
   // cards), but it spends a bomb outright and forfeits the doubling, and the
@@ -37,7 +37,7 @@ test('master and grandmaster refuse a four-with-kickers with no urgency and noth
   const hand = parseHand('3333 5 7 9 J K A');
   const view = makeView({ hand });
 
-  for (const skillName of ['master', 'grandmaster']) {
+  for (const skillName of ['sharp', 'expert', 'master', 'grandmaster']) {
     const move = bestMove(view, SKILLS[skillName]);
     assert.ok(move.cards, `${skillName} should have a legal lead, not a pass`);
     const type = classify(move.cards)?.type;
@@ -50,6 +50,27 @@ test('master and grandmaster refuse a four-with-kickers with no urgency and noth
     // four intact, not the bomb either (spending a real bomb here is just as
     // undisciplined as the four-with-kickers would have been).
     assert.equal(usedThrees, 0, `${skillName} should not touch the four at all here`);
+  }
+});
+
+test('an opponent about to go out still does not earn the kicker four — the plain bomb is preferred', () => {
+  // Same hand, but now an opponent is down to 2 cards (within every hard-
+  // filtering skill's fourDisciplineThreshold). The old "urgent" exception let
+  // this straight through; the fix is that a plain bomb of the very same rank
+  // is always legal in this exact spot (bombs can always be led), so "no other
+  // legal move stops them" is never true here and the kicker four stays
+  // refused — the bot reaches for the bomb instead, which also doubles the
+  // stake instead of throwing it away on kickers.
+  const hand = parseHand('3333 5 7 9 J K A');
+  const view = makeView({ hand, opponentCards: [2, 17] });
+
+  for (const skillName of ['sharp', 'expert', 'master', 'grandmaster']) {
+    const move = bestMove(view, SKILLS[skillName]);
+    assert.ok(move.cards, `${skillName} should have a legal lead, not a pass`);
+    const type = classify(move.cards)?.type;
+    assert.notEqual(type, Combo.FOUR_TWO, `${skillName} must not play the four-with-kickers just because an opponent is low`);
+    assert.notEqual(type, Combo.FOUR_TWO_PAIRS);
+    assert.equal(type, Combo.BOMB, `${skillName} should play the plain bomb instead: got ${type}`);
   }
 });
 
@@ -91,13 +112,17 @@ test('master refuses splitting a four into a smaller combo the same way', () => 
   assert.ok(usedFours === 0 || usedFours === 4, `must not split the four of 4s (used ${usedFours})`);
 });
 
-test('the ladder stays monotone: nobody below master is hard-blocked from the move', () => {
-  // Not a claim that every lower skill always plays it — bombDiscipline still
+test('the ladder stays monotone: fourDisciplineThreshold only tightens as skill rises', () => {
+  // Not a claim that novice/casual/steady never play it — bombDiscipline still
   // scores it down as the stakes rise — only that the move is never simply
-  // unavailable to them the way it is to master and grandmaster.
-  for (const skillName of ['novice', 'casual', 'steady', 'sharp', 'expert']) {
-    assert.equal(SKILLS[skillName].strictFourDiscipline, false, `${skillName} must not hard-block the move`);
+  // unavailable to them the way it is from sharp upward. sharp/expert allow the
+  // urgent last resort up to a lower-card opponent (<=3) than master/grandmaster
+  // do (<=2), i.e. the threshold only ever shrinks going up the ladder.
+  for (const skillName of ['novice', 'casual', 'steady']) {
+    assert.equal(SKILLS[skillName].fourDisciplineThreshold, 0, `${skillName} must not hard-block the move`);
   }
-  assert.equal(SKILLS.master.strictFourDiscipline, true);
-  assert.equal(SKILLS.grandmaster.strictFourDiscipline, true);
+  assert.equal(SKILLS.sharp.fourDisciplineThreshold, 3);
+  assert.equal(SKILLS.expert.fourDisciplineThreshold, 3);
+  assert.equal(SKILLS.master.fourDisciplineThreshold, 2);
+  assert.equal(SKILLS.grandmaster.fourDisciplineThreshold, 2);
 });
