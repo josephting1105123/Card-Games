@@ -25,9 +25,12 @@
  *                  and, the same thing in disguise, how strongly it refuses to
  *                  play a four-with-kickers or split a four into a smaller
  *                  combo, both of which spend the bomb without ever doubling
- *                  the stake. master and grandmaster (strictFourDiscipline)
- *                  refuse it outright unless it empties the hand or leaves a
- *                  single remaining play the unseen cards cannot beat.
+ *                  the stake. sharp and up (fourDisciplineThreshold) refuse it
+ *                  outright unless it empties the hand, leaves a single
+ *                  remaining play the unseen cards cannot beat, or — only as a
+ *                  last resort, and only when no legal bomb/rocket would do the
+ *                  same job — an opponent is down to fourDisciplineThreshold
+ *                  cards or fewer and nothing else legal can deny them.
  *
  * Evaluation is mostly a hand-shape heuristic, not a search: cost(hand)
  * approximates the number of tricks needed to shed it, computed by greedy
@@ -62,22 +65,26 @@ import { enumerateLeads, legalPlays, moveCost } from './moves.js';
  * @property {boolean} countsCards
  * @property {boolean} partnerAware
  * @property {number} bombDiscipline 0..1
- * @property {boolean} strictFourDiscipline never spend a four (with kickers, or
- *                      split into a smaller combo) unless it wins outright or
- *                      is provably safe; below this, bombDiscipline just makes
- *                      it a worse-scoring option, same as a real bomb
+ * @property {number} fourDisciplineThreshold 0 to leave a four-with-kickers (or
+ *                      splitting a four into a smaller combo) to bombDiscipline's
+ *                      soft scoring penalty, same as a real bomb; above 0, hard-
+ *                      filter it out of the candidate list unless it wins
+ *                      outright, is provably safe, or (last resort, and only
+ *                      when no bomb/rocket is legal instead) an opponent holds
+ *                      this many cards or fewer and nothing else legal stops
+ *                      them. sharp/expert use 3, master/grandmaster use 2.
  * @property {number} bidNoise       added to hand strength when calling points
  */
 
 /** Ready-made profiles. economy.js maps a lobby to one of these. */
 export const SKILLS = {
-  novice:      { name: 'Novice',      accuracy: 0.45, temperature: 26, countsCards: false, partnerAware: false, bombDiscipline: 0.1,  strictFourDiscipline: false, bidNoise: 0.30 },
-  casual:      { name: 'Casual',      accuracy: 0.62, temperature: 18, countsCards: false, partnerAware: true,  bombDiscipline: 0.3,  strictFourDiscipline: false, bidNoise: 0.22 },
-  steady:      { name: 'Steady',      accuracy: 0.72, temperature: 14, countsCards: false, partnerAware: true,  bombDiscipline: 0.5,  strictFourDiscipline: false, bidNoise: 0.16 },
-  sharp:       { name: 'Sharp',       accuracy: 0.80, temperature: 11, countsCards: true,  partnerAware: true,  bombDiscipline: 0.65, strictFourDiscipline: false, bidNoise: 0.12 },
-  expert:      { name: 'Expert',      accuracy: 0.86, temperature: 8,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.78, strictFourDiscipline: false, bidNoise: 0.08 },
-  master:      { name: 'Master',      accuracy: 0.92, temperature: 6,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.88, strictFourDiscipline: true,  bidNoise: 0.05 },
-  grandmaster: { name: 'Grandmaster', accuracy: 0.97, temperature: 4,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.95, strictFourDiscipline: true,  bidNoise: 0.02 },
+  novice:      { name: 'Novice',      accuracy: 0.45, temperature: 26, countsCards: false, partnerAware: false, bombDiscipline: 0.1,  fourDisciplineThreshold: 0, bidNoise: 0.30 },
+  casual:      { name: 'Casual',      accuracy: 0.62, temperature: 18, countsCards: false, partnerAware: true,  bombDiscipline: 0.3,  fourDisciplineThreshold: 0, bidNoise: 0.22 },
+  steady:      { name: 'Steady',      accuracy: 0.72, temperature: 14, countsCards: false, partnerAware: true,  bombDiscipline: 0.5,  fourDisciplineThreshold: 0, bidNoise: 0.16 },
+  sharp:       { name: 'Sharp',       accuracy: 0.80, temperature: 11, countsCards: true,  partnerAware: true,  bombDiscipline: 0.65, fourDisciplineThreshold: 3, bidNoise: 0.12 },
+  expert:      { name: 'Expert',      accuracy: 0.86, temperature: 8,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.78, fourDisciplineThreshold: 3, bidNoise: 0.08 },
+  master:      { name: 'Master',      accuracy: 0.92, temperature: 6,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.88, fourDisciplineThreshold: 2, bidNoise: 0.05 },
+  grandmaster: { name: 'Grandmaster', accuracy: 0.97, temperature: 4,  countsCards: true,  partnerAware: true,  bombDiscipline: 0.95, fourDisciplineThreshold: 2, bidNoise: 0.02 },
 };
 
 export function skillByName(name) {
@@ -267,40 +274,57 @@ function spendsFour(hand, move) {
  * Spending a four early is provably fine, without trusting a heuristic, in two
  * cases: it empties the hand outright, or the cards left over, played as a
  * single combo, are something the unseen pool cannot beat ("leaves exactly one
- * play that cannot be beaten"). A third case is not provable but is not
- * frivolous either: stopping an opponent who is about to go out, or closing
- * out a hand that is itself down to its last few cards — the same "urgent"
- * test scoreMove uses to decide a real bomb is worth it. Measured against the
- * naive reading (drop the urgent case too): that version is not measurably
- * stronger than the bot it replaces, because it also gives up the defensive
- * bombs a human would still play; this one is (see the sim report in the
- * commit this landed in).
+ * play that cannot be beaten"). Anything short of that is for
+ * filterFourDiscipline's own last-resort case to weigh, not this function —
+ * an earlier version folded a broad "urgent" test in here too (opponent low on
+ * cards, or few of my own left) and it let through six-card sheds that neither
+ * finished the hand nor denied anyone anything, which is exactly the "weird"
+ * behaviour this was meant to fix.
  */
-function fourSpendJustified(remaining, unseen, urgent) {
-  if (remaining.length === 0 || urgent) return true;
+function fourSpendJustified(remaining, unseen) {
+  if (remaining.length === 0) return true;
   if (!unseen) return false;
   const combo = classify(remaining);
   return !!combo && unanswerable(combo, unseen);
 }
 
 /**
- * For master and grandmaster (strictFourDiscipline): drop any move that spends
- * or splits a four unless it is justified, rather than merely scoring it down.
- * Never returns an empty list — if every legal move happens to touch a four
- * (a hand made of nothing else) the filter backs off instead of leaving the
- * bot with nothing to play.
+ * For sharp and up (fourDisciplineThreshold > 0): drop any move that spends or
+ * splits a four unless it is justified, rather than merely scoring it down.
+ *
+ * Justified means one of:
+ *   (a) it empties the hand outright;
+ *   (b) what is left, played as one combo, nothing unseen can beat;
+ *   (c) last resort — an opponent holds fourDisciplineThreshold cards or fewer,
+ *       nothing else legal right now is provably safe against the unseen pool
+ *       either, AND no plain bomb or rocket is legal this turn. That last part
+ *       matters: whenever a move that spends a four is legal, a plain bomb of
+ *       that same rank is legal too (a bomb can always be led, and always beats
+ *       a non-bomb current combo), so in practice (c) only ever fires when the
+ *       hand's spare four has already been spent on a bomb earlier and some
+ *       *other* leftover fragment of it is what's being split — the point is
+ *       the bot never breaks a four for kickers while a bomb was sitting right
+ *       there doing the same job for free.
+ *
+ * Never returns an empty list — if every legal move happens to touch a four (a
+ * hand made of nothing else) the filter backs off instead of leaving the bot
+ * with nothing to play.
  */
 function filterFourDiscipline(view, skill, moves, unseen) {
-  if (!skill.strictFourDiscipline) return moves;
+  const threshold = skill.fourDisciplineThreshold;
+  if (!threshold) return moves;
   const hand = view.you.hand;
   const seat = view.seat;
   const me = view.players[seat];
   const opponentLow = Math.min(...view.players.filter((p) => p.seat !== seat && !sameSide(me, p)).map((p) => p.cards));
+  const bombAvailable = moves.some((m) => m.bomb);
   const allowed = moves.filter((move) => {
     if (!spendsFour(hand, move)) return true;
     const remaining = removeByIds(hand, move.cards);
-    const urgent = opponentLow <= 2 || remaining.length <= 3;
-    return fourSpendJustified(remaining, unseen, urgent);
+    if (fourSpendJustified(remaining, unseen)) return true;
+    if (bombAvailable || opponentLow > threshold || !unseen) return false;
+    const somethingElseStops = moves.some((m) => m !== move && unanswerable(m, unseen));
+    return !somethingElseStops;
   });
   return allowed.length ? allowed : moves;
 }
@@ -321,6 +345,11 @@ const FORCED_WIN_NODE_BUDGET = 20_000;
  * lead again) would be missed. Only ever tried on hands of FORCED_WIN_MAX_HAND
  * cards or fewer, where the search is cheap regardless; the node budget is a
  * backstop against a pathological hand, not something expected to bind.
+ *
+ * Bounded by node count alone, not wall-clock time: every bot decision has to
+ * replay identically from its seed (see core/rng.js), on a phone or a loaded
+ * LAN host alike, and a clock-based cutoff would make the move depend on how
+ * fast the machine happened to be at the time.
  */
 function findForcedWin(hand, unseen) {
   if (!hand.length || hand.length > FORCED_WIN_MAX_HAND) return null;
@@ -360,9 +389,22 @@ function currentPassStreak(view) {
   return streak;
 }
 
-const ENDGAME_TOTAL_MAX = 12;       // sum of all three hands left in play
-const ENDGAME_DETERMINIZATIONS = 6; // sampled splits of the unseen pool
-const ENDGAME_NODE_BUDGET = 3_000;  // per determinization
+const ENDGAME_TOTAL_MAX = 21;       // sum of all three hands left in play
+const ENDGAME_DETERMINIZATIONS = 8; // sampled splits of the unseen pool
+const ENDGAME_CANDIDATE_LIMIT = 10; // how many of my own candidate moves get the full determinized evaluation
+// One search-node counter for the whole endgameDecision() call — every
+// candidate, every determinization together, not a fresh budget per search.
+// A per-search budget let a decision cost (candidates x determinizations)
+// times as much as a single search looked like, which is what pushed worst-
+// case time past the 150ms ceiling once the search window widened enough to
+// matter. This is node count, not wall-clock time: every bot decision has to
+// replay identically from its seed on any machine (see core/rng.js), and a
+// clock-based cutoff would make the chosen move depend on how fast the
+// machine that happened to compute it was. A hand here is at most
+// ENDGAME_TOTAL_MAX cards, so the cost of a single node (legalPlays on a
+// bounded hand) is itself bounded, and node count is calibrated below,
+// empirically, against wall-clock time on the reference machine.
+const ENDGAME_NODE_BUDGET_TOTAL = 9_000;
 
 /**
  * Exact two-player alpha-beta (landlord maximising, the two farmers on one
@@ -375,8 +417,10 @@ const ENDGAME_NODE_BUDGET = 3_000;  // per determinization
  * alpha-beta bounds that a two-valued game affords.
  *
  * Returns { value, choice } where choice is { cards } or { pass: true }, or
- * { value: null, choice: null } once the node budget runs out — every caller
- * must treat null as "unknown" and bail the whole search, not as a result.
+ * { value: null, choice: null } once the shared node budget runs out — every
+ * caller must treat null as "unknown" and bail the whole search, not as a
+ * result. `budget` is the one object shared across the whole endgameDecision()
+ * call — see ENDGAME_NODE_BUDGET_TOTAL.
  */
 function alphaBetaEndgame(hands, turn, current, leader, passStreak, roles, budget) {
   if (--budget.n < 0) return { value: null, choice: null };
@@ -423,18 +467,17 @@ function alphaBetaEndgame(hands, turn, current, leader, passStreak, roles, budge
   return { value: bestValue, choice: best };
 }
 
-/** How many of my own candidate moves get the full determinized evaluation. */
-const ENDGAME_CANDIDATE_LIMIT = 8;
-
 /**
  * Apply one candidate (a move, or pass) to a fully-determined world and read
  * off whether the seat that owns this decision goes on to win it, with both
  * sides playing the rest out exactly (alphaBetaEndgame). Emptying the hand
  * outright is resolved without a search — there is nothing left to play.
- * Returns null when the search could not finish inside its node budget.
+ * Returns null when the search could not finish inside the decision's shared
+ * node budget. `budget` is that shared object, passed in by endgameDecision()
+ * so nodes spent on earlier candidates and worlds count against the same
+ * total rather than each call getting its own fresh allowance.
  */
-function evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles) {
-  const budget = { n: ENDGAME_NODE_BUDGET };
+function evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles, budget) {
   if (choice === null) {
     // Pass: only legal mid-trick. Work out where the turn and the trick
     // itself land next, exactly as pass() in engine.js does.
@@ -502,7 +545,12 @@ function endgameDecision(view, skill, unseen, rng) {
   const passStreak = view.trick ? currentPassStreak(view) : 0;
   const iAmLandlord = roles[seat] === 'landlord';
 
-  const legal = legalPlays(hand, current, { kickerChoices: 2 });
+  // filterFourDiscipline first: the exact search knows nothing about "do not
+  // break a bomb for kickers" — it only sees win or lose — so without this a
+  // wide-enough search window would happily rediscover the very move the
+  // discipline rule exists to rule out, on the correct but beside-the-point
+  // grounds that it wins this fully-determined sample.
+  const legal = filterFourDiscipline(view, skill, legalPlays(hand, current, { kickerChoices: 2 }), unseen);
   const ranked = legal
     .map((move) => ({ move, score: scoreMove(view, skill, move, unseen) }))
     .sort((a, b) => b.score - a.score)
@@ -518,8 +566,16 @@ function endgameDecision(view, skill, unseen, rng) {
   const worldSeeds = [];
   for (let k = 0; k < ENDGAME_DETERMINIZATIONS; k++) worldSeeds.push(shuffle([...unseen], rng));
 
+  // One shared node budget for the whole decision (every candidate, every
+  // determinization), not one per search — otherwise a search that looked
+  // cheap in isolation still added up to an expensive decision once there
+  // were (candidates x determinizations) of them. Deterministic and
+  // machine-independent: see ENDGAME_NODE_BUDGET_TOTAL.
+  const budget = { n: ENDGAME_NODE_BUDGET_TOTAL };
+
   let best = null;
   for (const choice of shortlist) {
+    if (budget.n <= 0) break; // whatever is already scored stands; nothing new gets started
     let wins = 0;
     let evaluated = 0;
     for (const pool of worldSeeds) {
@@ -536,19 +592,26 @@ function endgameDecision(view, skill, unseen, rng) {
         hands[p.seat] = pool.slice(cursor, cursor + p.cards);
         cursor += p.cards;
       }
-      const value = evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles);
-      if (value === null) continue; // this world's search ran out of budget; skip rather than guess
+      const value = evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles, budget);
+      if (value === null) continue; // this world's search ran out of the shared node budget; skip rather than guess
       evaluated += 1;
       if (iAmLandlord ? value === 1 : value === 0) wins += 1;
     }
-    if (!evaluated) continue;
+    // A candidate the shared budget ran out on partway through is worse
+    // information, not a worse move — comparing its rate against a
+    // fully-sampled rival
+    // would be comparing noise to signal, so it is left out of the running
+    // entirely rather than letting a lucky partial sample win on paper and
+    // then get discarded anyway (which used to make the whole search bail
+    // even when an earlier candidate had finished clean).
+    if (evaluated < ENDGAME_DETERMINIZATIONS) continue;
     const rate = wins / evaluated;
     // Ties favour whichever candidate the ordinary heuristic already ranked
     // first (shortlist is heuristic-sorted), so the search only overrides it
     // when it actually found something better.
-    if (!best || rate > best.rate) best = { choice, rate, evaluated };
+    if (!best || rate > best.rate) best = { choice, rate };
   }
-  if (!best || best.evaluated < ENDGAME_DETERMINIZATIONS) return null; // not enough of the sample finished to trust this
+  if (!best) return null; // nothing finished cleanly inside the time/node budget; fall back to the heuristic
   return best.choice === null ? { pass: true } : { cards: best.choice.cards };
 }
 
@@ -636,8 +699,9 @@ function scoreMove(view, skill, move, unseen) {
   // Spending a bomb — playing it outright, playing a four-with-kickers, or
   // splitting a four into some other combo — is only worth it to stop someone
   // who is about to go out, or to win outright. bombDiscipline decides how
-  // strict the bot is about that; strictFourDiscipline (master and up) has
-  // already ruled the frivolous cases out before this is even reached.
+  // strict the bot is about that; skills with a fourDisciplineThreshold
+  // (sharp and up) have already ruled the frivolous four-spends out of the
+  // candidate list before this is even reached, via filterFourDiscipline.
   if (move.bomb || spendsFour(view.you.hand, move)) {
     const urgent = opponentLow <= 2 || remaining.length <= 3;
     if (!urgent) score -= W.play * 3.5 * skill.bombDiscipline;
@@ -667,18 +731,34 @@ function scoreMove(view, skill, move, unseen) {
     score -= W.chokeOpponent * 0.8;
   }
 
-  // As a farmer, beating your own partner hands the trick back to the landlord.
+  // A farmer overtaking their own partner's already-winning play gains the
+  // team nothing — the trick was already going their way — and costs a card
+  // that might have mattered later, so this is close to an absolute rule, not
+  // a judgement call that fades when the partner looks safe. (It was gated by
+  // "partner nearly out or behind the landlord on cards" before; that let a
+  // farmer overtake a comfortable partner for a marginal shed, which is
+  // exactly the "fighting your own team" mistake partnerAware exists to rule
+  // out.)
   if (view.trick && skill.partnerAware && partner && view.trick.leader === partner.seat) {
-    const landlordCards = opponents[0]?.cards ?? 17;
-    const partnerNearlyOut = partner.cards <= 2;
-    if (partnerNearlyOut || partner.cards <= landlordCards) score -= W.partnerLead;
+    score -= W.partnerLead;
   }
 
   // As a farmer, taking the trick back from the landlord (not from your own
   // partner) is worth a little extra: it denies the landlord the lead, which
-  // is the one seat both farmers actually want to keep away from it.
+  // is the one seat both farmers actually want to keep away from it. The
+  // farmer who answers the landlord's own lead first — a fixed seat, turn
+  // order being landlord then each farmer in turn — gets an extra push to beat
+  // it comfortably rather than by the smallest margin: a bare-minimum beat
+  // leaves the landlord's very next card able to retake it, while a firmer
+  // answer actually costs them tempo. The second farmer, who by then is only
+  // ever facing their own partner's play or a pass, is covered by the rule
+  // above instead.
   if (view.trick && skill.partnerAware && me.role === 'farmer' && view.trick.leader !== partner?.seat && !move.bomb) {
     score += W.chokeOpponent * 0.35;
+    const landlord = opponents.find((p) => p.role === 'landlord');
+    if (landlord && view.trick.leader === landlord.seat && seat === (landlord.seat + 1) % 3) {
+      score += move.rank * 0.9;
+    }
   }
 
   // A farmer down to one or two cards is much likelier to hold a stray single
@@ -687,6 +767,17 @@ function scoreMove(view, skill, move, unseen) {
   if (!view.trick && me.role === 'landlord' && opponentLow <= 2 && !move.bomb) {
     if (move.size >= 2) score += W.chokeOpponent * 0.5;
     else score -= W.chokeOpponent * 0.4;
+  }
+
+  // Feeding a partner who is down to their last one or two cards: lead your
+  // cheapest single or pair rather than whatever sheds the most cost. A big
+  // lead risks getting bombed or topped and wastes a card that could have
+  // stayed in reserve; a small one is likely to go unanswered or answered
+  // small, keeping the trick cheap and the initiative cycling back around to
+  // the partner quickly.
+  if (!view.trick && skill.partnerAware && partner && partner.cards <= 2 && !move.bomb
+    && (move.type === Combo.SINGLE || move.type === Combo.PAIR)) {
+    score -= move.rank * 1.4;
   }
 
   // Between two leads that shed the same amount and cost the same shape, take
