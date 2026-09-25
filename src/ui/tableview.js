@@ -88,7 +88,11 @@ export class TableView {
     n.leftSeat = this.buildSeat('left');
     n.rightSeat = this.buildSeat('right');
     n.bottomRow = el('div.bottom-cards__row');
-    n.bottom = el('div.bottom-cards', el('span.bottom-cards__label', 'Landlord’s three'), n.bottomRow);
+    // Pinned under the HUD, small: the caption cost a line of height a card
+    // strip this size can't spare, so it moved to an aria-label instead of a
+    // visible line — screen readers still get "Landlord's three", sighted
+    // players get the cards themselves, which is what the caption described.
+    n.bottom = el('div.bottom-cards', { 'aria-label': 'Landlord’s three' }, n.bottomRow);
     // One landing area per seat, laid out where that player sits. A pile in the
     // middle with a caption underneath made you read to find out who had moved;
     // this way the answer is where the cards are.
@@ -389,6 +393,12 @@ export class TableView {
 
     for (let slot = 0; slot < N; slot++) {
       const sortedIdx = sortedIndexById.get(shuffledHand[slot].id);
+      // Every flyer starts this leg from the identical gather point and
+      // diverges outward, so from the very first frame the correct paint
+      // order is the *destination* (sorted) index, not the launch order
+      // still baked into DOM order — left unset, a card moving left could
+      // paint over its new left neighbour and bury that neighbour's index.
+      selfFlyers[slot].style.zIndex = String(sortedIdx);
       const { tx, ty } = offsetOf(handSlots[sortedIdx]);
       flyTo(selfFlyers[slot], { fx: gather.tx, fy: gather.ty, fs: selfScale, tx, ty, ts: selfScale, dur: 300 });
     }

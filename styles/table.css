@@ -103,14 +103,20 @@
 }
 .seat__backs .card:first-child { margin-left: 0; }
 
+/* Pinned to the very top, centred, directly under the HUD — small enough
+   that it costs the felt almost nothing, which is what leaves the middle
+   band free for the play zones below. The caption is gone (an aria-label on
+   the container says it instead): at this height a text line was a third of
+   the block's own size. */
 .bottom-cards {
-  position: absolute; top: clamp(6px, 2vh, 18px); left: 50%; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center;
 }
-.bottom-cards__label { font-size: var(--t-label); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-tertiary); }
-.bottom-cards__row { display: flex; gap: 4px; }
-/* Landlord's three: bold style, same small size as a played card. */
-.bottom-cards .card { --card-w: clamp(40px, 11.5vh, 82px); }
+.bottom-cards__row { display: flex; gap: 3px; }
+/* Height = card-w * 1.4, so 8.6vh of width is ~12vh of height — the 11-13%
+   of viewport height the cards should read at, with a floor (28.6px wide,
+   40px tall) so it never drops below readable even at 844x330. */
+.bottom-cards .card { --card-w: clamp(28.6px, 8.6vh, 62px); }
 
 /* --- the trick, one landing area per seat ---------------------------------
    Cards sit in front of whoever played them, so position answers "who" and the
@@ -124,7 +130,11 @@
 }
 .play--left { left: 24%; top: 44%; transform: translate(-50%, -50%); }
 .play--right { left: 76%; top: 44%; transform: translate(-50%, -50%); }
-.play--self { left: 50%; top: 68%; transform: translate(-50%, -50%); }
+/* Landlord's three moved to a thin strip under the HUD (see .bottom-cards)
+   specifically to free this band: self's own play now sits in the middle of
+   the felt, clear of both it and the floating controls pill below, instead
+   of fighting either for the same few rows. */
+.play--self { left: 50%; top: 54%; transform: translate(-50%, -50%); }
 
 .play__cards { display: flex; justify-content: center; }
 .play__cards .card {
@@ -179,8 +189,13 @@
   from { opacity: 0; transform: translate(40%, -60%) scale(0.86) rotate(6deg); }
   to { opacity: 1; transform: none; }
 }
+/* 15%, not the 70% this started at: self's play zone now shares the felt's
+   middle band with the floating controls pill below it, and a card sliding
+   in from most of its own height further down swept straight through that
+   pill's space on the way — the entrance still reads as "from the hand",
+   just without the overshoot. */
 @keyframes play-in-self {
-  from { opacity: 0; transform: translateY(70%) scale(0.88); }
+  from { opacity: 0; transform: translateY(15%) scale(0.88); }
   to { opacity: 1; transform: none; }
 }
 
@@ -375,8 +390,9 @@
   .play { min-height: clamp(40px, 9vh, 80px); }
   .play--left { left: 27%; top: 54%; }
   .play--right { left: 73%; top: 54%; }
-  /* Pulled up from the default 68%: the floating controls pill now lives in
-     this same lower band of the felt (spec 2), so self's play zone needs to
-     clear it rather than the seats' backs. */
-  .play--self { top: 48%; }
+  /* Tighter than the default 54%: at these heights the gap between the
+     (now tiny) landlord's three and the floating controls pill is narrow
+     enough that self's own card needs to sit nearer the top of it to clear
+     both, at 844x330 especially. */
+  .play--self { top: 45%; }
 }
