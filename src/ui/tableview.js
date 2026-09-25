@@ -15,6 +15,35 @@ import { beats, classify, comboName, describeCombo } from '../games/doudizhu/rul
 import { findHint, legalPlays } from '../games/doudizhu/moves.js';
 import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
+import { enableTableFullscreen } from './fullscreen.js';
+
+// Every card on this table uses the "bold" style (spec: cardElement(card, {
+// style: 'bold' })) — Dou Di Zhu is the only table built on it so far.
+const BOLD = { style: 'bold' };
+
+/**
+ * Run one leg of a deal flyer's flight: write the ten "from"/"to" custom
+ * properties the shared cg-fly keyframe (table.css) reads, then restart the
+ * animation. Every position is a plain number of pixels off the dealer
+ * stack's own measured centre (dealIn's one measurement pass) — never vw/vh,
+ * never re-measured. Only transform and opacity ever move.
+ * @param {HTMLElement} card
+ * @param {{fx?: number, fy?: number, fr?: number, fs?: number, fo?: number,
+ *          tx?: number, ty?: number, tr?: number, ts?: number, to?: number,
+ *          dur: number}} p
+ */
+function flyTo(card, p) {
+  const set = (name, value, unit = '') => card.style.setProperty(name, `${value ?? 0}${unit}`);
+  set('--fx', p.fx, 'px'); set('--fy', p.fy, 'px'); set('--fr', p.fr, 'deg');
+  set('--fs', p.fs ?? 1); set('--fo', p.fo ?? 1);
+  set('--tx', p.tx, 'px'); set('--ty', p.ty, 'px'); set('--tr', p.tr, 'deg');
+  set('--ts', p.ts ?? 1); set('--to', p.to ?? 1);
+  // Restart even if a previous cg-fly is still running on this element (the
+  // opponent/self flyers each play several legs back to back).
+  card.style.animation = 'none';
+  void card.offsetWidth;
+  card.style.animation = `cg-fly ${p.dur}ms var(--ease) forwards`;
+}
 
 export class TableView {
   /**
@@ -66,20 +95,34 @@ export class TableView {
     const playZone = (slot) => el(`div.play.play--${slot}`, el('div.play__cards'), el('span.play__name'));
     n.plays = { left: playZone('left'), right: playZone('right'), self: playZone('self') };
     n.bidPanel = el('div.bid-panel', { hidden: true });
-    n.felt = el('div.felt', n.leftSeat.wrap, n.rightSeat.wrap, n.bottom,
-      n.plays.left, n.plays.right, n.plays.self, n.bidPanel);
 
-    n.handInner = el('div.hand__inner');
-    n.hand = el('div.hand', n.handInner);
+    // Controls float over the felt, just above the hand, the way the
+    // reference floats its Fight/Skip buttons — a row of its own under the
+    // hand is exactly the height that stops the fan being big enough to read.
     n.comboLabel = el('span.controls__you', '');
     n.hintBtn = el('button.btn', { type: 'button', onclick: () => this.showHint() }, 'Hint');
     n.passBtn = el('button.btn', { type: 'button', onclick: () => this.handlers.onPass?.() }, 'Pass');
     n.playBtn = el('button.btn.btn--primary', { type: 'button', onclick: () => this.playSelection() }, 'Play');
     n.role = el('span.controls__you', '');
     n.controls = el('div.controls', n.role, n.hintBtn, n.passBtn, n.playBtn, n.comboLabel);
-    n.dock = el('div.dock', n.hand, n.controls);
+
+    n.felt = el('div.felt', n.leftSeat.wrap, n.rightSeat.wrap, n.bottom,
+      n.plays.left, n.plays.right, n.plays.self, n.bidPanel, n.controls);
+
+    n.handInner = el('div.hand__inner');
+    n.hand = el('div.hand', n.handInner);
+    n.dock = el('div.dock', n.hand);
 
     n.table = el('div.table', hud, n.felt, n.dock);
+    // The hand deliberately runs 18% off the bottom edge (spec 2), and a card
+    // is a <button>: focusing one that is partly outside .table's own
+    // overflow:hidden box makes the browser auto-scroll .table to reveal it,
+    // which shunts the whole HUD and both seats upward. .table was never
+    // meant to scroll at all, so any scroll it picks up snaps straight back.
+    n.table.addEventListener('scroll', () => {
+      n.table.scrollTop = 0;
+      n.table.scrollLeft = 0;
+    });
     this.root.append(
       n.table,
       el('div.rotate-gate',
@@ -90,6 +133,7 @@ export class TableView {
         ),
       ),
     );
+    this.teardownFullscreen = enableTableFullscreen(n.table, hud);
   }
 
   buildSeat(side) {
@@ -161,97 +205,219 @@ export class TableView {
   }
 
   /**
-   * Shuffle the deck and deal it out, before a hand starts.
+   * Shuffle the deck and deal it out, before a hand starts. Presentation
+   * only — the engine has already dealt; `this.view` already holds the real
+   * final state (renderHand/renderSeats/renderBottom/renderBidding already
+   * built the real DOM for it, in build()'s update() call that ran just
+   * before this). dealIn() hides that real DOM behind `is-dealing-*` and
+   * plays flyers over it, then hands over.
    *
-   * Nine cards rather than fifty-four: it reads as dealing without making
-   * anybody wait for it, and nine nodes is nothing next to the table it is
-   * standing in front of. Everything moves on transform and opacity only, so it
-   * stays on the compositor and costs no layout.
+   * Sequence (spec 3): a face-down stack spreads and squares up; 51 cards
+   * leave it one at a time, round-robin (left, right, you); your 17th lands,
+   * the hand holds, gathers to its centre and re-spreads sorted; the last 3
+   * slide to the landlord's three; the bid panel appears. ~3.0-4.5s total.
    *
-   * A card is never destroyed on screen: `deal-out` lands at full opacity, at a
-   * destination read from the real seats and hand rather than guessed, and the
-   * real cards there only go visible once their seat's last flyer has landed —
-   * on the same frame, so the felt is never briefly empty and nothing pops in
-   * out of nowhere.
+   * A flyer is never removed while the real card it stands for is still
+   * hidden: an opponent's back or a landlord's-three card is revealed and
+   * its flyer removed in the same synchronous step; the hand's 17 flyers
+   * stand in for the real hand the whole time and are only swapped out, all
+   * at once, once the real hand (already built, already sorted) is unhidden
+   * — which happens in the same synchronous step as removing them, so nothing
+   * is ever visibly missing for a frame.
+   *
+   * Every position used below is measured exactly once, right after the
+   * flourish, from the real (hidden but laid-out) destinations — never
+   * guessed, never re-measured mid-flight.
+   *
+   * A tap/click anywhere on the table skips straight to the end state: every
+   * `await` below is raced against a shared "skipped" promise that a listener
+   * resolves on first pointerdown, so no step outlives a skip by more than
+   * the current microtask.
    */
   async dealIn() {
     if (!this.animationsOn()) return;
-    const order = ['left', 'right', 'self'];
-    const hideClass = { left: 'is-dealing-left', right: 'is-dealing-right', self: 'is-dealing-self' };
+    const view = this.view;
     const table = this.nodes.table;
-    table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bid');
+    const felt = this.nodes.felt;
+    const N = view.you.hand.length; // 17, pre-bid — the round-robin's per-seat count
+
+    table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+
+    let skipped = false;
+    let resolveSkip;
+    const skipPromise = new Promise((resolve) => { resolveSkip = resolve; });
+    const onTap = () => { skipped = true; resolveSkip(); };
+    table.addEventListener('pointerdown', onTap, { capture: true });
+    // Every wait in this method goes through here: a skip resolves it within
+    // the same microtask, so whichever `await` is current returns immediately.
+    const race = (ms) => Promise.race([wait(ms), skipPromise]);
+    this.dealSkip = { cancel: () => { if (!skipped) onTap(); } };
 
     const dealer = el('div.dealer');
-    const flyers = { left: [], right: [], self: [] };
-    const lastIndex = {};
-    for (let i = 0; i < 9; i++) {
-      const slot = order[i % 3];
-      lastIndex[slot] = i;
-      const card = cardElement(null, { faceDown: true });
-      card.classList.add('dealer__card');
-      card.style.setProperty('--i', String(i));
-      card.style.setProperty('--sx', i % 2 ? '26px' : '-26px');
-      card.style.setProperty('--sr', i % 2 ? '7deg' : '-7deg');
-      dealer.append(card);
-      flyers[slot].push(card);
-    }
-    this.nodes.felt.append(dealer);
+    felt.append(dealer);
     this.dealer = dealer;
 
-    dealer.classList.add('is-shuffling');
-    await wait(560);
-    if (!dealer.isConnected) return;
+    const finish = () => {
+      table.removeEventListener('pointerdown', onTap, { capture: true });
+      dealer.remove();
+      if (this.dealer === dealer) this.dealer = null;
+      table.classList.remove('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+      // Belt and suspenders: a fire-and-forget landing callback (below) can
+      // still fire after this runs. Clearing the inline opacity it set is
+      // harmless either way, since the class that hid these is already gone.
+      for (const child of [...this.nodes.leftSeat.backs.children, ...this.nodes.rightSeat.backs.children, ...this.nodes.bottomRow.children]) {
+        child.style.opacity = '';
+      }
+    };
 
-    // Measured once, right here, never inside the flight: is-dealing-* keeps
-    // these at opacity 0 but they are laid out all along, so their rects are
-    // real. Everything below is transform/opacity math from that one pass.
+    // --- phase 0: a face-down stack spreads into a fan, then squares up ---
+    const FAN_N = 7;
+    const flourish = [];
+    for (let i = 0; i < FAN_N; i++) {
+      const card = cardElement(null, { faceDown: true, style: 'bold' });
+      card.classList.add('dealer__card');
+      dealer.append(card);
+      flourish.push(card);
+    }
+    const mid = (FAN_N - 1) / 2;
+    flourish.forEach((card, i) => {
+      const spread = i - mid;
+      flyTo(card, { tx: spread * 15, ty: -Math.abs(spread) * 4, tr: spread * 6, dur: 350 });
+    });
+    await race(350);
+    if (skipped) return finish();
+    flourish.forEach((card, i) => {
+      const spread = i - mid;
+      flyTo(card, { fx: spread * 15, fy: -Math.abs(spread) * 4, fr: spread * 6, dur: 250 });
+    });
+    await race(250);
+    if (skipped) return finish();
+    // One card stays as the visible stack the rest of the deal flies out of.
+    for (const card of flourish.slice(1)) card.remove();
+    const stack = flourish[0];
+
+    // --- measure every destination once, before any flight starts ---------
     const anchor = dealer.getBoundingClientRect();
     const anchorX = anchor.left + anchor.width / 2;
-    const anchorY = anchor.top + anchor.height * 0.46;
-    const flyerWidth = flyers.left[0].getBoundingClientRect().width;
-    const containers = { left: this.nodes.leftSeat.backs, right: this.nodes.rightSeat.backs, self: this.nodes.handInner };
-    for (const slot of order) {
-      const container = containers[slot];
-      const rect = container.getBoundingClientRect();
-      const cardRect = (container.querySelector('.card') ?? container).getBoundingClientRect();
-      const dx = rect.left + rect.width / 2 - anchorX;
-      const dy = rect.top + rect.height / 2 - anchorY;
-      const scale = (cardRect.width || flyerWidth) / flyerWidth;
-      for (const card of flyers[slot]) {
-        card.style.setProperty('--dx', `${dx}px`);
-        card.style.setProperty('--dy', `${dy}px`);
-        card.style.setProperty('--ds', scale.toFixed(3));
-      }
-    }
+    const anchorY = anchor.top + anchor.height * 0.16; // matches .dealer__card { top: 16% }
+    const deckCardWidth = stack.getBoundingClientRect().width;
+    const offsetOf = (rect) => ({
+      tx: rect.left + rect.width / 2 - anchorX,
+      ty: rect.top + rect.height / 2 - anchorY,
+    });
 
-    dealer.classList.remove('is-shuffling');
-    dealer.classList.add('is-flying');
+    const handCards = [...this.nodes.handInner.children]; // real, hidden, already sorted left-to-right
+    const handSlots = handCards.map((c) => c.getBoundingClientRect());
+    const handCardWidth = (handCards[0] ?? this.nodes.handInner).getBoundingClientRect().width || deckCardWidth;
+    const sortedHand = sortCards(view.you.hand);
+    const sortedIndexById = new Map(sortedHand.map((c, i) => [c.id, i]));
+    const shuffledHand = [...view.you.hand].sort(() => Math.random() - 0.5);
 
-    // 45ms stagger, 260ms flight (both inside the spec's 45-60/260-320 range):
-    // the round-robin order means each seat's *last* card lands a beat after
-    // the one before it, so the reveals land in deal order for free.
-    const STAGGER = 45;
-    const FLIGHT = 260;
-    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-    const revealSeat = async (slot) => {
-      await wait(lastIndex[slot] * STAGGER + FLIGHT);
-      if (!dealer.isConnected) return;
-      table.classList.remove(hideClass[slot]);
-      // Hold the flyers one more frame so the browser paints the real cards
-      // and the landed flyers together before the flyers disappear.
-      await nextFrame();
-      for (const card of flyers[slot]) card.remove();
+    const leftChildren = [...this.nodes.leftSeat.backs.children];
+    const rightChildren = [...this.nodes.rightSeat.backs.children];
+    const leftRects = leftChildren.map((c) => c.getBoundingClientRect());
+    const rightRects = rightChildren.map((c) => c.getBoundingClientRect());
+    const backCardWidth = (leftChildren[0] ?? this.nodes.leftSeat.backs).getBoundingClientRect().width || deckCardWidth;
+
+    const bottomChildren = [...this.nodes.bottomRow.children];
+    const bottomRects = bottomChildren.map((c) => c.getBoundingClientRect());
+    const bottomCardWidth = (bottomChildren[0] ?? this.nodes.bottomRow).getBoundingClientRect().width || deckCardWidth;
+
+    // --- phase 2: 51 flights, round-robin: left, right, you ---------------
+    const STAGGER = 38;
+    const FLIGHT = 300;
+    const selfScale = handCardWidth / deckCardWidth;
+    const backScale = backCardWidth / deckCardWidth;
+    const selfFlyers = new Array(N);
+    let leftCount = 0;
+    let rightCount = 0;
+    let selfCount = 0;
+
+    const launchOpponent = (rects, children, cap, count) => {
+      const idx = Math.min(count, cap - 1);
+      const flyer = cardElement(null, { faceDown: true, style: 'bold' });
+      flyer.classList.add('dealer__card');
+      dealer.append(flyer);
+      const { tx, ty } = offsetOf(rects[idx]);
+      flyTo(flyer, { tx, ty, ts: backScale, dur: FLIGHT });
+      // Fire-and-forget: reveals that seat's next back (the visible count
+      // rises one at a time, as each flyer lands, not all together) and
+      // removes the flyer in the same step — its target is visible before
+      // it disappears, never after.
+      (async () => {
+        await race(FLIGHT);
+        if (count < cap) children[count].style.opacity = '1';
+        flyer.remove();
+      })();
     };
-    await Promise.all(order.map(revealSeat));
-    if (!dealer.isConnected) return;
-    dealer.remove();
-    this.dealer = null;
 
-    // The bid panel has nothing to hand over to and no flight of its own, so
-    // it needs no further wait: dealer.remove() above already only runs once
-    // every seat, including the hand, is on the felt, which is all "arrives
-    // last, after the hand is visible" asks for.
-    table.classList.remove('is-dealing-bid');
+    const order = [];
+    for (let round = 0; round < N; round++) order.push('left', 'right', 'self');
+
+    for (let n = 0; n < order.length; n++) {
+      if (skipped) break;
+      const seat = order[n];
+      if (seat === 'left') { launchOpponent(leftRects, leftChildren, leftChildren.length, leftCount); leftCount++; }
+      else if (seat === 'right') { launchOpponent(rightRects, rightChildren, rightChildren.length, rightCount); rightCount++; }
+      else {
+        const slot = selfCount; selfCount++;
+        const card = shuffledHand[slot];
+        const flyer = cardElement(card, { style: 'bold' });
+        flyer.classList.add('dealer__card');
+        dealer.append(flyer);
+        selfFlyers[slot] = flyer;
+        const { tx, ty } = offsetOf(handSlots[slot]); // next free slot, left to right
+        flyTo(flyer, { fr: -12, tx, ty, tr: 0, ts: selfScale, dur: FLIGHT });
+      }
+      if (n < order.length - 1) await race(STAGGER);
+    }
+    if (!skipped) await race(FLIGHT); // let the very last flight (your 17th) land
+    if (skipped) return finish();
+
+    // --- phase 3: hold, then gather to the row's centre, then sorted ------
+    await race(200);
+    if (skipped) return finish();
+
+    const handRow = this.nodes.handInner.getBoundingClientRect();
+    const gather = offsetOf({ left: handRow.left, width: handRow.width, top: handRow.top, height: handRow.height });
+    for (let slot = 0; slot < N; slot++) {
+      const { tx: fx, ty: fy } = offsetOf(handSlots[slot]);
+      flyTo(selfFlyers[slot], { fx, fy, fs: selfScale, tx: gather.tx, ty: gather.ty, ts: selfScale, dur: 250 });
+    }
+    await race(250);
+    if (skipped) return finish();
+
+    for (let slot = 0; slot < N; slot++) {
+      const sortedIdx = sortedIndexById.get(shuffledHand[slot].id);
+      const { tx, ty } = offsetOf(handSlots[sortedIdx]);
+      flyTo(selfFlyers[slot], { fx: gather.tx, fy: gather.ty, fs: selfScale, tx, ty, ts: selfScale, dur: 300 });
+    }
+    await race(300);
+    if (skipped) return finish();
+
+    // --- phase 4: the last 3 cards slide to the landlord's three ----------
+    stack.remove(); // the deck is now empty — nothing left to show a stack of
+    const BOTTOM_STAGGER = 60;
+    const BOTTOM_FLIGHT = 300;
+    for (let i = 0; i < bottomChildren.length; i++) {
+      if (skipped) break;
+      const flyer = cardElement(null, { faceDown: true, style: 'bold' });
+      flyer.classList.add('dealer__card');
+      dealer.append(flyer);
+      const { tx, ty } = offsetOf(bottomRects[i]);
+      flyTo(flyer, { tx, ty, ts: bottomCardWidth / deckCardWidth, dur: BOTTOM_FLIGHT });
+      const revealIndex = i;
+      (async () => {
+        await race(BOTTOM_FLIGHT);
+        bottomChildren[revealIndex].style.opacity = '1';
+        flyer.remove();
+      })();
+      if (i < bottomChildren.length - 1) await race(BOTTOM_STAGGER);
+    }
+    if (!skipped) await race(BOTTOM_FLIGHT);
+
+    // --- done: reveal everything, remove every flyer, in one step ---------
+    finish();
   }
 
   clearSpeech() {
@@ -295,7 +461,7 @@ export class TableView {
       // tearing down a dozen of them on every update.
       const shown = Math.min(player.cards, 12);
       while (node.backs.childElementCount > shown) node.backs.lastElementChild.remove();
-      while (node.backs.childElementCount < shown) node.backs.append(cardElement(null, { faceDown: true }));
+      while (node.backs.childElementCount < shown) node.backs.append(cardElement(null, { faceDown: true, ...BOLD }));
     }
   }
 
@@ -306,7 +472,7 @@ export class TableView {
     this.bottomSignature = signature;
     clear(this.nodes.bottomRow);
     for (const card of view.bottom ?? []) {
-      this.nodes.bottomRow.append(cardElement(card, { faceDown: !card }));
+      this.nodes.bottomRow.append(cardElement(card, { faceDown: !card, ...BOLD }));
     }
   }
 
@@ -364,7 +530,7 @@ export class TableView {
       cards.append(el('span.play__pass', 'Pass'));
     } else {
       sortCards(entry.cards).forEach((card, index) => {
-        const node = cardElement(card);
+        const node = cardElement(card, BOLD);
         node.style.setProperty('--i', String(index));
         cards.append(node);
       });
@@ -431,6 +597,7 @@ export class TableView {
       [...this.hinted].sort().join(','),
       this.stuck ? 'stuck' : '',
       this.root.clientWidth,
+      this.root.clientHeight, // card height is vh-driven now, not just vw
     ].join('|');
     if (signature === this.handSignature) return;
     this.handSignature = signature;
@@ -439,15 +606,17 @@ export class TableView {
     this.nodes.hand.classList.toggle('is-stuck', !!this.stuck);
     clear(inner);
     const width = this.cardWidth();
-    const available = Math.max(240, this.root.clientWidth - 40);
+    // The fan spans up to ~94% of the viewport width; overlap never exceeds
+    // half a card, but tightens to whatever actually fits a full 20-card hand.
+    const available = this.root.clientWidth * 0.94;
     const step = hand.length > 1
-      ? Math.min(width * 0.62, (available - width) / (hand.length - 1))
+      ? Math.min(width * 0.5, (available - width) / (hand.length - 1))
       : 0;
     inner.style.width = `${width + step * Math.max(0, hand.length - 1)}px`;
     inner.style.setProperty('--step', `${step}px`);
 
     hand.forEach((card, index) => {
-      const node = cardElement(card, { selectable: true });
+      const node = cardElement(card, { selectable: true, ...BOLD });
       node.style.setProperty('--i', String(index));
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.classList.toggle('is-hinted', this.hinted.has(card.id));
@@ -461,8 +630,10 @@ export class TableView {
   cardWidth() {
     const probe = this.nodes.handInner.querySelector('.card');
     if (probe) return probe.getBoundingClientRect().width || 70;
-    const vw = this.root.clientWidth || 1024;
-    return Math.min(82, Math.max(44, vw * 0.074));
+    // Mirrors .hand .card's --card-w clamp in table.css: a card height of at
+    // least 28% of the viewport at 390px tall, 26% at 720px, width = height/1.4.
+    const vh = this.root.clientHeight || 390;
+    return Math.min(148, Math.max(72, vh * 0.205));
   }
 
   toggle(cardId) {
@@ -492,15 +663,18 @@ export class TableView {
   renderControls() {
     const view = this.view;
     const n = this.nodes;
+    // The bid panel already owns the felt during bidding — Hint/Pass/Play have
+    // nothing to do yet, and floating both over a short felt is how they
+    // ended up overlapping.
+    n.controls.classList.toggle('is-hidden', view.phase === Phase.BIDDING);
+    if (view.phase === Phase.BIDDING) return;
     const yours = this.isYourPlayTurn();
     const cards = this.selectionCards();
     const combo = cards.length ? classify(cards) : null;
     const current = view.trick?.combo ?? null;
     const legal = !!combo && beats(combo, current);
 
-    n.role.textContent = view.landlord < 0
-      ? 'Bidding'
-      : view.you.role === 'landlord' ? 'You are the landlord' : 'You are a farmer';
+    n.role.textContent = view.you.role === 'landlord' ? 'You are the landlord' : 'You are a farmer';
     // Nothing in the hand answers what is on the table: the fan greys out and
     // Pass is the only thing left to press, which says it without a sentence.
     n.playBtn.disabled = !yours || !legal || this.stuck;
@@ -550,8 +724,10 @@ export class TableView {
   }
 
   destroy() {
+    this.dealSkip?.cancel();
     this.dealer?.remove();
     this.dealer = null;
+    this.teardownFullscreen?.();
     clear(this.root);
   }
 }
