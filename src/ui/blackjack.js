@@ -44,9 +44,9 @@ const RULES_TEXT = {
     'A single deck, freshly shuffled every round.',
     'An ace is worth 11 or 10 with two cards, 10 or 1 with three, and always 1 with four or five.',
     'Ban Ban — two aces — pays 3:1. Ban Luck — an ace with a ten-value card — pays 2:1. Both are checked the instant the first two cards land, on both sides of the table.',
-    'If the dealer holds a special, the round ends at once: you lose at that multiple unless you hold an equal or better special of your own (ties push; Ban Ban beats Ban Luck).',
+    'Run comes first: if your opening two cards total exactly 15 (a special is never 15, so the two never clash), you may run instead of playing it out — an instant push, bet back — before the dealer\'s special is even revealed. Decline by hitting or standing and the dealer\'s special, if any, is then applied as below.',
+    'If the dealer holds a special and you did not run, the round ends at once: you lose at that multiple unless you hold an equal or better special of your own (ties push; Ban Ban beats Ban Luck).',
     '777 (three sevens) pays 7:1. Five Dragon (five cards totalling 21 or less) pays 2:1, or 3:1 on exactly 21. Both win the instant they are made.',
-    'Run: on your opening two cards only, a total of exactly 15 may be run instead of played — an instant push, bet back, and the dealer does not play that hand out.',
     'You need at least 16 to stand. A bust loses outright, even if the dealer goes on to bust too.',
     'The dealer draws below 16 and stands from 16. A dealer five-card hand of 21 or less beats any hand without a special of its own, at 2:1.',
     'No doubling, splitting, surrender or insurance. Ties push.',
@@ -54,8 +54,10 @@ const RULES_TEXT = {
   'malaysian-dealer': [
     'You deal against four bots, each with their own bet within the table\'s min-max. Your bankroll is the house.',
     'Two cards each, round-robin: the bots, then you, twice. The bots\' cards are dealt face down — you cannot see them until you open a hand.',
-    'Specials are checked the instant the cards land. A bot holding Ban Ban or Ban Luck is paid at once (3:1 / 2:1). If you hold one instead, the round ends immediately: every bot pays you at that multiple, unless it holds an equal or better special of its own, which pushes.',
-    'Bots then act in turn: Run on an opening 15, Hit, or Stand at 16 or more, up to five cards. A bot\'s own 777 or Five Dragon (five cards, 21 or less) pays out the instant it is made, at 7:1 or 2:1 (3:1 on exactly 21).',
+    'Specials are checked the instant the cards land. A bot holding Ban Ban or Ban Luck is paid at once (3:1 / 2:1).',
+    'Run comes first: any bot whose opening two cards total exactly 15 decides Run right away — an instant push — before your own special, if you hold one, is even revealed. A bot that runs is untouched by your special.',
+    'If you hold a special and did not have it pre-empted by a bot\'s run, the round ends immediately: every bot still in the round (i.e. that did not run) pays you at that multiple, unless it holds an equal or better special of its own, which pushes.',
+    'Bots that did not run and were not settled by your special then act in turn: Hit or Stand at 16 or more, up to five cards. A bot\'s own 777 or Five Dragon (five cards, 21 or less) pays out the instant it is made, at 7:1 or 2:1 (3:1 on exactly 21).',
     'A bot bust is not revealed — its turn just ends, face down, waiting for you to open it.',
     'Your turn: hit until at least 16 (never below), up to five cards. Once at 16 or more, tap any unresolved bot to open it — its cards flip face up and it settles against your total at that moment. You may keep drawing between openings; a later draw only changes hands opened after it.',
     'If you reach five cards at 21 or less (your own Five Dragon) or three 7s (777), every still-unopened bot is settled at once, at 2:1 (3:1 on exactly 21) or 7:1.',
@@ -875,6 +877,366 @@ export class BlackjackGame {
 
   leave() {
     this.app.go('lobby', { gameId: 'blackjack', variant: this.variant });
+  }
+
+  // ===========================================================================
+  // Dealer seat: the human deals against four bots.
+  // ===========================================================================
+
+  dseatDeckRemaining() {
+    return this.dseatDeck ? this.dseatDeck.cards.length - this.dseatDeck.dealt : 0;
+  }
+
+  renderDealerTable() {
+    clear(this.root);
+    const n = {};
+    this.dnodes = n;
+
+    n.leaveBtn = el('button.back-link', { type: 'button', 'aria-label': 'Leave table', onclick: () => this.leave() }, '←');
+    n.bankrollPill = el('span.bj-hud__pill', el('small', 'Bankroll'), el('b', formatChips(this.app.profile.bankroll)));
+    n.deckPill = el('span.bj-hud__pill', el('small', 'Deck'), el('b', `${this.dseatDeckRemaining()} left`));
+    const hud = el('div.bj-hud',
+      n.leaveBtn,
+      el('span.bj-hud__title', `${this.table.name} · Malaysian (Ban Luck) · Dealer seat`),
+      el('div.bj-hud__spacer'),
+      n.deckPill, n.bankrollPill,
+      el('button.btn', { type: 'button', onclick: () => this.showRules() }, 'Rules'),
+    );
+
+    n.botSeats = [];
+    const botRow = el('div.bj-botrow');
+    MY.BOT_NAMES.forEach((name, i) => {
+      const nameEl = el('span.bj-botseat__name', name);
+      const betEl = el('span.bj-botseat__bet', '');
+      const cardsHost = el('div.bj-botseat__cards');
+      const countEl = el('span.bj-botseat__count', '');
+      const resultEl = el('div.bj-botseat__result', '');
+      const seat = el('button.bj-botseat', { type: 'button', disabled: true, onclick: () => this.onOpenBot(i) },
+        nameEl, betEl, cardsHost, countEl, resultEl);
+      n.botSeats.push({ seat, nameEl, betEl, cardsHost, countEl, resultEl });
+      botRow.append(seat);
+    });
+    n.botRow = botRow;
+
+    n.dealerLabel = el('span.bj-dealer__total', '');
+    n.dealerCards = el('div.bj-dealer__cards');
+    const dealer = el('div.bj-dealer',
+      el('div.bj-dealer__row', el('span.bj-dealer__name', 'You (dealer)'), n.dealerLabel),
+      n.dealerCards,
+    );
+
+    n.shoeIcon = el('div.bj-shoe', cardElement(null, { faceDown: true }));
+    n.bannerHost = el('div.bj-banner-host');
+    n.actions = el('div.bj-actions');
+
+    n.felt = el('div.bj-felt', n.shoeIcon, botRow, dealer, n.bannerHost);
+    n.table = el('div.bj-table', hud, n.felt, n.actions);
+
+    this.root.append(
+      n.table,
+      el('div.bj-rotate-gate',
+        el('div',
+          el('div.bj-rotate-gate__icon', '↻'),
+          el('h2', 'Turn your device'),
+          el('p', 'The table is dealt across. Landscape gives every seat room to breathe.'),
+        ),
+      ),
+    );
+    this.teardownFullscreen?.();
+    this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+
+    this.dseatShown = [false, false, false, false];
+    this.paintDealerSeatIdle();
+  }
+
+  paintDealerSeatHud() {
+    const n = this.dnodes;
+    n.deckPill.querySelector('b').textContent = `${this.dseatDeckRemaining()} left`;
+    n.bankrollPill.querySelector('b').textContent = formatChips(this.app.profile.bankroll);
+  }
+
+  paintDealerSeatIdle() {
+    const n = this.dnodes;
+    n.botSeats.forEach((s) => {
+      s.betEl.textContent = '';
+      clear(s.cardsHost);
+      s.countEl.textContent = '';
+      s.resultEl.textContent = '';
+      s.resultEl.className = 'bj-botseat__result';
+      s.seat.disabled = true;
+      s.seat.classList.remove('is-openable');
+    });
+    n.dealerLabel.textContent = '';
+    clear(n.dealerCards);
+    this.paintDealerSeatHud();
+  }
+
+  paintDealerActions() {
+    const n = this.dnodes;
+    clear(n.actions);
+    if (!this.dround || this.dealerSeatFinished) {
+      n.actions.append(el('button.btn.btn--primary', { type: 'button', onclick: () => this.dealDealerRound() }, 'Deal'));
+      return;
+    }
+    if (this.dround.phase === 'bots') {
+      n.actions.append(el('span.bj-hint', 'The bots are playing their hands…'));
+      return;
+    }
+    if (this.dround.phase === 'dealer') {
+      n.actions.append(
+        el('button.btn.btn--primary', { type: 'button', disabled: !MY.canDealerHit(this.dround), onclick: () => this.onDealerHit() }, 'Hit'),
+        el('span.bj-hint', 'Tap a player to open'),
+      );
+    }
+  }
+
+  dealerHandLabelDS() {
+    const t = malaysianTotal(this.dround.dealer.cards);
+    if (this.dround.dealer.special === 'banban') return 'Ban Ban';
+    if (this.dround.dealer.special === 'banluck') return 'Ban Luck';
+    return t.soft ? `Soft ${t.total}` : `${t.total}`;
+  }
+
+  paintBotSeatFaceDown(i, count) {
+    const s = this.dnodes.botSeats[i];
+    const bot = this.dround.bots[i];
+    s.betEl.textContent = formatChips(bot.bet);
+    clear(s.cardsHost);
+    s.cardsHost.append(cardElement(null, { faceDown: true }));
+    s.countEl.textContent = `×${count}`;
+    s.resultEl.textContent = '';
+    s.resultEl.className = 'bj-botseat__result';
+    s.seat.disabled = true;
+    s.seat.classList.remove('is-openable');
+    this.dseatShown[i] = false;
+  }
+
+  paintBotSeatOpened(i) {
+    const s = this.dnodes.botSeats[i];
+    const bot = this.dround.bots[i];
+    clear(s.cardsHost);
+    for (const card of bot.cards) s.cardsHost.append(cardElement(card));
+    s.countEl.textContent = '';
+    const cls = bot.payout > 0 ? 'is-win' : bot.payout < 0 ? 'is-lose' : 'is-push';
+    s.resultEl.className = `bj-botseat__result ${cls}`;
+    s.resultEl.textContent = `${dealerSeatResultLabel(bot)} ${bot.payout >= 0 ? '+' : '−'}${formatChips(Math.abs(bot.payout))}`;
+    s.seat.disabled = true;
+    s.seat.classList.remove('is-openable');
+    this.dseatShown[i] = true;
+  }
+
+  enableOpenableBotSeats() {
+    this.dround.bots.forEach((bot, i) => {
+      if (bot.opened) return;
+      const s = this.dnodes.botSeats[i];
+      const openable = MY.canOpenBot(this.dround, i);
+      s.seat.disabled = !openable;
+      s.seat.classList.toggle('is-openable', openable);
+    });
+  }
+
+  /** A single deck, freshly shuffled every round — the same rule the player
+   * seat's Malaysian table follows. Its own method (rather than inlined in
+   * dealDealerRound) so a test can substitute a stacked deck for a
+   * deterministic round the same way the player-seat tests already do via
+   * ctrl.deal. */
+  buildDealerSeatDeck() {
+    return createShoe(1, this.rng);
+  }
+
+  async dealDealerRound() {
+    this.dealerSeatFinished = false;
+    this.dseatDeck = this.buildDealerSeatDeck();
+    this.dround = MY.startDealerSeatRound({ deck: this.dseatDeck, table: this.table, rng: this.rng });
+    const n = this.dnodes;
+    n.dealerLabel.textContent = '';
+    clear(n.dealerCards);
+    this.dround.bots.forEach((_, i) => this.paintBotSeatFaceDown(i, 2));
+    this.paintDealerActions();
+    this.paintDealerSeatHud();
+    if (!this.animationsOn()) {
+      for (const card of this.dround.dealer.cards) n.dealerCards.append(cardElement(card));
+      n.dealerLabel.textContent = this.dealerHandLabelDS();
+    } else {
+      for (const card of this.dround.dealer.cards) {
+        const node = cardElement(card);
+        node.classList.add('bj-card-enter');
+        n.dealerCards.append(node);
+      }
+      n.dealerLabel.textContent = this.dealerHandLabelDS();
+      await wait(300);
+      if (this.stopped) return;
+    }
+
+    // Any bot already resolved at the deal — a special, or a Run decided
+    // ahead of the dealer's own special — gets revealed first.
+    for (let i = 0; i < 4; i++) {
+      if (!this.dround.bots[i].opened) continue;
+      await wait(400);
+      if (this.stopped) return;
+      this.paintBotSeatOpened(i);
+    }
+    if (this.stopped) return;
+
+    if (this.dround.settled) { this.finishDealerSeatRound(); return; }
+
+    await this.runBotTurns();
+    if (this.stopped) return;
+    if (this.dround.settled) { this.finishDealerSeatRound(); return; }
+    this.paintDealerActions();
+    this.enableOpenableBotSeats();
+  }
+
+  async runBotTurns() {
+    for (let i = 0; i < 4; i++) {
+      const bot = this.dround.bots[i];
+      if (bot.opened) continue; // already resolved at the deal
+      MY.playBotTurn(this.dround, i, this.dseatDeck, this.rng);
+      await this.animateBotTurn(i);
+      if (this.stopped) return;
+      this.paintDealerSeatHud();
+    }
+  }
+
+  async animateBotTurn(i) {
+    const bot = this.dround.bots[i];
+    const s = this.dnodes.botSeats[i];
+    let count = 2;
+    if (!this.animationsOn()) {
+      if (bot.opened) this.paintBotSeatOpened(i);
+      else s.countEl.textContent = `×${bot.cards.length}`;
+      return;
+    }
+    for (const action of bot.actions) {
+      await wait(600);
+      if (this.stopped) return;
+      if (action === 'hit') {
+        count += 1;
+        s.countEl.textContent = `×${count}`;
+        const back = s.cardsHost.firstElementChild;
+        if (back) {
+          back.classList.add('bj-card-enter');
+          back.addEventListener('animationend', () => back.classList.remove('bj-card-enter'), { once: true });
+        }
+      }
+    }
+    if (this.stopped) return;
+    if (bot.opened) this.paintBotSeatOpened(i); // ran, 777 or Five Dragon, paid on the spot
+    // A stand or a hidden bust stays face down — nothing more to show here;
+    // the count badge above already reflects the final card count.
+  }
+
+  async onDealerHit() {
+    if (!MY.canDealerHit(this.dround)) return;
+    MY.dealerHit(this.dround, this.dseatDeck);
+    const n = this.dnodes;
+    const card = this.dround.dealer.cards[this.dround.dealer.cards.length - 1];
+    const node = cardElement(card);
+    if (this.animationsOn()) node.classList.add('bj-card-enter');
+    n.dealerCards.append(node);
+    n.dealerLabel.textContent = this.dealerHandLabelDS();
+    this.paintDealerSeatHud();
+    if (this.dround.settled) {
+      // A bust, or a dealer 777/Five Dragon, just auto-settled every bot
+      // that was still unopened.
+      for (let i = 0; i < 4; i++) {
+        if (this.dseatShown[i]) continue;
+        await wait(this.animationsOn() ? 300 : 0);
+        if (this.stopped) return;
+        this.paintBotSeatOpened(i);
+      }
+      if (this.stopped) return;
+      this.finishDealerSeatRound();
+      return;
+    }
+    this.enableOpenableBotSeats();
+    this.paintDealerActions();
+  }
+
+  async onOpenBot(i) {
+    if (!MY.canOpenBot(this.dround, i)) return;
+    const s = this.dnodes.botSeats[i];
+    const bot = this.dround.bots[i];
+    s.seat.disabled = true;
+    s.seat.classList.remove('is-openable');
+    clear(s.cardsHost);
+    s.countEl.textContent = '';
+    const wraps = bot.cards.map(() => el('div.bj-flip', cardElement(null, { faceDown: true })));
+    wraps.forEach((w) => s.cardsHost.append(w));
+    if (this.animationsOn()) {
+      for (let c = 0; c < wraps.length; c++) {
+        if (c > 0) await wait(120);
+        if (this.stopped) return;
+        const wrap = wraps[c];
+        wrap.classList.add('is-flipping');
+        await wait(FLIP_MS / 2);
+        if (this.stopped) return;
+        clear(wrap);
+        wrap.append(cardElement(bot.cards[c]));
+        await wait(FLIP_MS / 2);
+        if (this.stopped) return;
+        wrap.classList.remove('is-flipping');
+      }
+    } else {
+      wraps.forEach((wrap, c) => { clear(wrap); wrap.append(cardElement(bot.cards[c])); });
+    }
+    MY.openBot(this.dround, i);
+    this.paintBotSeatOpened(i);
+    this.paintDealerSeatHud();
+    if (this.dround.settled) { this.finishDealerSeatRound(); return; }
+    this.enableOpenableBotSeats();
+  }
+
+  finishDealerSeatRound() {
+    const net = MY.dealerSeatNet(this.dround);
+    recordBlackjackResult(this.app.profile, 'blackjack', net);
+    this.dealerSeatFinished = true;
+    this.paintDealerSeatHud();
+    this.paintDealerActions();
+    this.showDealerSeatBanner(net);
+  }
+
+  /** Same technique as the player-seat's showBanner(): measure the real gap
+   * — here, between the bot row and the dealer's own hand — rather than
+   * trusting the felt's own centre to land in it. */
+  showDealerSeatBanner(net) {
+    const win = net > 0;
+    const push = net === 0;
+    const cls = win ? 'is-win' : push ? 'is-push' : 'is-loss';
+    const title = win ? 'You win' : push ? 'Push' : 'You lose';
+    const banner = el('div.bj-banner', { class: cls },
+      el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
+    );
+    const n = this.dnodes;
+    clear(n.bannerHost);
+    n.bannerHost.append(banner);
+    const feltRect = n.felt.getBoundingClientRect();
+    const topRect = n.botRow.getBoundingClientRect();
+    const bottomRect = n.dealerCards.getBoundingClientRect();
+    const safeTop = topRect.bottom + 3;
+    const safeBottom = bottomRect.top - 3;
+    const gapMid = (safeTop + safeBottom) / 2;
+    const top = Math.min(Math.max(gapMid - feltRect.top, 0), feltRect.height);
+    banner.style.top = `${top}px`;
+    requestAnimationFrame(() => banner.classList.add('is-on'));
+  }
+}
+
+/** A bot seat's short result label once opened — a bust says so, even
+ * though the engine settles it as a plain lose/push, since "Bust" is more
+ * informative than "Lose" for a hand that never got compared to a total. */
+function dealerSeatResultLabel(bot) {
+  if (bot.busted) return bot.result === 'push' ? 'Bust — push' : 'Bust';
+  switch (bot.result) {
+    case 'run': return 'Run — push';
+    case 'banban': return 'Ban Ban';
+    case 'banluck': return 'Ban Luck';
+    case '777': return '777';
+    case 'five-dragon': return 'Five Dragon';
+    case 'win': return 'Win';
+    case 'lose': return 'Lose';
+    case 'push': return 'Push';
+    default: return '';
   }
 }
 
