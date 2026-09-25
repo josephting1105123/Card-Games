@@ -909,27 +909,28 @@ export class BlackjackGame {
       const nameEl = el('span.bj-botseat__name', name);
       const betEl = el('span.bj-botseat__bet', '');
       const cardsHost = el('div.bj-botseat__cards');
-      const countEl = el('span.bj-botseat__count', '');
+      const totalEl = el('span.bj-botseat__total', '');
       const resultEl = el('div.bj-botseat__result', '');
       const seat = el('button.bj-botseat', { type: 'button', disabled: true, onclick: () => this.onOpenBot(i) },
-        nameEl, betEl, cardsHost, countEl, resultEl);
-      n.botSeats.push({ seat, nameEl, betEl, cardsHost, countEl, resultEl });
+        nameEl, betEl, cardsHost, totalEl, resultEl);
+      n.botSeats.push({ seat, nameEl, betEl, cardsHost, totalEl, resultEl });
       botRow.append(seat);
     });
     n.botRow = botRow;
 
     n.dealerLabel = el('span.bj-dealer__total', '');
     n.dealerCards = el('div.bj-dealer__cards');
-    const dealer = el('div.bj-dealer',
+    n.dealer = el('div.bj-dealer',
       el('div.bj-dealer__row', el('span.bj-dealer__name', 'You (dealer)'), n.dealerLabel),
       n.dealerCards,
     );
+    n.dealerRows = el('div.bj-dealerseat-rows', botRow, n.dealer);
 
     n.shoeIcon = el('div.bj-shoe', cardElement(null, { faceDown: true }));
     n.bannerHost = el('div.bj-banner-host');
     n.actions = el('div.bj-actions');
 
-    n.felt = el('div.bj-felt', n.shoeIcon, botRow, dealer, n.bannerHost);
+    n.felt = el('div.bj-felt', n.shoeIcon, n.dealerRows, n.bannerHost);
     n.table = el('div.bj-table', hud, n.felt, n.actions);
 
     this.root.append(
@@ -960,7 +961,7 @@ export class BlackjackGame {
     n.botSeats.forEach((s) => {
       s.betEl.textContent = '';
       clear(s.cardsHost);
-      s.countEl.textContent = '';
+      s.totalEl.textContent = '';
       s.resultEl.textContent = '';
       s.resultEl.className = 'bj-botseat__result';
       s.seat.disabled = true;
@@ -997,13 +998,16 @@ export class BlackjackGame {
     return t.soft ? `Soft ${t.total}` : `${t.total}`;
   }
 
+  /** count face-down backs, fanned the same overlapping way an opened hand
+   * is — one per card actually held, never a "×N" count next to a single
+   * icon, so a hidden hand reads the same shape as a revealed one. */
   paintBotSeatFaceDown(i, count) {
     const s = this.dnodes.botSeats[i];
     const bot = this.dround.bots[i];
     s.betEl.textContent = formatChips(bot.bet);
     clear(s.cardsHost);
-    s.cardsHost.append(cardElement(null, { faceDown: true }));
-    s.countEl.textContent = `×${count}`;
+    for (let c = 0; c < count; c++) s.cardsHost.append(cardElement(null, { faceDown: true }));
+    s.totalEl.textContent = '';
     s.resultEl.textContent = '';
     s.resultEl.className = 'bj-botseat__result';
     s.seat.disabled = true;
@@ -1016,7 +1020,7 @@ export class BlackjackGame {
     const bot = this.dround.bots[i];
     clear(s.cardsHost);
     for (const card of bot.cards) s.cardsHost.append(cardElement(card));
-    s.countEl.textContent = '';
+    s.totalEl.textContent = botTotalLabel(bot);
     const cls = bot.payout > 0 ? 'is-win' : bot.payout < 0 ? 'is-lose' : 'is-push';
     s.resultEl.className = `bj-botseat__result ${cls}`;
     s.resultEl.textContent = `${dealerSeatResultLabel(bot)} ${bot.payout >= 0 ? '+' : '−'}${formatChips(Math.abs(bot.payout))}`;
@@ -1049,6 +1053,7 @@ export class BlackjackGame {
     this.dseatDeck = this.buildDealerSeatDeck();
     this.dround = MY.startDealerSeatRound({ deck: this.dseatDeck, table: this.table, rng: this.rng });
     const n = this.dnodes;
+    clear(n.bannerHost); // the previous round's result must not outlive it
     n.dealerLabel.textContent = '';
     clear(n.dealerCards);
     this.dround.bots.forEach((_, i) => this.paintBotSeatFaceDown(i, 2));
@@ -1101,29 +1106,26 @@ export class BlackjackGame {
   async animateBotTurn(i) {
     const bot = this.dround.bots[i];
     const s = this.dnodes.botSeats[i];
-    let count = 2;
     if (!this.animationsOn()) {
       if (bot.opened) this.paintBotSeatOpened(i);
-      else s.countEl.textContent = `×${bot.cards.length}`;
+      else this.paintBotSeatFaceDown(i, bot.cards.length); // jump straight to the final fan
       return;
     }
     for (const action of bot.actions) {
       await wait(600);
       if (this.stopped) return;
       if (action === 'hit') {
-        count += 1;
-        s.countEl.textContent = `×${count}`;
-        const back = s.cardsHost.firstElementChild;
-        if (back) {
-          back.classList.add('bj-card-enter');
-          back.addEventListener('animationend', () => back.classList.remove('bj-card-enter'), { once: true });
-        }
+        // A real extra back joins the fan — matching count, not a text badge.
+        const back = cardElement(null, { faceDown: true });
+        back.classList.add('bj-card-enter');
+        s.cardsHost.append(back);
+        back.addEventListener('animationend', () => back.classList.remove('bj-card-enter'), { once: true });
       }
     }
     if (this.stopped) return;
     if (bot.opened) this.paintBotSeatOpened(i); // ran, 777 or Five Dragon, paid on the spot
     // A stand or a hidden bust stays face down — nothing more to show here;
-    // the count badge above already reflects the final card count.
+    // the fan above already reflects the final card count.
   }
 
   async onDealerHit() {
@@ -1160,7 +1162,6 @@ export class BlackjackGame {
     s.seat.disabled = true;
     s.seat.classList.remove('is-openable');
     clear(s.cardsHost);
-    s.countEl.textContent = '';
     const wraps = bot.cards.map(() => el('div.bj-flip', cardElement(null, { faceDown: true })));
     wraps.forEach((w) => s.cardsHost.append(w));
     if (this.animationsOn()) {
@@ -1198,7 +1199,11 @@ export class BlackjackGame {
 
   /** Same technique as the player-seat's showBanner(): measure the real gap
    * — here, between the bot row and the dealer's own hand — rather than
-   * trusting the felt's own centre to land in it. */
+   * trusting the felt's own centre to land in it. Measures against n.dealer
+   * (the "You (dealer)"/total row and the cards together), not just the
+   * cards — the rows sit close together now that .bj-dealerseat-rows owns
+   * the felt's spare space instead of stretching them apart, so the banner
+   * must clear that label line too, not just duck under the card tops. */
   showDealerSeatBanner(net) {
     const win = net > 0;
     const push = net === 0;
@@ -1212,7 +1217,7 @@ export class BlackjackGame {
     n.bannerHost.append(banner);
     const feltRect = n.felt.getBoundingClientRect();
     const topRect = n.botRow.getBoundingClientRect();
-    const bottomRect = n.dealerCards.getBoundingClientRect();
+    const bottomRect = n.dealer.getBoundingClientRect();
     const safeTop = topRect.bottom + 3;
     const safeBottom = bottomRect.top - 3;
     const gapMid = (safeTop + safeBottom) / 2;
@@ -1220,6 +1225,18 @@ export class BlackjackGame {
     banner.style.top = `${top}px`;
     requestAnimationFrame(() => banner.classList.add('is-on'));
   }
+}
+
+/** The hand itself, read the way a player at the table would say it out
+ * loud — independent of dealerSeatResultLabel's win/lose/push framing below
+ * it, which is about the payout, not what is actually in the hand. */
+function botTotalLabel(bot) {
+  if (bot.result === '777') return '777';
+  if (bot.result === 'five-dragon') return 'Five Dragon';
+  if (bot.special === 'banluck') return 'Ban Luck';
+  if (bot.special === 'banban') return 'Ban Ban';
+  const { total } = malaysianTotal(bot.cards);
+  return bot.busted ? `Bust ${total}` : `${total}`;
 }
 
 /** A bot seat's short result label once opened — a bust says so, even

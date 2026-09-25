@@ -114,12 +114,35 @@
    estate budget belongs to the dealer's own hand (>=20% of the viewport
    height), not four secondary card fans. ----------------------------------- */
 
-.bj-botrow { display: flex; justify-content: center; align-items: flex-start; gap: clamp(4px, 1.4vw, 16px); width: 100%; }
+/* The wrapper owns the felt's spare vertical space instead of .bj-felt's own
+   justify-content:space-between doing it — that rule is shared with the
+   single-seat table (renderTable()) and must stay untouched. flex:1 here
+   claims all the room .bj-felt would otherwise split around this one child;
+   justify-content:center + gap then places the bot row and the dealer's own
+   hand together in it, rather than stretched to the felt's far edges. */
+.bj-dealerseat-rows {
+  flex: 1; min-height: 0; width: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  /* Floor is the result banner's own rendered height plus a few px either
+     side — showDealerSeatBanner() centres it in this exact gap, so it must
+     never be tighter than the banner is tall, or the banner overlaps the
+     "You (dealer)" row it is meant to sit clear of. */
+  gap: clamp(46px, 3vh, 90px);
+}
+
+/* padding-right clears .bj-shoe (top-right, absolutely positioned) off the
+   last seat — sized a shade past the shoe's own width plus its right inset
+   so Farid's box never sits under it at the narrow phone widths where both
+   are fighting for the same corner. */
+.bj-botrow { display: flex; justify-content: center; align-items: flex-start; gap: clamp(4px, 1.4vw, 16px); width: 100%; padding-right: clamp(38px, 8vw, 64px); }
 .bj-botseat {
   flex: 1 1 0; min-width: 0; max-width: 190px;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 5px 6px; border-radius: var(--r-md); border: 1px solid var(--hairline-strong);
   background: rgba(0, 0, 0, 0.22); font: inherit; color: inherit;
+  /* A real touchstart on this seat must never be swallowed by Chromium's
+     default double-tap-to-zoom delay — a bot seat is never a zoom target. */
+  touch-action: manipulation;
   transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std);
 }
 .bj-botseat:disabled { cursor: default; }
@@ -129,10 +152,10 @@
 .bj-botseat.is-openable { cursor: pointer; border-color: var(--gold-bright); box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.28); }
 .bj-botseat__name { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .bj-botseat__bet { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
-.bj-botseat__cards { --card-w: clamp(18px, 4.4vh, 34px); display: flex; min-height: calc(var(--card-w) * 1.4); align-items: center; justify-content: center; }
+.bj-botseat__cards { --card-w: clamp(18px, 5.6vh, 44px); display: flex; min-height: calc(var(--card-w) * 1.4); align-items: center; justify-content: center; }
 .bj-botseat__cards .card { margin-left: calc(var(--card-w) * -0.5); }
 .bj-botseat__cards .card:first-child { margin-left: 0; }
-.bj-botseat__count { font-size: 10.5px; color: var(--text-tertiary); min-height: 1.2em; }
+.bj-botseat__total { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); min-height: 1.2em; font-variant-numeric: lining-nums tabular-nums; }
 .bj-botseat__result { font-size: clamp(10.5px, 1.3vw, 12.5px); min-height: 1.2em; text-align: center; }
 .bj-botseat__result.is-win { color: var(--ok); }
 .bj-botseat__result.is-lose { color: var(--danger); }
@@ -222,14 +245,21 @@
   .bj-dealer__row { gap: 6px; }
   .bj-dealer__total { font-size: 12px; }
   .bj-felt { padding: 1px 8px; gap: 1px; }
+  /* Same floor-for-the-banner logic as the base rule, sized to this query's
+     own smaller banner (padding 3px 12px, 12px title) rather than the
+     desktop one. */
+  .bj-dealerseat-rows { gap: clamp(26px, 6vh, 40px); }
   .bj-hands { gap: 6px; }
   .bj-hand { padding: 2px 6px; gap: 1px; }
   .bj-hand__foot { font-size: 11px; gap: 6px; }
   .bj-botrow { gap: 4px; }
   .bj-botseat { padding: 3px 4px; gap: 1px; }
-  .bj-botseat__cards { --card-w: clamp(16px, 3.8vh, 28px); }
+  /* 11vh keeps a bot card's height (1.4x its width) at >=15.4% of the
+     viewport height at every height this query covers — comfortably past
+     the >=15% floor for 844x390, the tightest case still above 350px. */
+  .bj-botseat__cards { --card-w: 11vh; }
   .bj-botseat__name, .bj-botseat__bet { font-size: 10.5px; }
-  .bj-botseat__count, .bj-botseat__result { font-size: 9.5px; }
+  .bj-botseat__total, .bj-botseat__result { font-size: 9.5px; }
   .bj-actions { min-height: 28px; padding: 2px 10px 3px; gap: 6px; }
   .bj-actions .btn { padding: 4px 10px; font-size: 12px; }
   .bj-bet-live { font-size: 11px; }
@@ -257,13 +287,18 @@
   .bj-dealer__name { font-size: 9px; }
   .bj-dealer__total { font-size: 10px; }
   .bj-felt { padding: 0 6px; gap: 0; }
+  /* This query's banner is a shade shorter still (padding 3px 12px 4px). */
+  .bj-dealerseat-rows { gap: clamp(22px, 5vh, 34px); }
   .bj-hand { padding: 1px 5px; gap: 0; }
   .bj-hand__foot { font-size: 10px; gap: 5px; }
   .bj-botrow { gap: 3px; }
   .bj-botseat { padding: 2px 3px; gap: 0; }
-  .bj-botseat__cards { --card-w: clamp(14px, 3.4vh, 24px); }
+  /* Same 11vh as the query above: at this query's own tightest height
+     (330px, the house's 844x330 benchmark) that is still >=15.4% of the
+     viewport, well past the >=13% floor D1 sets for this size. */
+  .bj-botseat__cards { --card-w: 11vh; }
   .bj-botseat__name, .bj-botseat__bet { font-size: 9.5px; }
-  .bj-botseat__count, .bj-botseat__result { font-size: 8.5px; }
+  .bj-botseat__total, .bj-botseat__result { font-size: 8.5px; }
   .bj-actions { min-height: 22px; padding: 1px 8px 2px; gap: 5px; }
   .bj-actions .btn { padding: 3px 8px; font-size: 11px; }
   .bj-banner { padding: 3px 12px 4px; }
