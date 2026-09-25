@@ -549,6 +549,51 @@ function boldDigitCorner(card) {
   return `<g fill="${inkUrl(card, 'index')}">${uses}<use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/></g>`;
 }
 
+// Letter ranks (J, Q, K, A — "10" is a numeral rank, see isNumeralRank, and
+// never reaches this branch) are set in the site's own EB Garamond at 800,
+// not stretched or shrunk onto a shared box: SVG getBBox() does not return
+// true per-glyph ink extents in every browser (it fell back to the font's
+// flat ascent/descent box here, identical for every letter), so these
+// metrics come from rasterizing each glyph to a canvas and reading back the
+// ink pixels — fractions of the font's em, measured at font-weight 800.
+// width/descent are the tight ink box; K and J's flat serif top (no
+// overshoot) is the unambiguous cap-height reference — A's pointed apex and
+// Q's round shoulder both overshoot it slightly, by design, same as most type.
+const LETTER_METRICS = {
+  A: { width: 0.739, descent: 0.0047 },
+  J: { width: 0.4093, descent: 0.1997 },
+  Q: { width: 0.8603, descent: 0.248 },
+  K: { width: 0.7763, descent: 0.006 },
+};
+const LETTER_CAP_RATIO = 0.655; // K/J's cap-top, in em, above the baseline
+// One font-size for every letter rank, chosen so that shared cap height
+// equals the digits' own (DIGIT_H) — the same cap line and baseline as
+// 2-10, derived from a measurement rather than picked by eye.
+const LETTER_FONT_SIZE = DIGIT_H / LETTER_CAP_RATIO; // ~51.15 card units
+const LETTER_BASELINE = 46;
+// The corner index's own documented safe zone (x in [0,34], see
+// boldCornerIndex below) minus the x=2 start margin. Only a glyph whose
+// natural width overruns this is condensed, and only down to this width — a
+// narrower glyph (J) is never stretched out to fill it, which was the
+// "too large, unnatural" bug.
+const LETTER_MAX_WIDTH = 32;
+// A tail/hook may dip below the baseline, but not far enough to collide with
+// the suit pip fixed at y=52 (pip ink starts ~53.7, see boldCornerIndex) —
+// capped at 12% of cap height, which clears the pip with room to spare.
+const LETTER_MAX_DESCENT = DIGIT_H * 0.12; // ~4.02 card units
+
+/** Clips off any ink below LETTER_BASELINE + LETTER_MAX_DESCENT. Applied only
+ * to the letters whose natural descent would exceed that (J, Q) — A and K's
+ * is negligible. clip-path is userSpaceOnUse by default, resolving in
+ * whichever local coordinate system the referencing <text> already sits in;
+ * for the corner mirrored via rotate(180) that system already includes the
+ * rotation, so one definition clips both corners correctly without a second,
+ * rotated copy. */
+function letterClipDefMarkup() {
+  const bottom = LETTER_BASELINE + LETTER_MAX_DESCENT;
+  return `<clipPath id="cg-letter-descent-clip"><rect x="-20" y="-20" width="140" height="${(bottom + 20).toFixed(2)}"/></clipPath>`;
+}
+
 /** Left-edge index strip: rank glyph, then suit glyph beneath it. Both must
  * stay inside x=[0, 34] (34% of the 100-unit-wide viewBox) and clear the
  * height minimums the spec sets, so a card showing only its leftmost sliver
@@ -556,16 +601,15 @@ function boldDigitCorner(card) {
 function boldCornerIndex(card) {
   if (isNumeralRank(card.rank)) return boldDigitCorner(card);
   const label = rankIndex(card.rank);
-  const wide = label.length > 1; // "10": needs the most horizontal condensing
-  // textLength on every rank, not just "10": at heavy weight some single
-  // glyphs (K, A) render wider than the 34% strip on their own, so every
-  // rank is pinned to a fixed, measured-safe width rather than trusting the
-  // font's natural metrics.
-  const rankAttrs = wide
-    ? `font-size="46" textLength="27" lengthAdjust="spacingAndGlyphs"`
-    : `font-size="50" textLength="25" lengthAdjust="spacingAndGlyphs"`;
+  const metrics = LETTER_METRICS[label];
+  const naturalWidth = metrics.width * LETTER_FONT_SIZE;
+  const naturalDescent = metrics.descent * LETTER_FONT_SIZE;
+  const lengthAttrs = naturalWidth > LETTER_MAX_WIDTH
+    ? ` textLength="${LETTER_MAX_WIDTH}" lengthAdjust="spacingAndGlyphs"`
+    : '';
+  const clipAttr = naturalDescent > LETTER_MAX_DESCENT ? ' clip-path="url(#cg-letter-descent-clip)"' : '';
   return `<g fill="${inkUrl(card, 'index')}">
-    <text class="cg-bold-index" x="2" y="46" ${rankAttrs} font-weight="800" text-anchor="start">${label}</text>
+    <text class="cg-bold-index" x="2" y="${LETTER_BASELINE}" font-size="${LETTER_FONT_SIZE.toFixed(2)}"${lengthAttrs}${clipAttr} font-weight="800" text-anchor="start">${label}</text>
     <use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/>
   </g>`;
 }
@@ -631,6 +675,7 @@ function installBoldCardDefs(doc = globalThis.document) {
   holder.innerHTML = `<svg id="${BOLD_DEFS_ID}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     ${digitDefsMarkup()}
+    ${letterClipDefMarkup()}
   </defs>
 </svg>`;
   const sheet = holder.querySelector('svg');
