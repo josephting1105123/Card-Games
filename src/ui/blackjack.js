@@ -7,9 +7,15 @@
  * its own stylesheet (styles/blackjack.css), sharing only the card artwork
  * (cardElement, default options) and the generic .page/.tile/.btn scaffolding
  * from app.css that every screen in the app already uses.
+ *
+ * Betting and the round itself share one shell (.bj-table: hud + felt +
+ * actions) instead of a separate scrolling page — the bet controls are just
+ * another thing the action row can hold, the same way it holds Hit/Stand
+ * during a round or the insurance prompt right after a deal.
  */
 
 import { formatChips } from '../core/economy.js';
+import { gameStats } from '../core/profile.js';
 import { makeRng, randomSeed } from '../core/rng.js';
 import {
   americanTotal, createShoe, malaysianTotal, needsReshuffle, reshuffleShoe,
@@ -146,69 +152,31 @@ export class BlackjackGame {
     this.engine = this.isAmerican ? US : MY;
     this.bet = table.min;
     this.lastBet = null;
+    this.round = null;
     this.dealerRevealed = false;
+    this.roundFinished = false;
     this.rng = makeRng(randomSeed());
   }
 
   mount(root) {
     installCardDefs();
     this.root = root;
-    if (this.isAmerican) this.shoe = createShoe(6, this.rng);
-    this.renderBetting();
+    // A shoe to show a count from even before the first deal — Malaysian
+    // replaces it every round anyway, American keeps this one across rounds.
+    this.shoe = createShoe(this.isAmerican ? 6 : 1, this.rng);
+    this.renderTable();
+    this.paintActions();
   }
 
   unmount() {
     this.stopped = true;
   }
 
-  // --- betting screen ------------------------------------------------------
+  // --- betting -------------------------------------------------------------
 
   canDeal() {
     const bankroll = this.app.profile.bankroll;
     return this.bet >= this.table.min && this.bet <= this.table.max && this.bet <= bankroll && this.bet > 0;
-  }
-
-  renderBetting() {
-    clear(this.root);
-    const profile = this.app.profile;
-    const chips = chipDenominations(this.table);
-
-    const betDisplay = el('div.bj-bet-amount', formatChips(this.bet));
-    const dealBtn = el('button.btn.btn--primary.btn--big', {
-      type: 'button', disabled: !this.canDeal(), onclick: () => this.deal(),
-    }, 'Deal');
-
-    const chipRow = el('div.bj-chip-row', ...chips.map((value) => el('button.btn.bj-chip', {
-      type: 'button',
-      disabled: this.bet + value > this.table.max || this.bet + value > profile.bankroll,
-      onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, profile.bankroll); this.renderBetting(); },
-    }, formatChips(value, true))));
-
-    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > profile.bankroll || this.lastBet < this.table.min;
-
-    this.root.append(
-      topbar(this.app),
-      el('main.page.bj-betting',
-        el('button.back-link', { type: 'button', onclick: () => this.app.go('lobby', { gameId: 'blackjack', variant: this.variant }) }, `← ${variantName(this.variant)} tables`),
-        el('div.page__head',
-          el('h1.page__title', this.table.name),
-          el('p.page__sub', `${variantName(this.variant)} · bets ${formatChips(this.table.min)} to ${formatChips(this.table.max)}`),
-        ),
-        el('div.card-panel.bj-bet-panel',
-          el('div.bj-bet-row',
-            el('span.field__label', 'Your bet'),
-            betDisplay,
-          ),
-          chipRow,
-          el('div.btn-row',
-            el('button.btn', { type: 'button', onclick: () => { this.bet = 0; this.renderBetting(); } }, 'Clear'),
-            el('button.btn', { type: 'button', disabled: repeatDisabled, onclick: () => { this.bet = this.lastBet; this.renderBetting(); } }, 'Repeat bet'),
-            el('button.btn', { type: 'button', onclick: () => this.showRules() }, 'Rules'),
-            dealBtn,
-          ),
-        ),
-      ),
-    );
   }
 
   showRules() {
@@ -224,12 +192,49 @@ export class BlackjackGame {
     this.root.append(overlay);
   }
 
+  statsLine() {
+    const stats = gameStats(this.app.profile, 'blackjack');
+    if (!stats.played) return '';
+    return `${stats.played} played · ${stats.won} won · net ${formatChips(stats.net ?? 0)}`;
+  }
+
+  /** Chips, Clear, Repeat bet and Deal — the action row's content whenever
+   * there is no round in progress, whether that's the first bet at this
+   * table or the next one right after a result banner. One row: the result
+   * banner needs the felt's dealer-to-hand gap to actually have height in
+   * it, and a tall, multi-row action bar is what was eating that space. The
+   * running played/won/net line moves to a tooltip on the bankroll pill
+   * instead of a row of its own — still there, never competing for room. */
+  paintBettingControls() {
+    const n = this.nodes;
+    clear(n.actions);
+    n.actions.classList.add('is-betting');
+    const profile = this.app.profile;
+    const chips = chipDenominations(this.table);
+    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > profile.bankroll || this.lastBet < this.table.min;
+
+    n.actions.append(
+      el('div.bj-chip-row',
+        el('div.bj-bet-live', el('span', 'Bet'), el('b', formatChips(this.bet))),
+        ...chips.map((value) => el('button.btn.bj-chip', {
+          type: 'button',
+          disabled: this.bet + value > this.table.max || this.bet + value > profile.bankroll,
+          onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, profile.bankroll); this.paintActions(); this.paintHud(); },
+        }, formatChips(value, true))),
+        el('button.btn', { type: 'button', onclick: () => { this.bet = 0; this.paintActions(); this.paintHud(); } }, 'Clear'),
+        el('button.btn', { type: 'button', disabled: repeatDisabled, onclick: () => { this.bet = this.lastBet; this.paintActions(); this.paintHud(); } }, 'Repeat bet'),
+        el('button.btn.btn--primary', { type: 'button', disabled: !this.canDeal(), onclick: () => this.deal() }, 'Deal'),
+      ),
+    );
+  }
+
   // --- dealing ---------------------------------------------------------------
 
   deal() {
     if (!this.canDeal()) return;
     this.lastBet = this.bet;
     this.dealerRevealed = false;
+    this.roundFinished = false;
     this.justShuffled = false;
     if (this.isAmerican) {
       if (needsReshuffle(this.shoe)) {
@@ -248,6 +253,7 @@ export class BlackjackGame {
   // --- committed chips, for affordability checks ----------------------------
 
   committed() {
+    if (!this.round || this.roundFinished) return this.bet;
     if (this.isAmerican) return this.round.hands.reduce((s, h) => s + h.bet, 0) + (this.round.insuranceBet || 0);
     return this.round.player.bet;
   }
@@ -264,6 +270,7 @@ export class BlackjackGame {
   }
 
   handsOf() {
+    if (!this.round) return [];
     return this.isAmerican ? this.round.hands : [this.round.player];
   }
 
@@ -279,9 +286,16 @@ export class BlackjackGame {
   paintHud() {
     const n = this.nodes;
     if (!n.betPill) return;
+    const inPlay = this.round && !this.roundFinished;
+    n.betPill.querySelector('small').textContent = inPlay ? 'At risk' : 'Bet';
     n.betPill.querySelector('b').textContent = formatChips(this.committed());
     n.shoePill.querySelector('b').textContent = `${this.shoeRemaining()} left`;
     n.bankrollPill.querySelector('b').textContent = formatChips(this.app.profile.bankroll);
+    // The running played/won/net line rides along as a tooltip — present,
+    // but never competing with the cards or the banner for space.
+    const stats = this.statsLine();
+    if (stats) n.bankrollPill.title = stats;
+    else n.bankrollPill.removeAttribute('title');
   }
 
   renderTable() {
@@ -290,7 +304,7 @@ export class BlackjackGame {
     this.nodes = n;
 
     n.leaveBtn = el('button.back-link', { type: 'button', 'aria-label': 'Leave table', onclick: () => this.leave() }, '←');
-    n.betPill = el('span.bj-hud__pill', el('small', 'At risk'), el('b', formatChips(this.committed())));
+    n.betPill = el('span.bj-hud__pill', el('small', 'Bet'), el('b', formatChips(this.committed())));
     n.bankrollPill = el('span.bj-hud__pill', el('small', 'Bankroll'), el('b', formatChips(this.app.profile.bankroll)));
     n.shoePill = el('span.bj-hud__pill', el('small', this.isAmerican ? 'Shoe' : 'Deck'), el('b', `${this.shoeRemaining()} left`));
     const hud = el('div.bj-hud',
@@ -311,9 +325,10 @@ export class BlackjackGame {
     n.shoeIcon = el('div.bj-shoe', cardElement(null, { faceDown: true }));
 
     n.handsRow = el('div.bj-hands');
+    n.bannerHost = el('div.bj-banner-host');
     n.actions = el('div.bj-actions');
 
-    n.felt = el('div.bj-felt', n.shoeIcon, dealer, n.handsRow);
+    n.felt = el('div.bj-felt', n.shoeIcon, dealer, n.handsRow, n.bannerHost);
     n.table = el('div.bj-table', hud, n.felt, n.actions);
 
     this.root.append(
@@ -330,14 +345,32 @@ export class BlackjackGame {
     this.paintDealer();
     this.paintHands();
     // Actions appear once the deal animation lands (afterDealSettled), not
-    // while cards are still in flight.
+    // while cards are still in flight — renderTable() itself leaves them
+    // blank, except when there is no round to deal for yet (mount() paints
+    // betting controls straight after calling this).
+  }
+
+  /** The dealer's own hand label: a two-card blackjack or Ban Ban/Ban Luck
+   * reads by name, the same way a player's hand already does — never the
+   * total that produced it (a "Soft 21" dealer hand is just "Blackjack"). */
+  dealerHandLabel(cards) {
+    const t = this.totalOf(cards);
+    if (t.bust) return 'Bust';
+    if (this.isAmerican) {
+      if (this.round.dealerBlackjack) return 'Blackjack';
+    } else {
+      if (this.round.dealer.special === 'banban') return 'Ban Ban';
+      if (this.round.dealer.special === 'banluck') return 'Ban Luck';
+    }
+    return t.soft ? `Soft ${t.total}` : `${t.total}`;
   }
 
   paintDealer() {
     const n = this.nodes;
+    clear(n.dealerCards);
+    if (!this.round) { n.dealerLabel.textContent = ''; return; }
     const cards = this.round.dealer.cards;
     const shown = this.dealerRevealed ? cards.length : Math.min(2, cards.length);
-    clear(n.dealerCards);
     for (let i = 0; i < shown; i++) {
       if (i === 1 && !this.dealerRevealed) {
         n.dealerCards.append(el('div.bj-flip', cardElement(null, { faceDown: true })));
@@ -345,12 +378,7 @@ export class BlackjackGame {
         n.dealerCards.append(cardElement(cards[i]));
       }
     }
-    if (this.dealerRevealed) {
-      const t = this.totalOf(cards);
-      n.dealerLabel.textContent = t.bust ? 'Bust' : t.soft ? `Soft ${t.total}` : `${t.total}`;
-    } else {
-      n.dealerLabel.textContent = '';
-    }
+    n.dealerLabel.textContent = this.dealerRevealed ? this.dealerHandLabel(cards) : '';
   }
 
   handLabel(hand, cards) {
@@ -373,14 +401,20 @@ export class BlackjackGame {
     const n = this.nodes;
     clear(n.handsRow);
     n.handCardsEls = [];
+    if (!this.round) {
+      n.handsRow.append(el('div.bj-hint', 'Place your bet, then deal.'));
+      this.paintHud();
+      return;
+    }
     const hands = this.handsOf();
     hands.forEach((hand, index) => {
       const cardsEl = el('div.bj-hand__cards');
       n.handCardsEls[index] = cardsEl;
       for (const card of hand.cards) cardsEl.append(cardElement(card));
+      // The ring marks which of several split hands is live — with only one
+      // hand there is nothing to distinguish it from, so it stays plain.
       const active = this.isAmerican
-        ? this.round.phase === 'player' && index === this.round.activeHand
-        : this.round.phase === 'player';
+        && hands.length > 1 && this.round.phase === 'player' && index === this.round.activeHand;
       const resultLine = this.round.settled ? el('div.bj-hand__result', resultText(hand, this.isAmerican)) : null;
       n.handsRow.append(el(`div.bj-hand${active ? '.is-active' : ''}`,
         cardsEl,
@@ -397,11 +431,13 @@ export class BlackjackGame {
   paintActions() {
     const n = this.nodes;
     clear(n.actions);
+    n.actions.classList.remove('is-betting');
+    if (!this.round || this.roundFinished) { this.paintBettingControls(); return; }
     if (this.round.phase === 'insurance') {
       n.actions.append(this.buildInsurancePrompt());
       return;
     }
-    if (this.round.settled) return; // the result overlay owns the felt now
+    if (this.round.settled) return; // still animating the dealer's reveal — finishRound() repaints this
     if (this.round.phase !== 'player') return;
 
     if (this.isAmerican) {
@@ -581,8 +617,7 @@ export class BlackjackGame {
       const node = cardElement(cards[i]);
       node.classList.add('bj-card-enter');
       this.nodes.dealerCards.append(node);
-      const t = this.totalOf(cards.slice(0, i + 1));
-      this.nodes.dealerLabel.textContent = t.bust ? 'Bust' : t.soft ? `Soft ${t.total}` : `${t.total}`;
+      this.nodes.dealerLabel.textContent = this.dealerHandLabel(cards.slice(0, i + 1));
       this.paintHud();
     }
     await wait(300);
@@ -606,8 +641,7 @@ export class BlackjackGame {
     await wait(FLIP_MS / 2);
     if (this.stopped) return;
     wrap.classList.remove('is-flipping');
-    const t = this.totalOf(this.round.dealer.cards.slice(0, 2));
-    this.nodes.dealerLabel.textContent = t.soft ? `Soft ${t.total}` : `${t.total}`;
+    this.nodes.dealerLabel.textContent = this.dealerHandLabel(this.round.dealer.cards.slice(0, 2));
   }
 
   showToast(message) {
@@ -621,41 +655,55 @@ export class BlackjackGame {
 
   finishRound() {
     const net = this.engine.roundNet(this.round);
-    const { stats } = recordBlackjackResult(this.app.profile, 'blackjack', net);
+    // The running played/won/net line now lives in the betting controls
+    // (paintBettingControls -> statsLine), not the banner, so the result
+    // here is read for its bankroll side effect only.
+    recordBlackjackResult(this.app.profile, 'blackjack', net);
+    this.roundFinished = true;
     this.paintDealer();
     this.paintHands();
-    clear(this.nodes.actions);
-    this.nodes.bankrollPill.querySelector('b').textContent = formatChips(this.app.profile.bankroll);
-    this.showResult(net, stats);
+    this.paintActions(); // roundFinished is true now — this paints the next bet's controls
+    this.paintHud();
+    this.showBanner(net);
   }
 
-  showResult(net, stats) {
+  /** A banner over the middle of the felt, not a modal: both hands stay
+   * visible underneath it, and the betting controls for the next round are
+   * already live in the action row by the time this appears — one tap on
+   * Deal is all the next round needs. Positioned at the measured midpoint
+   * between the dealer's cards and the player's, the same way the deal
+   * flight measures real rects rather than trusting a CSS guess — the gap
+   * between two rows of cards each a quarter of the screen tall is too thin
+   * a margin to hit by centering in the felt as a whole. */
+  showBanner(net) {
     const win = net > 0;
     const push = net === 0;
     const hands = this.handsOf();
+    const cls = win ? 'is-win' : push ? 'is-push' : 'is-loss';
     const title = this.resultTitle(hands, net, push);
-    const lines = hands.map((hand, i) => {
-      const label = this.isAmerican && hands.length > 1 ? `Hand ${i + 1}: ` : '';
-      return `${label}${resultText(hand, this.isAmerican)} — <span>${formatChips(hand.payout ?? 0)}</span>`;
-    });
-    if (this.isAmerican && this.round.insuranceBet) {
-      lines.push(`Insurance: <span>${formatChips(this.round.insurancePayout)}</span>`);
-    }
-    lines.push(`Bankroll: <span>${formatChips(this.app.profile.bankroll)}</span>`);
-    lines.push(`Blackjack record: <span>${stats.played} played · ${stats.won} won · net ${formatChips(stats.net)}</span>`);
-
-    const overlay = el('div.bj-overlay',
-      el('div.bj-result',
-        el('h2', { class: `bj-result__title ${win ? 'is-win' : push ? 'is-push' : 'is-loss'}` }, title),
-        el('div', { class: `bj-result__delta ${win ? 'is-win' : push ? 'is-push' : 'is-loss'}` }, `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`),
-        el('ul.bj-result__lines', ...lines.map((line) => el('li', { html: line }))),
-        el('div.btn-row', { style: 'justify-content:center' },
-          el('button.btn.btn--primary', { type: 'button', onclick: () => { overlay.remove(); this.renderBetting(); } }, 'Continue'),
-          el('button.btn', { type: 'button', onclick: () => { overlay.remove(); this.leave(); } }, 'Leave table'),
-        ),
-      ),
+    const reason = this.resultReason(hands, net, push);
+    const banner = el('div.bj-banner',
+      { class: cls },
+      el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
+      reason ? el('div.bj-banner__reason', reason) : null,
     );
-    this.root.append(overlay);
+    const n = this.nodes;
+    clear(n.bannerHost);
+    n.bannerHost.append(banner);
+
+    const feltRect = n.felt.getBoundingClientRect();
+    const dealerRect = n.dealerCards.getBoundingClientRect();
+    const handRect = n.handsRow.getBoundingClientRect();
+    // A few px of deliberate slack, not just the bare midpoint: at the
+    // shortest viewport the gap and the (CSS-shrunk) banner are close enough
+    // in height that an exact split leaves sub-pixel rounding as the only
+    // margin, and this is a rect-intersection check, not a rendering nicety.
+    const safeTop = dealerRect.bottom + 3;
+    const safeBottom = handRect.top - 3;
+    const gapMid = (safeTop + safeBottom) / 2;
+    const top = Math.min(Math.max(gapMid - feltRect.top, 0), feltRect.height);
+    banner.style.top = `${top}px`;
+    requestAnimationFrame(() => banner.classList.add('is-on'));
   }
 
   resultTitle(hands, net, push) {
@@ -677,6 +725,51 @@ export class BlackjackGame {
     if (hands.length === 1 && hands[0].result === 'blackjack') return 'Blackjack!';
     if (push) return 'Push';
     return net > 0 ? 'You win' : 'You lose';
+  }
+
+  /** A one-line reason under the banner's title — "Dealer 20 beats 19", not
+   * just the amount. Multi-hand splits get a tally instead of one hand's
+   * story, since a split round rarely has a single reason. */
+  resultReason(hands, net, push) {
+    if (!this.isAmerican) {
+      const p = hands[0];
+      const dealerTotal = this.totalOf(this.round.dealer.cards).total;
+      const playerTotal = this.totalOf(p.cards).total;
+      switch (p.result) {
+        case 'banban': return 'Pays 3:1';
+        case 'banluck': return 'Pays 2:1';
+        case '777': return 'Three sevens, pays 7:1';
+        case 'five-dragon': return `Five cards at ${playerTotal}, pays ${playerTotal === 21 ? 3 : 2}:1`;
+        case 'bust': return `You bust with ${playerTotal}`;
+        default: break;
+      }
+      const dealerSpecial = this.round.dealer.special;
+      if (dealerSpecial === 'banban' || dealerSpecial === 'banluck') {
+        return push ? 'Matched by your own special' : `Pays ${dealerSpecial === 'banban' ? 3 : 2}:1 to the dealer`;
+      }
+      if (this.round.dealer.cards.length === 5 && dealerTotal <= 21 && p.result === 'lose') {
+        return `Dealer's five-card ${dealerTotal} beats ${playerTotal}`;
+      }
+      if (dealerTotal > 21) return `Dealer busts with ${dealerTotal}`;
+      if (push) return `Push at ${playerTotal}`;
+      return net > 0 ? `${playerTotal} beats dealer's ${dealerTotal}` : `Dealer ${dealerTotal} beats ${playerTotal}`;
+    }
+    if (hands.length > 1) {
+      const won = hands.filter((h) => h.payout > 0).length;
+      const lost = hands.filter((h) => h.payout < 0).length;
+      const pushed = hands.filter((h) => h.payout === 0).length;
+      return `${won} won · ${lost} lost · ${pushed} push`;
+    }
+    const hand = hands[0];
+    const dealerTotal = this.totalOf(this.round.dealer.cards).total;
+    const playerTotal = this.totalOf(hand.cards).total;
+    if (hand.result === 'blackjack') return 'Pays 3:2';
+    if (hand.result === 'surrender') return 'Surrendered — half the bet back';
+    if (hand.result === 'bust') return `You bust with ${playerTotal}`;
+    if (this.round.dealerBlackjack) return hand.result === 'push' ? 'Dealer has blackjack too' : 'Dealer has blackjack';
+    if (dealerTotal > 21) return `Dealer busts with ${dealerTotal}`;
+    if (push) return `Push at ${playerTotal}`;
+    return net > 0 ? `${playerTotal} beats dealer's ${dealerTotal}` : `Dealer ${dealerTotal} beats ${playerTotal}`;
   }
 
   leave() {
