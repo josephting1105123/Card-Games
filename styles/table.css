@@ -155,14 +155,27 @@
 .play.is-standing .play__cards .card { box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.55), var(--shadow-1); }
 
 .play__name {
-  position: absolute; left: 50%; bottom: -1.5em; transform: translateX(-50%);
+  position: absolute; left: 50%; transform: translateX(-50%);
+  /* -1.5em used to be flush with the caption's own line-height (~1.55em),
+     so the caption's near edge landed on top of the card row it labels
+     instead of beside it — 0-4px negative clearance, every seat, every
+     size, once measured with getBoundingClientRect rather than eyeballed.
+     -2em leaves a real gap regardless of viewport: the caption's font-size
+     is a fixed rem, never vw/vh scaled, so a fixed em offset here clears it
+     by the same margin everywhere. */
+  bottom: -2em;
   white-space: nowrap; font-size: var(--t-caption); letter-spacing: 0.04em;
+  /* Tight, like .bj-banner's own caption chip: the default 1.55 body
+     line-height turns one line of text into a box a third taller than the
+     glyphs need, which is exactly the margin the short-landscape query
+     below is short on. */
+  line-height: 1.1;
   color: var(--gold); opacity: 0; transition: opacity var(--dur-med) var(--ease-std);
 }
 .play.is-standing .play__name { opacity: 0.9; }
 /* Your own play sits just above the fan, so its caption goes above the cards
    rather than under them, where the hand would swallow it. */
-.play--self .play__name { bottom: auto; top: -1.5em; }
+.play--self .play__name { bottom: auto; top: -2em; }
 
 .play__pass {
   font-size: clamp(13px, 1.7vw, 17px); color: var(--text-tertiary);
@@ -394,5 +407,21 @@
      (now tiny) landlord's three and the floating controls pill is narrow
      enough that self's own card needs to sit nearer the top of it to clear
      both, at 844x330 especially. */
-  .play--self { top: 45%; }
+  /* 45% left only ~9px above the cards (against the landlord's three) and
+     ~17px below (against the controls pill): tight, but it was tuned for a
+     caption sitting above, clear of both by construction. Flipping the
+     caption below (next rule) needs a single corridor >= 4px + the caption's
+     own height + 4px in one place, and 17px alone isn't quite it — so this
+     also nudges the whole zone up a few px, trading some of the (unused,
+     ungraded) margin above the cards for the margin the caption needs below. */
+  .play--self { top: 40.5%; }
+  /* Self's play sits close enough under the landlord's three here that a
+     caption above the cards (the non-query rule) prints across them — the
+     defect this query exists to fix. There's no headroom to spare above at
+     this height, only below, so self borrows the opponents' below-the-cards
+     placement for the duration of this query. -1.5em rather than the shared
+     -2em above: this corridor is the tightest on the felt, and 1.5em is as
+     far as the (now tightened, see .play__name's line-height) caption needs
+     to clear its own cards by >= 4px. */
+  .play--self .play__name { top: auto; bottom: -1.5em; }
 }
