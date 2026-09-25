@@ -322,3 +322,217 @@ test('malaysian: a dealer five-card 21-or-under beats a non-special player at 2:
   assert.equal(round.player.result, 'lose');
   assert.equal(round.player.payout, -200, '2:1 against the player, even though 16 would beat a plain 10');
 });
+
+// ---------------------------------------------------------------------------
+// Malaysian: Run (player seat)
+// ---------------------------------------------------------------------------
+
+test('malaysian: Run on an opening 15 pushes at once, including ace-high A+4', () => {
+  const deck = stack(9, 5, 6, 4); // player 9,6 = 15
+  const round = MY.startRound({ deck, bet: 100 });
+  assert.equal(MY.canRun(round), true);
+  MY.run(round);
+  assert.equal(round.player.result, 'run');
+  assert.equal(round.player.payout, 0);
+  assert.equal(round.phase, 'settled');
+  assert.equal(round.dealer.cards.length, 2, 'the dealer never plays this hand out');
+
+  const aceDeck = stack(A, 5, 4, 4); // player A,4 = 15, ace counted high (11) on two cards
+  const aceRound = MY.startRound({ deck: aceDeck, bet: 100 });
+  assert.equal(malaysianTotal(aceRound.player.cards).total, 15);
+  assert.equal(MY.canRun(aceRound), true);
+  MY.run(aceRound);
+  assert.equal(aceRound.player.payout, 0);
+});
+
+test('malaysian: Run is not offered at 14, at 16, or once a card has been hit', () => {
+  const at14 = MY.startRound({ deck: stack(9, 5, 5, 4), bet: 100 }); // 9,5 = 14
+  assert.equal(MY.canRun(at14), false);
+
+  const at16 = MY.startRound({ deck: stack(9, 5, 7, 4), bet: 100 }); // 9,7 = 16
+  assert.equal(MY.canRun(at16), false);
+
+  const deck = stack(6, 5, 9, 4, 2); // player 6,9 = 15; hit draws a 2 -> 17
+  const afterHit = MY.startRound({ deck, bet: 100 });
+  assert.equal(MY.canRun(afterHit), true);
+  MY.hit(afterHit, deck);
+  assert.equal(MY.canRun(afterHit), false, 'run is only offered on the opening two cards');
+});
+
+test('malaysian: Run beats the dealer\'s special — running on 15 pushes even against Ban Luck', () => {
+  const deck = stack(9, A, 6, Q); // player 9,6 = 15; dealer A,Q = Ban Luck
+  const round = MY.startRound({ deck, bet: 100 });
+  assert.equal(round.dealer.special, 'banluck');
+  assert.equal(round.phase, 'player', 'the dealer\'s special is held back while run is still on offer');
+  assert.equal(round.dealerSpecialPending, true);
+  assert.equal(MY.canRun(round), true);
+  MY.run(round);
+  assert.equal(round.player.result, 'run');
+  assert.equal(round.player.payout, 0, 'a push regardless of the dealer\'s special');
+  assert.equal(round.phase, 'settled');
+});
+
+test('malaysian: declining Run on 15 lets the dealer\'s Ban Luck resolve the round at once, for -2x', () => {
+  const deck = stack(9, A, 6, Q, 2); // same opening; the extra card must go unused
+  const round = MY.startRound({ deck, bet: 100 });
+  assert.equal(MY.canRun(round), true);
+  MY.hit(round, deck); // declines the run
+  assert.equal(round.player.result, 'lose');
+  assert.equal(round.player.payout, -200, '2:1 against the player, the dealer\'s Ban Luck multiple');
+  assert.equal(round.phase, 'settled');
+  assert.equal(round.player.cards.length, 2, 'the dealer\'s special pre-empted the hit — no card was drawn');
+});
+
+// ---------------------------------------------------------------------------
+// Malaysian dealer seat: the human deals against four bots
+// ---------------------------------------------------------------------------
+
+const dealerSeatTable = { min: 100, max: 1000 };
+const betRng = () => 0; // every randomBotBet() call lands on table.min, deterministically
+
+test('malaysian dealer seat: a bot special is paid at the deal', () => {
+  const deck = stack(A, 9, 9, 9, 9, Q, 3, 4, 5, 3); // bot0 = A,Q = Ban Luck; the rest plain
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  assert.equal(round.bots[0].special, 'banluck');
+  assert.equal(round.bots[0].opened, true);
+  assert.equal(round.bots[0].result, 'banluck');
+  assert.equal(round.bots[0].payout, round.bots[0].bet * 2);
+  assert.equal(round.bots[1].opened, false, 'a plain hand is untouched, waiting for its turn');
+});
+
+test('malaysian dealer seat: a dealer special ends the round, settling every bot against it', () => {
+  // bot0 = A,A = Ban Ban (equal to the dealer's, so it pushes); bot1 = A,K = Ban
+  // Luck (ranks below Ban Ban, so it loses at the dealer's 3:1); bot2/bot3 plain.
+  const deck = stack(A, A, 9, 9, A, A, K, 3, 4, A);
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  assert.equal(round.dealer.special, 'banban');
+  assert.equal(round.phase, 'settled');
+  assert.equal(round.bots[0].result, 'push', 'an equal-or-better special pushes');
+  assert.equal(round.bots[0].payout, 0);
+  assert.equal(round.bots[1].result, 'lose');
+  assert.equal(round.bots[1].payout, -round.bots[1].bet * 3);
+  assert.equal(round.bots[2].result, 'lose');
+  assert.equal(round.bots[2].payout, -round.bots[2].bet * 3);
+  assert.equal(round.bots[3].result, 'lose');
+  assert.equal(round.bots[3].payout, -round.bots[3].bet * 3);
+});
+
+test('malaysian dealer seat: a bot on an opening 15 decides Run before the dealer\'s special is applied', () => {
+  // bot0 = 9,6 = 15 (runs, favoured by a strong dealer total of 21); bot1 =
+  // A,K = Ban Luck (loses to the dealer's Ban Ban, ranked below it); bot2/3 plain.
+  const deck = stack(9, A, 9, 9, A, 6, K, 3, 4, A);
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: () => 0 });
+  assert.equal(round.dealer.special, 'banban');
+  assert.equal(round.bots[0].result, 'run', 'decided before the dealer\'s Ban Ban was ever applied');
+  assert.equal(round.bots[0].payout, 0);
+  assert.equal(round.bots[1].result, 'lose');
+  assert.equal(round.bots[1].payout, -round.bots[1].bet * 3);
+  assert.equal(round.phase, 'settled');
+});
+
+test('malaysian dealer seat: a bot\'s own Five Dragon pays out immediately, mid-turn', () => {
+  const deck = stack(TWO, 9, 9, 9, 9, TWO, 3, 4, 5, 3, TWO, TWO, TWO); // bot0 draws five 2s
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  MY.playBotTurn(round, 0, deck, () => 0.5); // total stays under 16 throughout, so rng never matters
+  assert.equal(round.bots[0].cards.length, 5);
+  assert.equal(round.bots[0].result, 'five-dragon');
+  assert.equal(round.bots[0].payout, round.bots[0].bet * 2);
+  assert.equal(round.bots[0].opened, true);
+});
+
+test('malaysian dealer seat: nothing can be opened below 16', () => {
+  // bot0..3 = 9+2/3/4/5 = 11/12/13/14, each needing a hit; dealer = 9,3 = 12
+  const deck = stack(9, 9, 9, 9, 9, 2, 3, 4, 5, 3, 5, 5, 5, 5);
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  const stubRng = () => 0.99; // 0.99 never wins a run or a Five Dragon chase
+  while (round.phase === 'bots') {
+    const idx = round.bots.findIndex((b) => !b.opened && !b.busted && !b.stood);
+    MY.playBotTurn(round, idx, deck, stubRng);
+  }
+  assert.equal(round.phase, 'dealer');
+  assert.ok(malaysianTotal(round.dealer.cards).total < 16);
+  for (let i = 0; i < 4; i++) {
+    assert.equal(MY.canOpenBot(round, i), false);
+    assert.equal(MY.openBot(round, i).ok, false);
+  }
+});
+
+test("malaysian dealer seat: opening compares against the dealer's total at that moment, and a later draw only changes later openings", () => {
+  const deck = stack(9, 9, 9, 9, 9, 9, 5, 7, 7, 7, 5, 3);
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  const stubRng = () => 0.99;
+  MY.playBotTurn(round, 0, deck, stubRng); // 9,9 = 18, stands immediately
+  MY.playBotTurn(round, 1, deck, stubRng); // 9,5 = 14 -> forced hit -> 19, stands
+  MY.playBotTurn(round, 2, deck, stubRng); // 9,7 = 16, stands
+  MY.playBotTurn(round, 3, deck, stubRng); // 9,7 = 16, stands
+  assert.equal(round.phase, 'dealer');
+  assert.equal(malaysianTotal(round.dealer.cards).total, 16);
+
+  assert.equal(MY.canOpenBot(round, 0), true);
+  MY.openBot(round, 0); // 18 vs the dealer's 16 -> bot0 wins
+  assert.equal(round.bots[0].result, 'win');
+  assert.equal(round.bots[0].dealerTotalAtOpen, 16);
+
+  MY.dealerHit(round, deck); // 16 -> 19
+  assert.equal(malaysianTotal(round.dealer.cards).total, 19);
+  assert.equal(round.bots[0].result, 'win', "bot0's already-settled result is untouched by the later draw");
+  assert.equal(round.bots[0].payout, round.bots[0].bet);
+
+  MY.openBot(round, 1); // bot1's 19 vs the dealer's NEW total, 19 -> push
+  assert.equal(round.bots[1].dealerTotalAtOpen, 19);
+  assert.equal(round.bots[1].result, 'push');
+  assert.equal(round.bots[1].payout, 0);
+});
+
+test('malaysian dealer seat: a dealer bust pushes only the bots that busted themselves', () => {
+  const deck = stack(9, 9, 9, 9, 9, 5, 7, 7, 7, 3, K, K);
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  const stubRng = () => 0.99;
+  MY.playBotTurn(round, 0, deck, stubRng); // 9,5 = 14 -> forced hit -> a King busts it at 24
+  assert.equal(round.bots[0].busted, true);
+  assert.equal(round.bots[0].opened, false, 'hidden — a bust is not revealed until opened');
+  MY.playBotTurn(round, 1, deck, stubRng); // 16, stands
+  MY.playBotTurn(round, 2, deck, stubRng); // 16, stands
+  MY.playBotTurn(round, 3, deck, stubRng); // 16, stands
+  assert.equal(round.phase, 'dealer');
+
+  MY.dealerHit(round, deck); // 12 -> 22, bust
+  assert.equal(malaysianTotal(round.dealer.cards).total, 22);
+  assert.equal(round.phase, 'settled');
+  assert.equal(round.bots[0].result, 'push', 'both sides bust');
+  assert.equal(round.bots[0].payout, 0);
+  assert.equal(round.bots[1].result, 'win');
+  assert.equal(round.bots[1].payout, round.bots[1].bet);
+  assert.equal(round.bots[2].result, 'win');
+  assert.equal(round.bots[3].result, 'win');
+});
+
+test('malaysian dealer seat: a dealer Five Dragon settles every still-unopened bot, leaving an already-paid special alone', () => {
+  const deck = stack(A, 9, 9, 9, 9, Q, 7, 7, 7, 3, TWO, TWO, TWO);
+  const round = MY.startDealerSeatRound({ deck, table: dealerSeatTable, rng: betRng });
+  assert.equal(round.bots[0].result, 'banluck', 'already paid at the deal');
+  const stubRng = () => 0.99;
+  MY.playBotTurn(round, 1, deck, stubRng); // 16, stands
+  MY.playBotTurn(round, 2, deck, stubRng); // 16, stands
+  MY.playBotTurn(round, 3, deck, stubRng); // 16, stands
+  assert.equal(round.phase, 'dealer');
+
+  MY.dealerHit(round, deck); // 12 -> 14
+  MY.dealerHit(round, deck); // 14 -> 16
+  MY.dealerHit(round, deck); // 16 -> 18, five cards, Five Dragon
+  assert.equal(round.dealer.cards.length, 5);
+  assert.equal(malaysianTotal(round.dealer.cards).total, 18);
+  assert.equal(round.phase, 'settled');
+  for (const i of [1, 2, 3]) {
+    assert.equal(round.bots[i].opened, true);
+    assert.equal(round.bots[i].result, 'lose');
+    assert.equal(round.bots[i].payout, -round.bots[i].bet * 2);
+  }
+  assert.equal(round.bots[0].result, 'banluck', "the dealer's Five Dragon never touches an already-resolved special");
+});
+
+test('malaysian dealer seat: the bankroll gate is 28x the table max (4 bots x 7:1 for 777)', () => {
+  assert.equal(MY.dealerSeatBankrollRequirement(dealerSeatTable), 28_000);
+  assert.equal(MY.canPlayDealerSeat(dealerSeatTable, 27_999), false);
+  assert.equal(MY.canPlayDealerSeat(dealerSeatTable, 28_000), true);
+});

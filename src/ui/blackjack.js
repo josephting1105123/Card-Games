@@ -27,6 +27,7 @@ import { chipDenominations, tableAccess, tableEntry } from '../games/blackjack/t
 import { gameById } from '../games/registry.js';
 import { cardElement, installCardDefs } from './cardart.js';
 import { clear, el, wait } from './dom.js';
+import { enableTableFullscreen } from './fullscreen.js';
 import { topbar } from './screens.js';
 
 const RULES_TEXT = {
@@ -45,9 +46,21 @@ const RULES_TEXT = {
     'Ban Ban — two aces — pays 3:1. Ban Luck — an ace with a ten-value card — pays 2:1. Both are checked the instant the first two cards land, on both sides of the table.',
     'If the dealer holds a special, the round ends at once: you lose at that multiple unless you hold an equal or better special of your own (ties push; Ban Ban beats Ban Luck).',
     '777 (three sevens) pays 7:1. Five Dragon (five cards totalling 21 or less) pays 2:1, or 3:1 on exactly 21. Both win the instant they are made.',
+    'Run: on your opening two cards only, a total of exactly 15 may be run instead of played — an instant push, bet back, and the dealer does not play that hand out.',
     'You need at least 16 to stand. A bust loses outright, even if the dealer goes on to bust too.',
     'The dealer draws below 16 and stands from 16. A dealer five-card hand of 21 or less beats any hand without a special of its own, at 2:1.',
     'No doubling, splitting, surrender or insurance. Ties push.',
+  ],
+  'malaysian-dealer': [
+    'You deal against four bots, each with their own bet within the table\'s min-max. Your bankroll is the house.',
+    'Two cards each, round-robin: the bots, then you, twice. The bots\' cards are dealt face down — you cannot see them until you open a hand.',
+    'Specials are checked the instant the cards land. A bot holding Ban Ban or Ban Luck is paid at once (3:1 / 2:1). If you hold one instead, the round ends immediately: every bot pays you at that multiple, unless it holds an equal or better special of its own, which pushes.',
+    'Bots then act in turn: Run on an opening 15, Hit, or Stand at 16 or more, up to five cards. A bot\'s own 777 or Five Dragon (five cards, 21 or less) pays out the instant it is made, at 7:1 or 2:1 (3:1 on exactly 21).',
+    'A bot bust is not revealed — its turn just ends, face down, waiting for you to open it.',
+    'Your turn: hit until at least 16 (never below), up to five cards. Once at 16 or more, tap any unresolved bot to open it — its cards flip face up and it settles against your total at that moment. You may keep drawing between openings; a later draw only changes hands opened after it.',
+    'If you reach five cards at 21 or less (your own Five Dragon) or three 7s (777), every still-unopened bot is settled at once, at 2:1 (3:1 on exactly 21) or 7:1.',
+    'If you bust, every still-unopened bot wins — except a bot that had busted itself, which pushes: both sides went over.',
+    'A bust, yours or a bot\'s, is always a flat loss of that bet alone, never scaled by whatever multiple the winning side would otherwise pay.',
   ],
 };
 
@@ -155,6 +168,13 @@ export class BlackjackGame {
     this.round = null;
     this.dealerRevealed = false;
     this.roundFinished = false;
+    // Malaysian only: which side of the table the human sits at. Chosen on a
+    // seat-picker screen before the felt renders; American has one seat and
+    // skips the picker entirely.
+    this.seat = this.isAmerican ? 'player' : null;
+    this.dround = null; // the dealer-seat round (distinct shape from this.round)
+    this.dealerSeatFinished = false;
+    this.teardownFullscreen = null;
     this.rng = makeRng(randomSeed());
   }
 
@@ -164,12 +184,70 @@ export class BlackjackGame {
     // A shoe to show a count from even before the first deal — Malaysian
     // replaces it every round anyway, American keeps this one across rounds.
     this.shoe = createShoe(this.isAmerican ? 6 : 1, this.rng);
+    if (!this.seat) {
+      this.renderSeatChoice();
+      return;
+    }
+    if (this.seat === 'dealer') {
+      this.renderDealerTable();
+      this.paintDealerActions();
+      return;
+    }
     this.renderTable();
     this.paintActions();
   }
 
   unmount() {
     this.stopped = true;
+    this.teardownFullscreen?.();
+  }
+
+  // --- Malaysian seat choice -------------------------------------------------
+
+  renderSeatChoice() {
+    clear(this.root);
+    const bankroll = this.app.profile.bankroll;
+    const req = MY.dealerSeatBankrollRequirement(this.table);
+    const canDealer = MY.canPlayDealerSeat(this.table, bankroll);
+    this.root.append(
+      topbar(this.app),
+      el('main.page',
+        el('button.back-link', { type: 'button', onclick: () => this.leave() }, `← ${this.table.name}`),
+        el('div.page__head',
+          el('h1.page__title', 'Choose your seat'),
+          el('p.page__sub', 'Play one hand against the house, or deal against four bots with your own bankroll as the house.'),
+        ),
+        el('div.tiles',
+          el('button.tile', { type: 'button', style: '--accent:#a9701f', onclick: () => this.chooseSeat('player') },
+            el('span.tile__accent'),
+            el('h2.tile__name', 'Play as player'),
+            el('p.tile__tag', 'One hand against the house'),
+            el('p.tile__desc', 'Ban Ban, Ban Luck, 777 and Five Dragon pay out the instant they are made, and Run turns an opening 15 into an instant push.'),
+          ),
+          el('button.tile', {
+            type: 'button', style: '--accent:#7a1f4d', disabled: !canDealer,
+            onclick: () => { if (canDealer) this.chooseSeat('dealer'); },
+          },
+            el('span.tile__accent'),
+            el('h2.tile__name', 'Play as dealer'),
+            el('p.tile__tag', 'Four bots, your bankroll is the house'),
+            el('p.tile__desc', 'Deal, watch the bots play their hands face down, then open the ones you want once you reach 16.'),
+            !canDealer ? el('p.lobby__lock', `Needs ${formatChips(req, true)} bankroll to cover the table`) : null,
+          ),
+        ),
+      ),
+    );
+  }
+
+  chooseSeat(seat) {
+    this.seat = seat;
+    if (seat === 'dealer') {
+      this.renderDealerTable();
+      this.paintDealerActions();
+    } else {
+      this.renderTable();
+      this.paintActions();
+    }
   }
 
   // --- betting -------------------------------------------------------------
@@ -179,11 +257,15 @@ export class BlackjackGame {
     return this.bet >= this.table.min && this.bet <= this.table.max && this.bet <= bankroll && this.bet > 0;
   }
 
+  rulesKey() {
+    return this.variant === 'malaysian' && this.seat === 'dealer' ? 'malaysian-dealer' : this.variant;
+  }
+
   showRules() {
     const overlay = el('div.bj-overlay',
       el('div.bj-rules',
-        el('h2', `${variantName(this.variant)} rules`),
-        el('ul', ...RULES_TEXT[this.variant].map((line) => el('li', line))),
+        el('h2', `${variantName(this.variant)} rules${this.seat === 'dealer' ? ' — dealer seat' : ''}`),
+        el('ul', ...RULES_TEXT[this.rulesKey()].map((line) => el('li', line))),
         el('div.btn-row', { style: 'justify-content:center' },
           el('button.btn.btn--primary', { type: 'button', onclick: () => overlay.remove() }, 'Close'),
         ),
@@ -341,6 +423,12 @@ export class BlackjackGame {
         ),
       ),
     );
+    // renderTable() rebuilds the whole felt every round (deal() calls it
+    // again) — tear down the previous fullscreen wiring first, or its
+    // document-level fullscreenchange listener and toggle button pile up on
+    // detached nodes each round.
+    this.teardownFullscreen?.();
+    this.teardownFullscreen = enableTableFullscreen(n.table, hud);
 
     this.paintDealer();
     this.paintHands();
@@ -394,6 +482,7 @@ export class BlackjackGame {
     if (hand.result === 'banluck') return 'Ban Luck';
     if (hand.result === '777') return '777';
     if (hand.result === 'five-dragon') return 'Five Dragon';
+    if (hand.result === 'run') return 'Run';
     return t.soft ? `Soft ${t.total}` : `${t.total}`;
   }
 
@@ -450,8 +539,13 @@ export class BlackjackGame {
         el('button.btn', { type: 'button', disabled: !US.canSurrender(this.round), onclick: () => this.onSurrender() }, 'Surrender'),
       );
     } else {
+      // Run sits before Hit/Stand, and only while it is actually on offer —
+      // the opening two cards, at exactly 15.
+      if (MY.canRun(this.round)) {
+        n.actions.append(el('button.btn.btn--primary', { type: 'button', onclick: () => this.onRun() }, 'Run'));
+      }
       n.actions.append(
-        el('button.btn.btn--primary', { type: 'button', disabled: !MY.canHit(this.round), onclick: () => this.onHit() }, 'Hit'),
+        el('button.btn', { type: 'button', disabled: !MY.canHit(this.round), onclick: () => this.onHit() }, 'Hit'),
         el('button.btn', { type: 'button', disabled: !MY.canStand(this.round), onclick: () => this.onStand(), title: MY.canStand(this.round) ? '' : 'Need at least 16 to stand' }, 'Stand'),
       );
     }
@@ -496,6 +590,11 @@ export class BlackjackGame {
 
   onStand() {
     this.engine.stand(this.round);
+    this.afterAction();
+  }
+
+  onRun() {
+    MY.run(this.round);
     this.afterAction();
   }
 
@@ -714,6 +813,7 @@ export class BlackjackGame {
       if (r === '777') return '777!';
       if (r === 'five-dragon') return 'Five Dragon!';
       if (r === 'bust') return 'Bust';
+      if (r === 'run') return 'Run — push';
       // The round can also end because the dealer held the special, not the
       // player — say so, rather than a flat "You lose" for a 3x hit.
       const dealerSpecial = this.round.dealer.special;
@@ -741,6 +841,7 @@ export class BlackjackGame {
         case '777': return 'Three sevens, pays 7:1';
         case 'five-dragon': return `Five cards at ${playerTotal}, pays ${playerTotal === 21 ? 3 : 2}:1`;
         case 'bust': return `You bust with ${playerTotal}`;
+        case 'run': return 'Bet returned';
         default: break;
       }
       const dealerSpecial = this.round.dealer.special;
@@ -794,6 +895,7 @@ function resultText(hand, isAmerican) {
     case 'banluck': return 'Ban Luck, pays 2:1';
     case '777': return '777, pays 7:1';
     case 'five-dragon': return 'Five Dragon';
+    case 'run': return 'Run, push';
     case 'win': return 'Win';
     case 'lose': return 'Lose';
     case 'push': return 'Push';
