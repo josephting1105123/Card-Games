@@ -1203,7 +1203,12 @@ export class BlackjackGame {
    * (the "You (dealer)"/total row and the cards together), not just the
    * cards — the rows sit close together now that .bj-dealerseat-rows owns
    * the felt's spare space instead of stretching them apart, so the banner
-   * must clear that label line too, not just duck under the card tops. */
+   * must clear that label line too, not just duck under the card tops.
+   * Clamped a second way past just centring on the gap's midpoint: the
+   * banner's own measured half-height is kept inside an >=8px margin on
+   * each side, so a taller banner (a longer chip amount) cannot creep back
+   * into the seats above it or the dealer's row below it — the CSS gap is
+   * sized generously for this, but this is the actual guarantee. */
   showDealerSeatBanner(net) {
     const win = net > 0;
     const push = net === 0;
@@ -1218,10 +1223,19 @@ export class BlackjackGame {
     const feltRect = n.felt.getBoundingClientRect();
     const topRect = n.botRow.getBoundingClientRect();
     const bottomRect = n.dealer.getBoundingClientRect();
-    const safeTop = topRect.bottom + 3;
-    const safeBottom = bottomRect.top - 3;
-    const gapMid = (safeTop + safeBottom) / 2;
-    const top = Math.min(Math.max(gapMid - feltRect.top, 0), feltRect.height);
+    const clearance = 8;
+    const safeTop = topRect.bottom + clearance;
+    const safeBottom = bottomRect.top - clearance;
+    // offsetHeight, not getBoundingClientRect(): the banner starts this
+    // frame at its pre-animation scale(0.92) (see .bj-banner/.is-on below),
+    // which getBoundingClientRect() would report as a smaller-than-real
+    // box — offsetHeight is the layout size the transform is applied to,
+    // unaffected by it, so it is the banner's true final size.
+    const halfHeight = banner.offsetHeight / 2;
+    let mid = (safeTop + safeBottom) / 2;
+    mid = Math.max(mid, safeTop + halfHeight);
+    mid = Math.min(mid, safeBottom - halfHeight);
+    const top = Math.min(Math.max(mid - feltRect.top, 0), feltRect.height);
     banner.style.top = `${top}px`;
     requestAnimationFrame(() => banner.classList.add('is-on'));
   }
