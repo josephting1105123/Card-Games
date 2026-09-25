@@ -172,16 +172,43 @@ function playSeededGame(seed, skillNames) {
   return actions;
 }
 
+// grandmaster at every seat: the skill that actually exercises
+// findForcedWin/alphaBetaEndgame/endgameDecision (countsCards, and a
+// fourDisciplineThreshold that engages filterFourDiscipline), so this is the
+// profile most likely to expose any source of nondeterminism in them.
+const GRANDMASTER_TABLE = ['grandmaster', 'grandmaster', 'grandmaster'];
+
+// A single seed only fails to replay identically on a clock-dependent ai.js
+// when real timing jitter (GC, JIT warm-up, OS scheduling) happens to land a
+// decision on the wrong side of a deadline right as it is measured — one seed
+// is not enough to make that likely. 50 seeds each running a full three-bot
+// game reliably reproduces at least one such divergence against dc9260a's
+// ai.js (checked by hand: 3/3 runs failed at this count), while a stubbed
+// clock (below) makes the same kind of divergence deterministic outright.
+const REPLAY_SEEDS = Array.from({ length: 50 }, (_, i) => `determinism-check:${i}`);
+
+// Every seeded game is played at most once per seed and cached, since the
+// slow-clock test below re-checks a subset of the same seeds against the same
+// unstubbed baseline rather than replaying it a second time.
+const baselineCache = new Map();
+function baselineFor(seed) {
+  if (!baselineCache.has(seed)) baselineCache.set(seed, playSeededGame(seed, GRANDMASTER_TABLE));
+  return baselineCache.get(seed);
+}
+
 test('a seeded game replays to the exact same moves — no fallbacks, deck conserved', () => {
-  // grandmaster at every seat: the skill that actually exercises
-  // findForcedWin/alphaBetaEndgame/endgameDecision (countsCards, and a
-  // fourDisciplineThreshold that engages filterFourDiscipline), so this is
-  // the profile most likely to expose any source of nondeterminism in them.
-  const seed = 'determinism-check:1';
-  const first = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
-  const second = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
-  assert.deepEqual(second, first, 'the same seed must produce the exact same sequence of decisions');
-  assert.ok(first.length > 20, 'sanity: a real game was actually played, not an empty one');
+  let totalActions = 0;
+  for (const seed of REPLAY_SEEDS) {
+    const baseline = baselineFor(seed);
+    const replay = playSeededGame(seed, GRANDMASTER_TABLE);
+    assert.deepEqual(replay, baseline, `seed ${seed}: the same seed must produce the exact same sequence of decisions`);
+    assert.ok(baseline.length > 0, `seed ${seed}: sanity — a real game was actually played, not an empty one`);
+    totalActions += baseline.length;
+  }
+  // A per-seed length floor is the wrong sanity check — a spring finishes a
+  // real game in well under 20 actions — so check the total across all 50
+  // seeds instead, which any one short (but legitimate) game cannot sink.
+  assert.ok(totalActions > 1000, `sanity: ${REPLAY_SEEDS.length} real games were played (${totalActions} actions total), not empty ones`);
 });
 
 test('replay does not depend on the clock: a slow machine plays the same moves', () => {
@@ -190,24 +217,24 @@ test('replay does not depend on the clock: a slow machine plays the same moves',
   // clients needing to agree on timing. Every search in ai.js is bounded by a
   // node count for exactly this reason; this test is what would catch it if
   // one ever went back to a wall-clock cutoff. Stubbing both clocks to crawl
-  // forward 50ms per call simulates a heavily loaded or slow machine: if any
-  // search were timing itself out early, this hand (grandmaster all round,
-  // the same seed the previous test already played unstubbed) would come out
-  // different.
-  const seed = 'determinism-check:1';
-  const baseline = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
-
+  // forward 50ms per call simulates a heavily loaded or slow machine: unlike
+  // the plain replay above, this divergence does not depend on real timing
+  // luck — on dc9260a's ai.js it reproduces on every single run (checked by
+  // hand: 6 of these 10 seeds diverge, every time).
   const realPerfNow = globalThis.performance.now;
   const realDateNow = Date.now;
-  let clock = 0;
-  globalThis.performance.now = () => { clock += 50; return clock; };
-  Date.now = () => { clock += 50; return clock; };
-  let stubbed;
-  try {
-    stubbed = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
-  } finally {
-    globalThis.performance.now = realPerfNow;
-    Date.now = realDateNow;
+  for (const seed of REPLAY_SEEDS.slice(0, 10)) {
+    const baseline = baselineFor(seed);
+    let clock = 0;
+    globalThis.performance.now = () => { clock += 50; return clock; };
+    Date.now = () => { clock += 50; return clock; };
+    let stubbed;
+    try {
+      stubbed = playSeededGame(seed, GRANDMASTER_TABLE);
+    } finally {
+      globalThis.performance.now = realPerfNow;
+      Date.now = realDateNow;
+    }
+    assert.deepEqual(stubbed, baseline, `seed ${seed}: a stubbed, crawling clock must not change a single decision`);
   }
-  assert.deepEqual(stubbed, baseline, 'a stubbed, crawling clock must not change a single decision');
 });
