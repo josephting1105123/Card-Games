@@ -42,7 +42,10 @@ export const DEFAULT_SETTINGS = {
   currency: DEFAULT_ROOM_CURRENCY,
   ...suggestedStakes(DEFAULT_ROOM_CURRENCY),
   baseMultiplier: 2,
-  capFactor: 50,
+  // Matches core/economy.js's HAND_CAP_FACTOR: doubled alongside the multiplier
+  // itself now that the base is a real factor rather than a floor, so an
+  // ordinary bomb or two still settles in full at the default room settings.
+  capFactor: 100,
   botSkill: 'steady',
   humanSeats: 2, // the rest of the three seats are filled by bots
 };

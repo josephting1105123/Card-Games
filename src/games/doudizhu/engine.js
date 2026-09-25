@@ -7,7 +7,10 @@
  *     must beat the standing call. A call of 3 ends bidding at once. If all
  *     three pass the hand is redealt.
  *   - The landlord takes the three face-down cards (20 in hand) and leads.
- *   - Stake multiplier = points called x 2 per bomb or rocket x 2 for a spring.
+ *   - Stake multiplier = base (2 by default) x points called x 2 per bomb or
+ *     rocket x 2 for a spring. The base is a real factor throughout, not a
+ *     floor applied after the fact: it is what the multiplier reads before
+ *     bidding settles, so a bomb on even a 1-point call visibly does something.
  *   - Spring: the landlord wins without either farmer ever playing a card.
  *     Anti-spring: the farmers win and the landlord played only his opening hand.
  *
@@ -31,8 +34,9 @@ export const SEATS = 3;
  * @param {object} options
  * @param {string|number} options.seed
  * @param {{id: string, name: string, isBot?: boolean, skill?: object}[]} options.players exactly three
+ * @param {number} [options.baseMultiplier] the multiplier's starting factor, before bidding (default 2)
  */
-export function createGame({ seed, players }) {
+export function createGame({ seed, players, baseMultiplier = 2 }) {
   if (!Array.isArray(players) || players.length !== SEATS) {
     throw new Error(`Dou Di Zhu needs exactly ${SEATS} players`);
   }
@@ -41,6 +45,7 @@ export function createGame({ seed, players }) {
     seed: String(seed),
     deal: 0,
     phase: Phase.BIDDING,
+    baseMultiplier,
     players: players.map((p, seat) => ({
       seat,
       id: p.id,
@@ -63,7 +68,7 @@ export function createGame({ seed, players }) {
     passStreak: 0,
     bidValue: 0,
     bombs: 0,
-    multiplier: 1,
+    multiplier: baseMultiplier,
     plays: [],
     landlordPlays: 0,
     farmerPlays: 0,
@@ -92,7 +97,7 @@ function dealCards(state, rng) {
   state.passStreak = 0;
   state.bidValue = 0;
   state.bombs = 0;
-  state.multiplier = 1;
+  state.multiplier = state.baseMultiplier;
   state.plays = [];
   state.landlordPlays = 0;
   state.farmerPlays = 0;
@@ -154,7 +159,7 @@ function settleBidding(state) {
   state.trick = null;
   state.trickPlays = [];
   state.passStreak = 0;
-  state.multiplier = state.bidValue;
+  state.multiplier = state.baseMultiplier * state.bidValue;
   state.log.push({ kind: 'landlord', seat: landlord, points: state.bidValue });
   return { landlordChosen: landlord };
 }
