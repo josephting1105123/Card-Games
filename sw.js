@@ -13,7 +13,7 @@
  * stamp by hand.
  */
 
-const CACHE = 'card-games-ad43ff874e1a';
+const CACHE = 'card-games-a84526e50fd8';
 
 const PRECACHE = [
   './',
@@ -47,6 +47,7 @@ const PRECACHE = [
   './src/ui/blackjack.js',
   './src/ui/cardart.js',
   './src/ui/dom.js',
+  './src/ui/fullscreen.js',
   './src/ui/lan.js',
   './src/ui/screens.js',
   './src/ui/solo.js',
