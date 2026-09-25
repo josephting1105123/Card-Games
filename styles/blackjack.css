@@ -1,0 +1,194 @@
+/* ==========================================================================
+   blackjack.css — betting screen and the Blackjack table.
+   A separate implementation from table.css's Dou Di Zhu felt (one player,
+   one or more hands, no seats), so every class here is its own; nothing is
+   shared with .table/.hand/.seat/.play. Reads only the variables in
+   tokens.css, and reuses app.css's generic .page/.tile/.btn/.card-panel
+   scaffolding for the betting and picker screens the same way every other
+   screen in the app does.
+   ========================================================================== */
+
+/* --- betting screen ------------------------------------------------------- */
+
+.bj-bet-panel { display: flex; flex-direction: column; gap: 16px; max-width: 560px; }
+.bj-bet-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.bj-bet-amount {
+  font-size: clamp(28px, 5vw, 40px); color: var(--gold-bright);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.bj-chip-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.bj-chip {
+  border-radius: var(--r-pill); min-width: 64px; text-align: center;
+  border-color: rgba(205, 174, 108, 0.5);
+}
+
+/* --- overlays: rules panel and the result banner --------------------------
+   Own classes, styled the same way table.css's .overlay/.result are, so a
+   change to one never silently reaches the other. */
+
+.bj-overlay {
+  position: fixed; inset: 0; z-index: var(--z-overlay); display: grid; place-items: center; padding: 18px;
+  background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
+}
+.bj-rules {
+  width: min(92vw, 560px); max-height: 84vh; overflow-y: auto; padding: 24px 26px;
+  border-radius: var(--r-lg); border: 1px solid rgba(205, 174, 108, 0.4);
+  background: linear-gradient(170deg, #123a2d, #07241b); box-shadow: var(--shadow-8);
+}
+.bj-rules h2 { margin: 0 0 12px; font-size: clamp(20px, 3.4vw, 26px); color: var(--ivory); }
+.bj-rules ul { margin: 0 0 18px; padding-left: 20px; line-height: 1.7; color: var(--text-secondary); font-size: 15px; }
+.bj-rules li { margin-bottom: 8px; }
+
+.bj-result {
+  width: min(92vw, 520px); text-align: center; padding: 26px 26px 22px; border-radius: var(--r-lg);
+  border: 1px solid rgba(205, 174, 108, 0.4); background: linear-gradient(170deg, #123a2d, #07241b);
+  box-shadow: var(--shadow-8);
+}
+.bj-result__title { font-size: clamp(26px, 5.2vw, 38px); margin: 0 0 4px; }
+.bj-result__title.is-win { color: var(--gold-bright); }
+.bj-result__title.is-loss { color: #f0a58f; }
+.bj-result__title.is-push { color: var(--text-secondary); }
+.bj-result__delta { font-size: clamp(22px, 4.2vw, 30px); margin: 6px 0 14px; font-variant-numeric: lining-nums tabular-nums; }
+.bj-result__delta.is-win { color: var(--ok); }
+.bj-result__delta.is-loss { color: var(--danger); }
+.bj-result__delta.is-push { color: var(--text-secondary); }
+.bj-result__lines { list-style: none; margin: 0 0 18px; padding: 0; font-size: 15px; line-height: 1.5; color: var(--text-secondary); display: grid; gap: 6px; }
+.bj-result__lines span { color: var(--gold); }
+
+/* --- the table -------------------------------------------------------------
+   --card-w lives here, same rule table.css follows for .table: declared once
+   on the root so every descendant inherits it, overridden only on the cards
+   themselves (never with a percentage margin — it would resolve against the
+   row, not the card, and a 4-hand split or a 5-card Malaysian hand would
+   collapse into a pile as it grew). */
+
+.bj-table {
+  position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden;
+  --card-w: clamp(46px, 6.6vw, 80px);
+  background:
+    radial-gradient(60% 50% at 50% 38%, rgba(255, 255, 255, 0.08), transparent 70%),
+    radial-gradient(120% 100% at 50% 120%, rgba(0, 0, 0, 0.55), transparent 60%),
+    linear-gradient(170deg, var(--felt-table), #0c3326 55%, #071c15);
+}
+
+.bj-hud {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: clamp(6px, 1.4vw, 14px);
+  padding: 7px clamp(10px, 2vw, 22px);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.08));
+  border-bottom: 1px solid var(--hairline);
+  font-size: clamp(12px, 1.6vw, 15px);
+}
+.bj-hud__title { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bj-hud__spacer { flex: 1; }
+.bj-hud__pill {
+  display: flex; align-items: baseline; gap: 6px; white-space: nowrap;
+  padding: 5px 11px; border-radius: var(--r-pill);
+  border: 1px solid var(--hairline-strong); background: rgba(0, 0, 0, 0.3);
+}
+.bj-hud__pill small { font-size: 0.8em; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-tertiary); }
+.bj-hud__pill b { font-size: 1.15em; color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
+
+.bj-felt {
+  flex: 1; min-height: 0; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  gap: clamp(6px, 1.6vh, 16px); padding: clamp(6px, 1.6vh, 16px) 10px;
+}
+
+.bj-shoe { position: absolute; top: 6px; right: clamp(8px, 2vw, 20px); --card-w: clamp(26px, 3.6vw, 38px); opacity: 0.92; }
+
+.bj-dealer { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.bj-dealer__row { display: flex; align-items: baseline; gap: 10px; }
+.bj-dealer__name { font-size: var(--t-label); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-tertiary); }
+.bj-dealer__total { font-size: clamp(14px, 2.2vw, 19px); color: var(--gold-bright); min-height: 1.2em; }
+.bj-dealer__cards { display: flex; justify-content: center; min-height: calc(var(--card-w) * 1.4); }
+.bj-dealer__cards .card { --card-w: clamp(40px, 5.8vw, 68px); margin-left: calc(var(--card-w) * -0.42); box-shadow: -3px 2px 6px rgba(0, 0, 0, 0.4); }
+.bj-dealer__cards .card:first-child { margin-left: 0; }
+
+.bj-hands { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: clamp(8px, 1.8vw, 18px); max-width: 100%; }
+.bj-hand {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 6px 10px; border-radius: var(--r-md); border: 1px solid transparent;
+  transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std);
+}
+.bj-hand.is-active { border-color: var(--gold-bright); box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.28); }
+.bj-hand__cards { display: flex; min-height: calc(var(--card-w) * 1.4); }
+.bj-hand__cards .card { --card-w: clamp(32px, 5vw, 54px); margin-left: calc(var(--card-w) * -0.38); box-shadow: -3px 2px 6px rgba(0, 0, 0, 0.4); }
+.bj-hand__cards .card:first-child { margin-left: 0; }
+.bj-hand__foot { display: flex; gap: 10px; font-size: clamp(12px, 1.6vw, 14.5px); }
+.bj-hand__total { color: var(--gold); font-variant-numeric: lining-nums tabular-nums; }
+.bj-hand__bet { color: var(--text-tertiary); }
+.bj-hand__result { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); }
+
+.bj-actions { flex: 0 0 auto; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: clamp(8px, 1.6vw, 14px); padding: 8px 10px clamp(10px, 1.8vh, 16px); min-height: 46px; }
+.bj-actions .btn { padding: 9px 16px; font-size: clamp(14px, 1.8vw, 16px); }
+
+.bj-insurance {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 12px 18px; border-radius: var(--r-lg); border: 1px solid var(--hairline-strong);
+  background: rgba(6, 22, 17, 0.9); text-align: center; font-size: 14.5px; color: var(--text-secondary);
+}
+
+.bj-toast {
+  position: fixed; top: 14px; left: 50%; z-index: var(--z-overlay);
+  padding: 8px 18px; border-radius: var(--r-pill);
+  border: 1px solid var(--hairline-strong); background: rgba(0, 0, 0, 0.72); color: var(--ivory);
+  opacity: 0; transform: translate(-50%, -8px);
+  transition: opacity var(--dur-med) var(--ease-std), transform var(--dur-med) var(--ease-std);
+}
+.bj-toast.is-on { opacity: 1; transform: translate(-50%, 0); }
+
+.bj-rotate-gate { display: none; }
+@media (orientation: portrait) and (max-width: 960px) {
+  .bj-rotate-gate {
+    position: fixed; inset: 0; z-index: var(--z-rotate-gate); display: grid; place-items: center; text-align: center;
+    padding: 30px; background: linear-gradient(170deg, #0f3b2d, #061a14); color: var(--text);
+  }
+  .bj-rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--gold); }
+  .bj-rotate-gate h2 { margin: 0 0 8px; font-size: 25px; color: var(--ivory); }
+  .bj-rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
+}
+
+/* Short landscape windows (a phone with a browser bar): pull everything in
+   so a four-hand split or a five-card Malaysian hand still clears the hud
+   and the action row. */
+@media (orientation: landscape) and (max-height: 460px) {
+  .bj-table { --card-w: clamp(36px, 5.4vw, 54px); }
+  .bj-hud { padding-top: 4px; padding-bottom: 4px; }
+  .bj-felt { padding-top: 2px; padding-bottom: 2px; gap: 4px; }
+  .bj-dealer__cards .card { --card-w: clamp(32px, 4.6vw, 46px); }
+  .bj-hand__cards .card { --card-w: clamp(26px, 4vw, 40px); }
+  .bj-hands { gap: 8px; }
+  .bj-actions { min-height: 38px; padding-bottom: 6px; }
+  .bj-actions .btn { padding: 6px 12px; font-size: 13px; }
+}
+
+/* --- deal flight: transform and opacity only, so it stays on the compositor */
+
+.bj-flyers { position: fixed; inset: 0; pointer-events: none; z-index: 6; }
+.bj-flyer { position: fixed; transform: translate(-50%, -50%); will-change: transform, opacity; }
+.bj-flyers.is-flying .bj-flyer {
+  animation: bj-deal-out 300ms var(--ease) forwards;
+  animation-delay: calc(var(--i, 0) * 120ms); /* matches STAGGER_MS in ui/blackjack.js */
+}
+@keyframes bj-deal-out {
+  from { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1); opacity: 1; }
+}
+
+/* A card hit in: a small pop rather than a flight, since it starts already
+   where it belongs. */
+.bj-card-enter { animation: bj-card-enter 220ms var(--ease-std); }
+@keyframes bj-card-enter {
+  from { opacity: 0; transform: translateY(14px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The hole card: a scaleX flip, with the face swapped in JS at the midpoint
+   (see flipHoleCard in ui/blackjack.js) — never a rotateY-with-backface setup,
+   which would need a layout-affecting perspective on an ancestor. */
+.bj-flip { display: inline-block; }
+.bj-flip.is-flipping { animation: bj-flip 360ms var(--ease-std); }
+@keyframes bj-flip {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(0); }
+}
