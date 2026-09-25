@@ -331,7 +331,6 @@ function filterFourDiscipline(view, skill, moves, unseen) {
 
 const FORCED_WIN_MAX_HAND = 8;
 const FORCED_WIN_NODE_BUDGET = 20_000;
-const FORCED_WIN_TIME_BUDGET_MS = 10; // small hands only, so this is expected to be generous, not binding
 
 /**
  * Bounded exact endgame search. Looks for an ordering of `hand` into leads
@@ -346,14 +345,18 @@ const FORCED_WIN_TIME_BUDGET_MS = 10; // small hands only, so this is expected t
  * lead again) would be missed. Only ever tried on hands of FORCED_WIN_MAX_HAND
  * cards or fewer, where the search is cheap regardless; the node budget is a
  * backstop against a pathological hand, not something expected to bind.
+ *
+ * Bounded by node count alone, not wall-clock time: every bot decision has to
+ * replay identically from its seed (see core/rng.js), on a phone or a loaded
+ * LAN host alike, and a clock-based cutoff would make the move depend on how
+ * fast the machine happened to be at the time.
  */
 function findForcedWin(hand, unseen) {
   if (!hand.length || hand.length > FORCED_WIN_MAX_HAND) return null;
   let budget = FORCED_WIN_NODE_BUDGET;
-  const deadline = performance.now() + FORCED_WIN_TIME_BUDGET_MS;
   const search = (cards) => {
     if (cards.length === 0) return [];
-    if (--budget < 0 || performance.now() > deadline) return null;
+    if (--budget < 0) return null;
     const leads = enumerateLeads(cards, { kickerChoices: 1 }).filter((m) => unanswerable(m, unseen));
     // Try the plays that shed the most cards first: not needed for correctness
     // (any successful decomposition proves the win), just finds one faster.
@@ -388,16 +391,20 @@ function currentPassStreak(view) {
 
 const ENDGAME_TOTAL_MAX = 21;       // sum of all three hands left in play
 const ENDGAME_DETERMINIZATIONS = 8; // sampled splits of the unseen pool
-const ENDGAME_NODE_BUDGET = 6_000;  // per determinization — the wall-clock deadline below is what actually bounds worst-case time now
-// A hand of legalPlays() candidates costs more the bigger the hand, so the
-// node count alone does not bound wall-clock time — a handful of the widest
-// determinizations, at 24,000 games, took over the 150ms per-move ceiling
-// even with the settings above. This is the actual constraint: one whole
-// endgameDecision() call (every candidate, every determinization) gets this
-// many milliseconds in total, checked cheaply on every search node, and once
-// it is spent every further search in this decision reads as "unknown" and
-// falls back to the ordinary heuristic — same as running out of node budget.
-const ENDGAME_TIME_BUDGET_MS = 22;
+const ENDGAME_CANDIDATE_LIMIT = 10; // how many of my own candidate moves get the full determinized evaluation
+// One search-node counter for the whole endgameDecision() call — every
+// candidate, every determinization together, not a fresh budget per search.
+// A per-search budget let a decision cost (candidates x determinizations)
+// times as much as a single search looked like, which is what pushed worst-
+// case time past the 150ms ceiling once the search window widened enough to
+// matter. This is node count, not wall-clock time: every bot decision has to
+// replay identically from its seed on any machine (see core/rng.js), and a
+// clock-based cutoff would make the chosen move depend on how fast the
+// machine that happened to compute it was. A hand here is at most
+// ENDGAME_TOTAL_MAX cards, so the cost of a single node (legalPlays on a
+// bounded hand) is itself bounded, and node count is calibrated below,
+// empirically, against wall-clock time on the reference machine.
+const ENDGAME_NODE_BUDGET_TOTAL = 9_000;
 
 /**
  * Exact two-player alpha-beta (landlord maximising, the two farmers on one
@@ -410,12 +417,13 @@ const ENDGAME_TIME_BUDGET_MS = 22;
  * alpha-beta bounds that a two-valued game affords.
  *
  * Returns { value, choice } where choice is { cards } or { pass: true }, or
- * { value: null, choice: null } once the node budget or the wall-clock
- * deadline runs out — every caller must treat null as "unknown" and bail the
- * whole search, not as a result.
+ * { value: null, choice: null } once the shared node budget runs out — every
+ * caller must treat null as "unknown" and bail the whole search, not as a
+ * result. `budget` is the one object shared across the whole endgameDecision()
+ * call — see ENDGAME_NODE_BUDGET_TOTAL.
  */
 function alphaBetaEndgame(hands, turn, current, leader, passStreak, roles, budget) {
-  if (--budget.n < 0 || performance.now() > budget.deadline) return { value: null, choice: null };
+  if (--budget.n < 0) return { value: null, choice: null };
   const hand = hands[turn];
   const maximizing = roles[turn] === 'landlord';
   const moves = legalPlays(hand, current, { kickerChoices: 2 });
@@ -459,19 +467,17 @@ function alphaBetaEndgame(hands, turn, current, leader, passStreak, roles, budge
   return { value: bestValue, choice: best };
 }
 
-/** How many of my own candidate moves get the full determinized evaluation. */
-const ENDGAME_CANDIDATE_LIMIT = 10;
-
 /**
  * Apply one candidate (a move, or pass) to a fully-determined world and read
  * off whether the seat that owns this decision goes on to win it, with both
  * sides playing the rest out exactly (alphaBetaEndgame). Emptying the hand
  * outright is resolved without a search — there is nothing left to play.
- * Returns null when the search could not finish inside its node budget or the
- * decision's shared wall-clock deadline.
+ * Returns null when the search could not finish inside the decision's shared
+ * node budget. `budget` is that shared object, passed in by endgameDecision()
+ * so nodes spent on earlier candidates and worlds count against the same
+ * total rather than each call getting its own fresh allowance.
  */
-function evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles, deadline) {
-  const budget = { n: ENDGAME_NODE_BUDGET, deadline };
+function evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles, budget) {
   if (choice === null) {
     // Pass: only legal mid-trick. Work out where the turn and the trick
     // itself land next, exactly as pass() in engine.js does.
@@ -560,15 +566,16 @@ function endgameDecision(view, skill, unseen, rng) {
   const worldSeeds = [];
   for (let k = 0; k < ENDGAME_DETERMINIZATIONS; k++) worldSeeds.push(shuffle([...unseen], rng));
 
-  // One shared deadline for the whole decision (every candidate, every
-  // determinization), not one per search — otherwise a slow decision is just
-  // as slow, only now made of many searches that each individually looked
-  // cheap enough.
-  const deadline = performance.now() + ENDGAME_TIME_BUDGET_MS;
+  // One shared node budget for the whole decision (every candidate, every
+  // determinization), not one per search — otherwise a search that looked
+  // cheap in isolation still added up to an expensive decision once there
+  // were (candidates x determinizations) of them. Deterministic and
+  // machine-independent: see ENDGAME_NODE_BUDGET_TOTAL.
+  const budget = { n: ENDGAME_NODE_BUDGET_TOTAL };
 
   let best = null;
   for (const choice of shortlist) {
-    if (performance.now() > deadline) break; // whatever is already scored stands; nothing new gets started
+    if (budget.n <= 0) break; // whatever is already scored stands; nothing new gets started
     let wins = 0;
     let evaluated = 0;
     for (const pool of worldSeeds) {
@@ -585,13 +592,14 @@ function endgameDecision(view, skill, unseen, rng) {
         hands[p.seat] = pool.slice(cursor, cursor + p.cards);
         cursor += p.cards;
       }
-      const value = evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles, deadline);
-      if (value === null) continue; // this world's search ran out of budget or time; skip rather than guess
+      const value = evaluateChoice(hands, seat, choice, hand, current, leader, passStreak, roles, budget);
+      if (value === null) continue; // this world's search ran out of the shared node budget; skip rather than guess
       evaluated += 1;
       if (iAmLandlord ? value === 1 : value === 0) wins += 1;
     }
-    // A candidate the deadline caught partway through is worse information,
-    // not a worse move — comparing its rate against a fully-sampled rival
+    // A candidate the shared budget ran out on partway through is worse
+    // information, not a worse move — comparing its rate against a
+    // fully-sampled rival
     // would be comparing noise to signal, so it is left out of the running
     // entirely rather than letting a lucky partial sample win on paper and
     // then get discarded anyway (which used to make the whole search bail

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHand } from '../src/core/cards.js';
-import { SKILLS, bestMove } from '../src/games/doudizhu/ai.js';
+import { makeRng } from '../src/core/rng.js';
+import { SKILLS, bestMove, chooseBid, chooseMove, skillByName } from '../src/games/doudizhu/ai.js';
+import { Phase, bid, createGame, pass, play, seatView } from '../src/games/doudizhu/engine.js';
 import { Combo, classify } from '../src/games/doudizhu/rules.js';
 
 /**
@@ -125,4 +127,87 @@ test('the ladder stays monotone: fourDisciplineThreshold only tightens as skill 
   assert.equal(SKILLS.expert.fourDisciplineThreshold, 3);
   assert.equal(SKILLS.master.fourDisciplineThreshold, 2);
   assert.equal(SKILLS.grandmaster.fourDisciplineThreshold, 2);
+});
+
+/**
+ * Plays one whole game with a bot in every seat, recording every decision
+ * exactly (bid values, and the exact card ids of every play — not just the
+ * combo shape, since two different kickers on the same trio would otherwise
+ * look identical). A minimal driver rather than match.js's botTurn/
+ * simulateGame, because those exist for tuning and timing, not to pin down
+ * the exact sequence of decisions bit for bit.
+ */
+function playSeededGame(seed, skillNames) {
+  const players = skillNames.map((name, seat) => ({
+    id: `s${seat}`, name, isBot: true, skill: skillByName(name),
+  }));
+  const state = createGame({ seed, players, baseMultiplier: 2 });
+  const rng = makeRng(`${seed}:play`);
+  const actions = [];
+  let steps = 0;
+  while (state.phase !== Phase.FINISHED) {
+    if (++steps > 4000) throw new Error('playSeededGame: table did not finish');
+    const isBidding = state.phase === Phase.BIDDING;
+    const seat = isBidding ? state.bidding.turn : state.turn;
+    const skill = players[seat].skill;
+    const view = seatView(state, seat);
+    if (isBidding) {
+      const value = chooseBid(view, skill, rng);
+      actions.push({ kind: 'bid', seat, value });
+      const res = bid(state, seat, value);
+      assert.ok(res.ok, `bid should always be legal: ${res.error}`);
+      continue;
+    }
+    const move = chooseMove(view, skill, rng);
+    if (!move || move.pass) {
+      actions.push({ kind: 'pass', seat });
+      const res = pass(state, seat);
+      assert.ok(res.ok, `pass should always be legal: ${res.error}`);
+      continue;
+    }
+    actions.push({ kind: 'play', seat, ids: [...move.cards.map((c) => c.id)].sort((a, b) => a - b) });
+    const res = play(state, seat, move.cards);
+    assert.ok(res.ok, `bot move should always be legal: ${res.error}`);
+  }
+  return actions;
+}
+
+test('a seeded game replays to the exact same moves — no fallbacks, deck conserved', () => {
+  // grandmaster at every seat: the skill that actually exercises
+  // findForcedWin/alphaBetaEndgame/endgameDecision (countsCards, and a
+  // fourDisciplineThreshold that engages filterFourDiscipline), so this is
+  // the profile most likely to expose any source of nondeterminism in them.
+  const seed = 'determinism-check:1';
+  const first = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
+  const second = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
+  assert.deepEqual(second, first, 'the same seed must produce the exact same sequence of decisions');
+  assert.ok(first.length > 20, 'sanity: a real game was actually played, not an empty one');
+});
+
+test('replay does not depend on the clock: a slow machine plays the same moves', () => {
+  // core/rng.js's whole point is that a bot decision replays exactly from its
+  // seed — for bug reports, and so the LAN host stays authoritative without
+  // clients needing to agree on timing. Every search in ai.js is bounded by a
+  // node count for exactly this reason; this test is what would catch it if
+  // one ever went back to a wall-clock cutoff. Stubbing both clocks to crawl
+  // forward 50ms per call simulates a heavily loaded or slow machine: if any
+  // search were timing itself out early, this hand (grandmaster all round,
+  // the same seed the previous test already played unstubbed) would come out
+  // different.
+  const seed = 'determinism-check:1';
+  const baseline = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
+
+  const realPerfNow = globalThis.performance.now;
+  const realDateNow = Date.now;
+  let clock = 0;
+  globalThis.performance.now = () => { clock += 50; return clock; };
+  Date.now = () => { clock += 50; return clock; };
+  let stubbed;
+  try {
+    stubbed = playSeededGame(seed, ['grandmaster', 'grandmaster', 'grandmaster']);
+  } finally {
+    globalThis.performance.now = realPerfNow;
+    Date.now = realDateNow;
+  }
+  assert.deepEqual(stubbed, baseline, 'a stubbed, crawling clock must not change a single decision');
 });
