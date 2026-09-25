@@ -134,6 +134,24 @@
 
   --ring: 0 0 0 2px var(--gold-bright);
 
+  /* ----- Card faces: glossy black stock, gold/rose-gold ink -----
+     Dou Di Zhu's bold style takes these colours only, over its existing
+     layout; the default style (every other game, incl. Blackjack) takes the
+     full engraved-black design. One palette either way, read by the SVG
+     gradients cardart.js builds (a <stop style="stop-color:var(--x)"> reads
+     a custom property exactly like any other computed style). */
+  --face-top: #2a2a2c;
+  --face-bottom: #0e0e10;
+  --face-edge: #3a3a3d;
+  --gold-ink-1: #f3d58a;
+  --gold-ink-2: #c9a24a;
+  --gold-ink-3: #9a7424;
+  --rose-ink-1: #f6c2a8;
+  --rose-ink-2: #d98a74;
+  --rose-ink-3: #a8564a;
+  --joker-silver-1: #d9d4c7;
+  --joker-silver-2: #9c968a;
+
   color-scheme: dark;
 }
 
