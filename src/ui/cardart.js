@@ -9,7 +9,7 @@
  * <use>, which keeps a twenty-card fan cheap to build and repaint.
  */
 
-import { JOKER_COLOUR, SUIT_COLOUR, SUIT_SYMBOL, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
+import { JOKER_COLOUR, RANK_MIN, RANK_TWO, SUIT_COLOUR, SUIT_SYMBOL, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
 
 const VB_W = 100;
 const VB_H = 140;
@@ -229,20 +229,231 @@ export function cardAria(card) {
   return `${rankLabel(card.rank)} of ${card.suit}s`;
 }
 
+/* ==========================================================================
+ * The "bold" style — opt-in, Dou Di Zhu table only.
+ *
+ * A plain, high-contrast index card rather than an engraved one: white stock,
+ * a hairline border, one oversized rank+suit index pinned to the top-left 34%
+ * of the card so it still reads when the fan shows only a sliver, and one big
+ * suit glyph bottom-right. No gold rules, no centre pips, no court art — the
+ * complaint this answers is "hard to see", so everything here optimises for
+ * legibility at a glance over period-correct engraving.
+ *
+ * Built in its own <symbol> sheet, installed lazily on first use, so a table
+ * that never asks for `style: 'bold'` (Blackjack, on the default style) never
+ * pays for it and the default deck's own symbols are untouched.
+ * ========================================================================== */
+
+const BOLD_DEFS_ID = 'cg-card-bold-defs';
+
+/** Numeral ranks (2-10) are drawn as fixed-weight paths rather than set in
+ * type: EB Garamond's oldstyle figures vary in height and shape (8 and 9
+ * dip below the baseline, 10's "1" and "0" don't match either), which reads
+ * as uneven next to each other in a fan. Every digit symbol's ink spans the
+ * same y=[0, DIGIT_H] box, so placing any of them at the same x/y/height on
+ * a card lines up every numeral's top and baseline exactly, whatever rank it
+ * is — a seven-segment layout guarantees that by construction, since every
+ * digit 0-9 includes a stroke touching both the top and the bottom edge.
+ * J/Q/K/A and the jokers are unaffected: they stay in the deck's own type. */
+const DIGIT_H = 62; // card units of 140; 62/140 = 44.3%, inside the letters' own measured 42.9-46.7% cap height
+const DIGIT_Y = 4; // top, card units
+const DIGIT_W = 20; // box width for the digits 0 and 2-9
+const DIGIT_STROKE = 5; // heavy: 25% of DIGIT_W
+const DIGIT_ONE_W = 8; // "1" is a plain bar, narrower — what keeps "10" condensed
+const DIGIT_ONE_BAR = 4;
+const DIGIT_GAP = 1; // between "1" and "0" when the rank is "10"
+
+// Seven-segment naming: a=top, b=top-right, c=bottom-right, d=bottom,
+// e=bottom-left, f=top-left, g=middle.
+const DIGIT_SEGMENTS = {
+  0: 'abcdef', 2: 'abged', 3: 'abgcd', 4: 'fgbc', 5: 'afgcd',
+  6: 'afgecd', 7: 'abc', 8: 'abcdefg', 9: 'abcdfg',
+};
+
+/** One segment as a filled rect. Horizontal segments run half a stroke past
+ * each end, so a corner (e.g. "a" meeting "f") is fully covered by the
+ * horizontal bar alone rather than leaving a one-pixel notch. */
+function digitSegmentRect(kind, xL, xR, yT, yM, yB, half) {
+  // f/b and c/e reach half a stroke past yT/yB too (not just up to them): a
+  // digit missing the top bar ("4": no "a") or the bottom bar ("7": no "d")
+  // would otherwise sit a hair shorter than the rest, breaking "every
+  // numeral has exactly the same top and baseline".
+  switch (kind) {
+    case 'a': return `<rect x="${(xL - half).toFixed(2)}" y="${(yT - half).toFixed(2)}" width="${(xR - xL + half * 2).toFixed(2)}" height="${half * 2}"/>`;
+    case 'd': return `<rect x="${(xL - half).toFixed(2)}" y="${(yB - half).toFixed(2)}" width="${(xR - xL + half * 2).toFixed(2)}" height="${half * 2}"/>`;
+    case 'g': return `<rect x="${(xL - half).toFixed(2)}" y="${(yM - half).toFixed(2)}" width="${(xR - xL + half * 2).toFixed(2)}" height="${half * 2}"/>`;
+    case 'f': return `<rect x="${(xL - half).toFixed(2)}" y="${(yT - half).toFixed(2)}" width="${half * 2}" height="${(yM - yT + half).toFixed(2)}"/>`;
+    case 'b': return `<rect x="${(xR - half).toFixed(2)}" y="${(yT - half).toFixed(2)}" width="${half * 2}" height="${(yM - yT + half).toFixed(2)}"/>`;
+    case 'e': return `<rect x="${(xL - half).toFixed(2)}" y="${yM}" width="${half * 2}" height="${(yB - yM + half).toFixed(2)}"/>`;
+    case 'c': return `<rect x="${(xR - half).toFixed(2)}" y="${yM}" width="${half * 2}" height="${(yB - yM + half).toFixed(2)}"/>`;
+    default: return '';
+  }
+}
+
+/** The ten digit <symbol>s (0-9), installed once into the bold defs sheet.
+ * fill is left unset: each renders inside the same `<g fill="currentColor">`
+ * every other bold glyph does, via the <use> that references it — a
+ * <use>'s shadow tree inherits from where it sits in the live document, the
+ * same handoff the pip symbols already rely on. */
+function digitDefsMarkup() {
+  const half = DIGIT_STROKE / 2;
+  const xL = half, xR = DIGIT_W - half, yT = 0, yM = DIGIT_H / 2, yB = DIGIT_H;
+  const digits = Object.entries(DIGIT_SEGMENTS).map(([n, segs]) => {
+    const body = segs.split('').map((k) => digitSegmentRect(k, xL, xR, yT, yM, yB, half)).join('');
+    return `<symbol id="cg-digit-${n}" viewBox="0 0 ${DIGIT_W} ${DIGIT_H}">${body}</symbol>`;
+  }).join('');
+  // "1" is a single bar with no horizontal segment of its own to anchor the
+  // half-stroke overshoot — it gets the same one directly, so it touches
+  // exactly the same top and bottom as every other digit.
+  const oneX = (DIGIT_ONE_W - DIGIT_ONE_BAR) / 2;
+  const one = `<symbol id="cg-digit-1" viewBox="0 0 ${DIGIT_ONE_W} ${DIGIT_H}"><rect x="${oneX}" y="${-half}" width="${DIGIT_ONE_BAR}" height="${DIGIT_H + half * 2}"/></symbol>`;
+  return digits + one;
+}
+
+/** True for the numeral ranks: 2-10 (this engine's Dou Di Zhu ordering
+ * stores "2" as rank 15, above ace, so it isn't caught by a plain range). */
+function isNumeralRank(rank) {
+  return (rank >= RANK_MIN && rank <= 10) || rank === RANK_TWO;
+}
+
+/** "2".."9" is one digit symbol; "10" is the "1" and "0" symbols set tight
+ * together — both scaled to the identical DIGIT_H, so top and baseline match
+ * every other numeral on the deck. The suit glyph sits a fixed gap under
+ * whichever digits were drawn, never overlapping them. */
+function boldDigitCorner(card) {
+  const label = rankIndex(card.rank); // "2".."9", or "10"
+  const glyphs = label === '10' ? ['1', '0'] : [label];
+  let x = 2;
+  const uses = glyphs.map((d) => {
+    const w = d === '1' ? DIGIT_ONE_W : DIGIT_W;
+    const markup = `<use href="#cg-digit-${d}" x="${x.toFixed(2)}" y="${DIGIT_Y}" width="${w}" height="${DIGIT_H}"/>`;
+    x += w + DIGIT_GAP;
+    return markup;
+  }).join('');
+  const suitY = DIGIT_Y + DIGIT_H + 4;
+  return `<g>${uses}<use href="#cg-pip-${card.suit}" x="2" y="${suitY}" width="28" height="28"/></g>`;
+}
+
+/** Left-edge index strip: rank glyph, then suit glyph beneath it. Both must
+ * stay inside x=[0, 34] (34% of the 100-unit-wide viewBox) and clear the
+ * height minimums the spec sets, so a card showing only its leftmost sliver
+ * in the fan still reads. Colours come from .card--bold-red/black in
+ * table.css, via currentColor — same handoff the default style uses. */
+function boldCornerIndex(card) {
+  if (isNumeralRank(card.rank)) return boldDigitCorner(card);
+  const label = rankIndex(card.rank);
+  const wide = label.length > 1; // "10": needs the most horizontal condensing
+  // textLength on every rank, not just "10": at heavy weight some single
+  // glyphs (K, A) render wider than the 34% strip on their own, so every
+  // rank is pinned to a fixed, measured-safe width rather than trusting the
+  // font's natural metrics.
+  const rankAttrs = wide
+    ? `font-size="46" textLength="27" lengthAdjust="spacingAndGlyphs"`
+    : `font-size="50" textLength="25" lengthAdjust="spacingAndGlyphs"`;
+  return `<g>
+    <text class="cg-bold-index" x="2" y="46" ${rankAttrs} font-weight="800" text-anchor="start">${label}</text>
+    <use href="#cg-pip-${card.suit}" x="2" y="52" width="28" height="28"/>
+  </g>`;
+}
+
+/** Big suit glyph, bottom-right, ~42% of the card's width. */
+function boldCornerSuit(card) {
+  const size = 42;
+  const x = VB_W - size - 4;
+  const y = VB_H - size - 4;
+  return `<use href="#cg-pip-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}"/>`;
+}
+
+/** JOKER, one letter per line, stacked down the same top-left strip. */
+function boldJokerIndex(card) {
+  const letters = 'JOKER'.split('');
+  const lines = letters.map((ch, i) => `<text class="cg-bold-index" x="4" y="${22 + i * 20}" font-size="19" font-weight="800" text-anchor="start">${ch}</text>`).join('');
+  return `<g>${lines}</g>`;
+}
+
+/** A big star (small joker) or crown (big joker), bottom-right. */
+function boldJokerBottom(card) {
+  const big = card.rank === 17;
+  const size = 42;
+  const x = VB_W - size - 4;
+  if (big) {
+    const h = size * 0.6;
+    return `<use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/>`;
+  }
+  return `<text x="${x + size / 2}" y="${VB_H - 8}" font-size="${size * 0.85}" text-anchor="middle">★</text>`;
+}
+
+/** The bold face's inner markup (without the <svg> wrapper). */
+export function cardFaceBoldBody(card) {
+  const colour = isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
+  const frame = `<rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-bold-stock)" stroke="#9a9a9a" stroke-width="1.2"/>`;
+  const corner = isJoker(card) ? boldJokerIndex(card) : boldCornerIndex(card);
+  const bottom = isJoker(card) ? boldJokerBottom(card) : boldCornerSuit(card);
+  // currentColor, set by .card--bold-red / .card--bold-black — see cardElement.
+  return `<g fill="currentColor" data-colour="${colour}">${frame}${corner}${bottom}</g>`;
+}
+
+/** The bold back's inner markup: white border, blue field, diamond lattice
+ * and a centred diamond ornament. Nothing here reads currentColor — a back
+ * has no text, so its colours are fixed in the defs below. */
+export function cardBackBoldBody() {
+  return `
+    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="#ffffff"/>
+    <rect x="6" y="6" width="${VB_W - 12}" height="${VB_H - 12}" rx="4" fill="url(#cg-bold-back-field)"/>
+    <rect x="6" y="6" width="${VB_W - 12}" height="${VB_H - 12}" rx="4" fill="url(#cg-bold-lattice)"/>
+    <use href="#cg-pip-diamond" x="32" y="47" width="36" height="46" fill="#ffffff" opacity="0.85"/>
+    <use href="#cg-pip-diamond" x="38" y="53" width="24" height="34" fill="#3f74d6" opacity="0.95"/>`;
+}
+
+function installBoldCardDefs(doc = globalThis.document) {
+  if (!doc || doc.getElementById(BOLD_DEFS_ID)) return;
+  const holder = doc.createElement('div');
+  holder.setAttribute('aria-hidden', 'true');
+  holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+  holder.innerHTML = `<svg id="${BOLD_DEFS_ID}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="cg-bold-stock" cx="0.5" cy="0.38" r="0.8">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f2f2f2"/>
+    </radialGradient>
+    <linearGradient id="cg-bold-back-field" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#2e63c9"/>
+      <stop offset="1" stop-color="#1f4aa0"/>
+    </linearGradient>
+    <pattern id="cg-bold-lattice" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <path d="M7 0 14 7 7 14 0 7z" fill="none" stroke="#ffffff" stroke-width="0.6" opacity="0.28"/>
+    </pattern>
+    ${digitDefsMarkup()}
+  </defs>
+</svg>`;
+  const sheet = holder.querySelector('svg');
+  const symbols = [];
+  for (let id = 0; id < 54; id++) {
+    symbols.push(`<symbol id="cg-card-bold-${id}" viewBox="0 0 ${VB_W} ${VB_H}">${cardFaceBoldBody(cardFromId(id))}</symbol>`);
+  }
+  symbols.push(`<symbol id="cg-card-bold-back" viewBox="0 0 ${VB_W} ${VB_H}">${cardBackBoldBody()}</symbol>`);
+  sheet.insertAdjacentHTML('beforeend', symbols.join(''));
+  doc.body.appendChild(holder);
+}
+
 /**
  * Build a card element.
  * @param {object|null} card null renders a face-down card
- * @param {{selectable?: boolean, index?: number, faceDown?: boolean}} [opts]
+ * @param {{selectable?: boolean, index?: number, faceDown?: boolean, style?: 'bold'}} [opts]
  */
 export function cardElement(card, opts = {}) {
   const down = !card || opts.faceDown;
+  const bold = opts.style === 'bold';
+  if (bold) installBoldCardDefs();
   const colour = down ? '' : isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
-  const key = down ? 'back' : `${card.id}:${colour}`;
-  const el = cardProto(
-    key,
-    down ? 'cg-card-back' : `cg-card-${card.id}`,
-    down ? 'card--down' : `card--${colour}`,
-  ).cloneNode(true);
+  const key = (down ? 'back' : `${card.id}:${colour}`) + (bold ? ':bold' : '');
+  const symbolId = bold
+    ? (down ? 'cg-card-bold-back' : `cg-card-bold-${card.id}`)
+    : (down ? 'cg-card-back' : `cg-card-${card.id}`);
+  const extraClass = bold
+    ? (down ? 'card--bold card--bold-down' : `card--bold card--bold-${colour}`)
+    : (down ? 'card--down' : `card--${colour}`);
+  const el = cardProto(key, symbolId, extraClass).cloneNode(true);
 
   if (opts.selectable) {
     // A button cannot be cloned from a div prototype, so the interactive case
