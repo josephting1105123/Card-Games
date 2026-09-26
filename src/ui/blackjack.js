@@ -947,6 +947,9 @@ export class BlackjackGame {
     this.mnodes.seats.forEach((s, i) => {
       const p = this.mround.players[i];
       if (!p) { this.paintSeatIdle(i); return; }
+      // A banker bust or banker special settles unopened seats in bulk
+      // without painting them, so their results would otherwise stay blank.
+      this.paintMSeat(i);
       s.box.classList.remove('is-openable', 'is-active');
       if (p.isHuman) {
         s.box.disabled = true;
@@ -965,6 +968,9 @@ export class BlackjackGame {
    * banking is gated the same 7x-per-filled-seat way Swap-to-banker is. */
   onToggleSeatBot(i) {
     if (this.mround && !this.mFinished) return;
+    // A banker tapping seats open can land one tap just after the round
+    // settles; without this grace period that tap would remove the bot.
+    if (this.mFinished && performance.now() - this.mSettledAt < 800) return;
     const hasBot = this.seatBots[i];
     if (!hasBot && this.role === 'banker') {
       const req = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker() + 1);
@@ -1490,6 +1496,7 @@ export class BlackjackGame {
     const net = MY.tableRoundNet(this.mround);
     recordBlackjackResult(this.app.profile, 'blackjack', net);
     this.mFinished = true;
+    this.mSettledAt = performance.now();
     this.clearMSeatHighlights();
     // Every seat can resolve at the deal itself (specials, every bot Run) and
     // never reach the banker's own turn — startMBankerPhase()/flipMBankerHole
