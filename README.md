@@ -5,8 +5,9 @@
 [![Deploy](https://github.com/josephting1105123/Card-Games/actions/workflows/pages.yml/badge.svg)](https://github.com/josephting1105123/Card-Games/actions/workflows/pages.yml)
 [![Tests](https://github.com/josephting1105123/Card-Games/actions/workflows/ci.yml/badge.svg)](https://github.com/josephting1105123/Card-Games/actions/workflows/ci.yml)
 
-A collection of classic card games in the browser. Dou Di Zhu (斗地主) is playable
-now; the rest are queued and keep their place in the menu.
+A collection of classic card games in the browser. Dou Di Zhu (斗地主), Big Two
+(锄大地) and Blackjack are playable now; the rest are queued and keep their
+place in the menu.
 
 Open the link above on a phone and add it to your home screen: it installs like
 an app, opens full screen in landscape, and runs with no signal at all.
@@ -25,7 +26,7 @@ node server/server.js     # host for local network play, also serves the app
 | Game | Status |
 | --- | --- |
 | **Dou Di Zhu** 斗地主 | Playable — single player and local multiplayer |
-| Big Two 锄大地 | Planned, next in the queue |
+| **Big Two** 锄大地 | Playable — single player |
 | **Blackjack** (American and Malaysian/Ban Luck) | Playable — single player |
 | Niu Niu 牛牛 | Planned |
 | Texas Hold'em | Planned |
@@ -74,6 +75,24 @@ The default ("classic") rule set, no house variations.
 - Stake multiplier = points called × 2 per bomb or rocket × 2 for a spring
   (landlord wins with neither farmer having played) or an anti-spring (farmers win
   and the landlord played only his opening hand).
+
+## Big Two rules
+
+52 cards, no jokers, four players, 13 each — no bidding, no bottom, everyone
+plays their own hand from the deal.
+
+- `3 < 4 < … < K < A < 2`; suits only ever break a tie, ranked `♦ < ♣ < ♥ < ♠`.
+- Whoever holds the 3♦ leads the first trick and must include it in that lead.
+- Combinations: single, pair, triple, or a five-card hand — Big Two has no
+  four-card play of its own. Five-card hands rank straight < flush < full house
+  < four of a kind (plus one kicker) < straight flush, regardless of the ranks
+  involved, and ties within a type fall back to suit.
+- Turns go counter-clockwise from you: right, then across, then left. Passing
+  three times in a row clears the trick back to whoever is still standing, who
+  leads next with anything they choose.
+- A hand ends the instant a seat empties. Every seat still holding cards pays
+  the winner `cards left × rate`, where rate is the table's pot ÷ 10 — flat,
+  with no multiplier to compound it.
 
 ## Chips, tables and the loss cap
 

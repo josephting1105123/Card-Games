@@ -30,9 +30,17 @@ export const GAMES = [
     nameZh: '锄大地',
     tagline: 'Deuces / Choi Dai Di',
     players: 4,
-    status: 'planned',
+    status: 'ready',
     accent: '#2f6fc8',
-    description: 'Four players, 13 cards each, suits rank. Poker hands beat poker hands. Next in the queue.',
+    description:
+      'Four players, 13 cards each, and suits rank too: ♦ < ♣ < ♥ < ♠. Whoever holds the 3♦ leads; empty your hand first and every other seat pays you by the card.',
+    ruleNotes: [
+      '3 < 4 < … < K < A < 2, and ♦ < ♣ < ♥ < ♠ breaks a tie in rank',
+      'Singles, pairs, triples and five-card hands only — no four-card plays',
+      'Five-card order: straight < flush < full house < four of a kind < straight flush',
+      'The 3♦ holder leads the first trick and must play it; three passes in a row clears the trick back to whoever played last',
+      'Each loser pays cards left × rate to the winner — no multipliers',
+    ],
   },
   {
     id: 'blackjack',
