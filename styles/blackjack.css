@@ -108,69 +108,95 @@
 .bj-hand__bet { color: var(--text-tertiary); }
 .bj-hand__result { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); }
 
-/* --- dealer seat: four bot seats above the human's own (large) hand. Bot
-   cards get their own, much smaller --card-w — the same local-override
-   pattern .bj-shoe already uses for the deck icon — since the felt's real
-   estate budget belongs to the dealer's own hand (>=20% of the viewport
-   height), not four secondary card fans. ----------------------------------- */
+/* --- the merged Malaysian table: one banker box (top) and four seats (a row
+   below it), with the human occupying exactly one of the five — the swap
+   button between them moves which one. Every box shares one set of classes
+   (.bj-box*); "you" (.bj-box--you) is the only one ever sized up to the
+   >=20%-of-viewport-height floor the spec sets for your own hand — a seat
+   never carries that modifier except while a human sits there, so the small
+   11vh size below is otherwise always safe for the row's width budget. ---- */
 
-/* The wrapper owns the felt's spare vertical space instead of .bj-felt's own
-   justify-content:space-between doing it — that rule is shared with the
-   single-seat table (renderTable()) and must stay untouched. flex:1 here
-   claims all the room .bj-felt would otherwise split around this one child;
-   justify-content:center + gap then places the bot row and the dealer's own
-   hand together in it, rather than stretched to the felt's far edges. */
-.bj-dealerseat-rows {
+/* flex:1 (not .bj-felt's own justify-content:space-between) claims the
+   felt's spare vertical space and centres the banker box, the swap button
+   and the seat row as one group in it — same technique the old
+   .bj-dealerseat-rows used, just generalised to a third child (the swap
+   button) between the other two. */
+.bj-mtable {
   flex: 1; min-height: 0; width: 100%;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  /* Floor is the result banner's own rendered height (53px in the live
-     app at this size — its line-height inherits from further up the tree
-     than a bare banner in isolation gets, so measure it live, not guess
-     it) plus >=8px clear on both sides. showDealerSeatBanner() centres the
-     banner in this exact gap (and additionally clamps its own edges to
-     that clearance, see there), so the gap must never be tighter than the
-     banner needs or the clamp has nowhere to put it. */
-  gap: clamp(76px, 3vh, 110px);
+  gap: clamp(10px, 2.6vh, 26px);
 }
 
-/* padding-right clears .bj-shoe (top-right, absolutely positioned) off the
-   last seat — sized a shade past the shoe's own width plus its right inset
-   so Farid's box never sits under it at the narrow phone widths where both
-   are fighting for the same corner. */
-.bj-botrow { display: flex; justify-content: center; align-items: flex-start; gap: clamp(4px, 1.4vw, 16px); width: 100%; padding-right: clamp(38px, 8vw, 64px); }
-.bj-botseat {
-  /* 264px, not 190px: a 5-card fan at the 11vh card width below needs
-     ~238px to stay clear of its own box at every size up to 1280 wide — a
-     cap this size never actually binds at the 844px-wide phone sizes,
-     where the row's own flex-computed width already lands under 190px. */
-  flex: 1 1 0; min-width: 0; max-width: 264px;
+.bj-seatrow { display: flex; justify-content: center; align-items: flex-start; gap: clamp(4px, 1.4vw, 16px); width: 100%; }
+
+.bj-box {
+  flex: 0 1 auto; min-width: 0;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 5px 6px; border-radius: var(--r-md); border: 1px solid var(--hairline-strong);
   background: rgba(0, 0, 0, 0.22); font: inherit; color: inherit;
-  /* A real touchstart on this seat must never be swallowed by Chromium's
-     default double-tap-to-zoom delay — a bot seat is never a zoom target. */
+  /* A real touchstart on a seat must never be swallowed by Chromium's
+     default double-tap-to-zoom delay. */
   touch-action: manipulation;
   transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std);
 }
-.bj-botseat:disabled { cursor: default; }
-/* Tappable only once the dealer is at 16+ and this hand is still pending
-   (see enableOpenableBotSeats in ui/blackjack.js) — the ring is the same
-   affordance .bj-hand.is-active uses for "this one's live". */
-.bj-botseat.is-openable { cursor: pointer; border-color: var(--gold-bright); box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.28); }
-.bj-botseat__name { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.bj-botseat__bet { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
-/* 11vh everywhere, phone sizes included: a constant proportion of viewport
-   height so >=15% of it is always a card's height (11 * 1.4 = 15.4%),
-   whatever the viewport — the two landscape queries below no longer need
-   their own override of this rule, just of the surrounding chrome. */
-.bj-botseat__cards { --card-w: 11vh; display: flex; min-height: calc(var(--card-w) * 1.4); align-items: center; justify-content: center; }
-.bj-botseat__cards .card { margin-left: calc(var(--card-w) * -0.5); }
-.bj-botseat__cards .card:first-child { margin-left: 0; }
-.bj-botseat__total { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); min-height: 1.2em; font-variant-numeric: lining-nums tabular-nums; }
-.bj-botseat__result { font-size: clamp(10.5px, 1.3vw, 12.5px); min-height: 1.2em; text-align: center; }
-.bj-botseat__result.is-win { color: var(--ok); }
-.bj-botseat__result.is-lose { color: var(--danger); }
-.bj-botseat__result.is-push { color: var(--text-secondary); }
+.bj-box:disabled { cursor: default; }
+button.bj-box:not(:disabled) { cursor: pointer; }
+/* The human's own box, wherever it is — gold ring, same affordance weight as
+   .bj-box.is-openable/.is-active below use for their own moments. */
+.bj-box--you { border-color: var(--gold-bright); box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.35); }
+/* Tappable only once the banker is at 16+ and this seat is still pending
+   (see enableOpenableMSeats in ui/blackjack.js). */
+.bj-box.is-openable { cursor: pointer; border-color: var(--gold-bright); box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.28); }
+/* Whose turn it is, seat or banker — a softer ring than "you"/"openable" so
+   the two never fight for attention when the active seat is also yours. */
+.bj-box.is-active { border-color: #7fd1a8; box-shadow: 0 0 0 2px rgba(127, 209, 168, 0.32); }
+
+.bj-box__row { display: flex; align-items: baseline; gap: 6px; max-width: 100%; }
+.bj-box__name { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.bj-box--you .bj-box__name { color: var(--gold-bright); }
+.bj-box__bet { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
+
+/* 11vh everywhere, phone sizes included, capped so a wide-but-not-tall
+   viewport (1280x720) never lets a 5-card fan outgrow the row's width
+   budget — the two landscape queries below only need to touch the
+   surrounding chrome, never this. */
+.bj-box__cards { --card-w: clamp(30px, 11vh, 64px); display: flex; min-height: calc(var(--card-w) * 1.4); align-items: center; justify-content: center; }
+.bj-box__cards .card { margin-left: calc(var(--card-w) * -0.5); }
+.bj-box__cards .card:first-child { margin-left: 0; }
+/* Your own box: the same >=20vh floor the single-hand table always used —
+   capped for the same reason as the small size above, just at a size a
+   5-card hand still clears the spec's percentage floors comfortably at
+   (see the measured table in the PR description). */
+.bj-box--you .bj-box__cards { --card-w: clamp(56px, 20vh, 110px); }
+
+.bj-box__total { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); min-height: 1.2em; font-variant-numeric: lining-nums tabular-nums; }
+.bj-box__result { font-size: clamp(10.5px, 1.3vw, 12.5px); min-height: 1.2em; text-align: center; }
+.bj-box__result.is-win { color: var(--ok); }
+.bj-box__result.is-lose { color: var(--danger); }
+.bj-box__result.is-push { color: var(--text-secondary); }
+
+/* --- swap: moves the human between the banker box and seat 1, between
+   rounds only. A circular icon badge (the reversal glyph) plus a caption —
+   not a bare icon button — so "Swap" reads without relying on an emoji
+   font. ----------------------------------------------------------------- */
+.bj-swap {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: 0; padding: 2px; font: inherit; color: var(--text-tertiary);
+  touch-action: manipulation;
+}
+.bj-swap:not(:disabled) { cursor: pointer; }
+.bj-swap:disabled { opacity: 0.45; cursor: default; }
+.bj-swap__icon {
+  width: clamp(32px, 5vh, 42px); height: clamp(32px, 5vh, 42px); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hairline-strong); background: rgba(0, 0, 0, 0.32); color: var(--gold-bright);
+  transition: border-color var(--dur-fast) var(--ease-std), transform var(--dur-fast) var(--ease-std);
+}
+.bj-swap__icon svg { width: 55%; height: 55%; }
+.bj-swap:not(:disabled):hover .bj-swap__icon { border-color: var(--gold-bright); }
+.bj-swap:not(:disabled):active .bj-swap__icon { transform: scale(0.92); }
+.bj-swap__label { font-size: clamp(10px, 1.3vw, 12px); letter-spacing: 0.08em; text-transform: uppercase; }
+.bj-swap__note { font-size: clamp(9.5px, 1.2vw, 11px); color: var(--text-tertiary); max-width: 22ch; text-align: center; }
 
 /* position + z-index: .bj-felt is itself position:relative (it anchors the
    banner), which alone would let its content paint above this non-positioned
@@ -244,10 +270,11 @@
 
 /* Short landscape windows (a phone with a browser bar): pull the chrome in
    so a four-hand split or a five-card Malaysian hand still clears the hud
-   and the action row. --card-w still clears 26%/24% of the viewport height
-   at every required size (18.6vh is the floor for that at 844x390, the
-   tighter of the two 26% cases) — the chrome around the cards is what gives
-   up its padding here, not the cards. */
+   and the action row. American's own --card-w (19vh) still clears 26% of
+   the viewport height here — its chrome gives up padding, not the cards.
+   Malaysian's own boxes need a second, larger cut (see .bj-mtable/.bj-box
+   below): the merged table's three-deep stack (banker, swap, seat row) does
+   not fit this height's real hud/action budget at the same card size. */
 @media (orientation: landscape) and (max-height: 460px) {
   .bj-table { --card-w: 19vh; }
   .bj-hud { padding: 2px clamp(8px, 2vw, 22px); gap: 6px; font-size: 11.5px; }
@@ -256,17 +283,28 @@
   .bj-dealer__row { gap: 6px; }
   .bj-dealer__total { font-size: 12px; }
   .bj-felt { padding: 1px 8px; gap: 1px; }
-  /* Same floor-for-the-banner logic as the base rule, sized to this query's
-     own smaller banner (21px tall, padding 3px 12px, 12px title) rather
-     than the desktop one. */
-  .bj-dealerseat-rows { gap: clamp(42px, 6vh, 56px); }
+  /* mtable's own three-child stack (banker box, swap, seat row) has to fit
+     the felt's real budget here (hud+actions leave less room than the base
+     rule's 26vh math assumed) — the gap, the swap caption and the box
+     padding are what give up space below, not the card floors. */
+  .bj-mtable { gap: clamp(4px, 1vh, 10px); }
   .bj-hands { gap: 6px; }
   .bj-hand { padding: 2px 6px; gap: 1px; }
   .bj-hand__foot { font-size: 11px; gap: 6px; }
-  .bj-botrow { gap: 4px; }
-  .bj-botseat { padding: 3px 4px; gap: 1px; }
-  .bj-botseat__name, .bj-botseat__bet { font-size: 10.5px; }
-  .bj-botseat__total, .bj-botseat__result { font-size: 9.5px; }
+  .bj-seatrow { gap: 4px; }
+  .bj-box { padding: 2px 4px; gap: 1px; }
+  .bj-box__name, .bj-box__bet { font-size: 10.5px; }
+  .bj-box__total, .bj-box__result { font-size: 9.5px; }
+  /* Still clears the >=20%-of-viewport-height floor at 844x390 (15.5vh*1.4
+     = 21.7% of 390) with room for the row to actually fit under the hud and
+     the action bar — 19vh (the un-scoped preferred value) was sized before
+     the felt's real hud/action budget at this height was measured. */
+  .bj-box--you .bj-box__cards { --card-w: clamp(52px, 15.5vh, 100px); }
+  /* Icon only: the "Swap" caption is the first thing to give way at this
+     height, same as the banner's reason line below — the circular badge
+     alone is still a clear, discoverable affordance. */
+  .bj-swap__label, .bj-swap__note { display: none; }
+  .bj-swap__icon { width: clamp(28px, 4.4vh, 36px); height: clamp(28px, 4.4vh, 36px); }
   .bj-actions { min-height: 28px; padding: 2px 10px 3px; gap: 6px; }
   .bj-actions .btn { padding: 4px 10px; font-size: 12px; }
   .bj-bet-live { font-size: 11px; }
@@ -294,25 +332,26 @@
   .bj-dealer__name { font-size: 9px; }
   .bj-dealer__total { font-size: 10px; }
   .bj-felt { padding: 0 6px; gap: 0; }
-  /* 39, not 42: the 22px banner here (padding 3px 12px 4px, close enough to
-     the query above to round the same) only needs 22+16=38 to clear both
-     rows by >=8px, and at this exact height the seat row plus the dealer's
-     own 5-card fan (both fixed height regardless of card count, see
-     .bj-botseat above) already claim the rest of the felt's budget — any
-     higher and the centred block overflows past the hud/actions bar
-     (dealer-seat-5card-fit.mjs catches this). */
-  .bj-dealerseat-rows { gap: clamp(39px, 5vh, 50px); }
+  /* One more turn of the same screws as the query above: mtable's stack
+     (banker box, icon-only swap, seat row) has to clear the hud and the
+     action bar at this height too, measured the same way. */
+  .bj-mtable { gap: clamp(3px, 0.8vh, 8px); }
   .bj-hand { padding: 1px 5px; gap: 0; }
   .bj-hand__foot { font-size: 10px; gap: 5px; }
-  .bj-botrow { gap: 3px; }
-  /* 1px, not 2px: at this exact height the seat row and the dealer's own
-     5-card fan (both fixed-height regardless of card count) plus the gap
-     above needed for the banner already consume the felt's full budget —
-     shaving 1px/side here is what keeps that gap from pushing either row
-     past the hud or the actions bar (see dealer-seat-5card-fit.mjs). */
-  .bj-botseat { padding: 1px 3px; gap: 0; }
-  .bj-botseat__name, .bj-botseat__bet { font-size: 9.5px; }
-  .bj-botseat__total, .bj-botseat__result { font-size: 8.5px; }
+  .bj-seatrow { gap: 3px; }
+  /* 0, not 1px: at this exact height the seat row (the your-seat card size
+     below) and the banker's own 5-card fan (both fixed-height regardless of
+     card count) already claim the felt's full budget — every px of box
+     padding is spent keeping the row inside the hud/actions bar rather than
+     spent on breathing room. */
+  .bj-box { padding: 0 3px; gap: 0; }
+  .bj-box__name, .bj-box__bet { font-size: 9.5px; }
+  .bj-box__total, .bj-box__result { font-size: 8.5px; }
+  /* Still clears the >=18%-of-viewport-height floor at 844x330 (14vh*1.4 =
+     19.6% of 330) — 17.6vh (matching --card-w's own reduction above) left
+     the row taller than this height's real hud/action budget allows. */
+  .bj-box--you .bj-box__cards { --card-w: clamp(48px, 14vh, 90px); }
+  .bj-swap__icon { width: clamp(24px, 4vh, 32px); height: clamp(24px, 4vh, 32px); }
   .bj-actions { min-height: 22px; padding: 1px 8px 2px; gap: 5px; }
   .bj-actions .btn { padding: 3px 8px; font-size: 11px; }
   .bj-banner { padding: 3px 12px 4px; }
