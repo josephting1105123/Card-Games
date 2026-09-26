@@ -32,6 +32,11 @@ export function defaultProfile() {
     // screen yet; `animations` is consulted by the solo table to decide how long
     // to pause between bot turns.
     settings: { animations: true },
+    // Which of Malaysian Blackjack's four non-human seats hold a bot, so the
+    // table looks the same on the next visit instead of resetting to empty —
+    // it survives a reload precisely because it lives in the profile, not on
+    // the table's own (unsaved) in-memory state.
+    blackjackSeats: [false, false, false, false],
     created: Date.now(),
   };
 }
@@ -88,7 +93,26 @@ function migrate(profile) {
     ...profile,
     settings: { ...base.settings, ...(profile.settings ?? {}) },
     games: profile.games ?? {},
+    blackjackSeats: Array.isArray(profile.blackjackSeats) && profile.blackjackSeats.length === 4
+      ? profile.blackjackSeats : base.blackjackSeats,
   };
+}
+
+/** The four seat slots (bot present or not) for Malaysian Blackjack's table —
+ * defensive against a profile saved before this field existed, or corrupted
+ * by hand. */
+export function blackjackSeatBots(profile) {
+  if (!Array.isArray(profile.blackjackSeats) || profile.blackjackSeats.length !== 4) {
+    profile.blackjackSeats = [false, false, false, false];
+  }
+  return profile.blackjackSeats;
+}
+
+export function setBlackjackSeatBot(profile, index, hasBot) {
+  const seats = blackjackSeatBots(profile);
+  seats[index] = !!hasBot;
+  saveProfile(profile);
+  return seats;
 }
 
 export function gameStats(profile, gameId) {

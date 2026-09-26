@@ -12,10 +12,17 @@
  * actions) instead of a separate scrolling page — the bet controls are just
  * another thing the action row can hold, the same way it holds Hit/Stand
  * during a round or the insurance prompt right after a deal.
+ *
+ * American is the single-hand table below (renderTable..showBanner): one
+ * player, one house dealer. Malaysian is a different shape entirely — one
+ * table, five boxes (a banker and four seats), the human in exactly one of
+ * them at a time — so it gets its own render/paint/deal methods from
+ * renderMalaysianTable() down, sharing only the generic hud/felt/actions/
+ * banner chrome and card art, never the American methods above it.
  */
 
 import { formatChips } from '../core/economy.js';
-import { gameStats } from '../core/profile.js';
+import { blackjackSeatBots, gameStats, setBlackjackSeatBot } from '../core/profile.js';
 import { makeRng, randomSeed } from '../core/rng.js';
 import {
   americanTotal, createShoe, malaysianTotal, needsReshuffle, reshuffleShoe,
@@ -41,28 +48,16 @@ const RULES_TEXT = {
     'Ties push.',
   ],
   malaysian: [
-    'A single deck, freshly shuffled every round.',
-    'An ace is worth 11 or 10 with two cards, 10 or 1 with three, and always 1 with four or five.',
-    'Ban Ban — two aces — pays 3:1. Ban Luck — an ace with a ten-value card — pays 2:1. Both are checked the instant the first two cards land, on both sides of the table.',
-    'Run comes first: if your opening two cards total exactly 15 (a special is never 15, so the two never clash), you may run instead of playing it out — an instant push, bet back — before the dealer\'s special is even revealed. Decline by hitting or standing and the dealer\'s special, if any, is then applied as below.',
-    'If the dealer holds a special and you did not run, the round ends at once: you lose at that multiple unless you hold an equal or better special of your own (ties push; Ban Ban beats Ban Luck).',
-    '777 (three sevens) pays 7:1. Five Dragon (five cards totalling 21 or less) pays 2:1, or 3:1 on exactly 21. Both win the instant they are made.',
-    'You need at least 16 to stand. A bust loses outright, even if the dealer goes on to bust too.',
-    'The dealer draws below 16 and stands from 16. A dealer five-card hand of 21 or less beats any hand without a special of its own, at 2:1.',
+    'One table, five boxes: a banker up top and four seats below. You always occupy one of them — Swap moves you between the banker box and seat 1, and works only between rounds. Any of the four seats may hold a bot or sit empty; add or remove one with the seat\'s own button, also only between rounds.',
+    'A single deck, freshly shuffled every round. An ace is worth 11 or 10 with two cards, 10 or 1 with three, and always 1 with four or five.',
+    'Ban Ban — two aces — pays 3:1. Ban Luck — an ace with a ten-value card — pays 2:1. Both are checked the instant the first two cards land, on every hand at the table, banker included.',
+    'Run comes first: an opening two-card 15 may run instead of playing out — an instant push, bet back — before the banker\'s own special, if any, is even revealed. Decline by hitting and the banker\'s special, if held, settles that hand at once: a loss at its multiple, unless the hand holds an equal-or-better special of its own (ties push; Ban Ban beats Ban Luck).',
+    '777 (three sevens) pays 7:1. Five Dragon (five cards totalling 21 or less) pays 2:1, or 3:1 on exactly 21 — both settle the instant they are made, on any seat or the banker\'s own hand.',
+    'Seats act in turn: 16 to stand, five cards the ceiling. A bust loses outright but is not revealed until the banker opens that hand.',
+    'The banker draws below 16 and, once at 16 or more, opens seats at will — each opening settles that seat against the banker\'s total at that moment, so a later draw only changes what is compared against for seats opened after it. A banker five-card 21-or-under beats any hand without a special of its own, at 2:1 (3:1 on exactly 21); a banker bust wins every still-unopened seat except one that had busted itself, which pushes.',
+    'As a player, every seat\'s cards — yours and every bot\'s — are face up as they are dealt and drawn; the banker\'s own hole card stays hidden until the banker\'s turn begins. As banker, every seat stays face down until you open it.',
+    'A bot bets and plays with its own stake, decided from its own cards alone — its result never touches your bankroll unless you are the one banking, in which case your bankroll needs 7x the table\'s maximum bet for every seat a bot fills.',
     'No doubling, splitting, surrender or insurance. Ties push.',
-  ],
-  'malaysian-dealer': [
-    'You deal against four bots, each with their own bet within the table\'s min-max. Your bankroll is the house.',
-    'Two cards each, round-robin: the bots, then you, twice. The bots\' cards are dealt face down — you cannot see them until you open a hand.',
-    'Specials are checked the instant the cards land. A bot holding Ban Ban or Ban Luck is paid at once (3:1 / 2:1).',
-    'Run comes first: any bot whose opening two cards total exactly 15 decides Run right away — an instant push — before your own special, if you hold one, is even revealed. A bot that runs is untouched by your special.',
-    'If you hold a special and did not have it pre-empted by a bot\'s run, the round ends immediately: every bot still in the round (i.e. that did not run) pays you at that multiple, unless it holds an equal or better special of its own, which pushes.',
-    'Bots that did not run and were not settled by your special then act in turn: Hit or Stand at 16 or more, up to five cards. A bot\'s own 777 or Five Dragon (five cards, 21 or less) pays out the instant it is made, at 7:1 or 2:1 (3:1 on exactly 21).',
-    'A bot bust is not revealed — its turn just ends, face down, waiting for you to open it.',
-    'Your turn: hit until at least 16 (never below), up to five cards. Once at 16 or more, tap any unresolved bot to open it — its cards flip face up and it settles against your total at that moment. You may keep drawing between openings; a later draw only changes hands opened after it.',
-    'If you reach five cards at 21 or less (your own Five Dragon) or three 7s (777), every still-unopened bot is settled at once, at 2:1 (3:1 on exactly 21) or 7:1.',
-    'If you bust, every still-unopened bot wins — except a bot that had busted itself, which pushes: both sides went over.',
-    'A bust, yours or a bot\'s, is always a flat loss of that bet alone, never scaled by whatever multiple the winning side would otherwise pay.',
   ],
 };
 
@@ -153,6 +148,37 @@ const FLIGHT_MS = 300;
 const STAGGER_MS = 120;
 const DEALER_PACE_MS = 450;
 const FLIP_MS = 360;
+// Malaysian merged table: seats/banker pacing (spec calls for 600-800ms for a
+// bot player's own action, ~700ms for a bot banker's), and how long a deal's
+// individual cards stagger by so "seats in order, then the banker" actually
+// reads as dealt in that order rather than appearing all at once.
+const SEAT_PACE_MS = 700;
+const BANKER_PACE_MS = 700;
+const MDEAL_STAGGER_MS = 130;
+
+// A reversal glyph (⇅) drawn as paths, not the emoji character — the spec
+// calls for "no emoji font dependence", and a missing/inconsistent emoji
+// font is exactly the failure mode a literal ⇅ character risks.
+const SWAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+  + '<path d="M8 3v14"/><path d="M5 6l3-3 3 3"/><path d="M16 21V7"/><path d="M13 18l3 3 3-3"/></svg>';
+
+/** One box on the Malaysian table — the banker's, or one of the four seats'.
+ * A seat is a real <button> (it is sometimes the tap target to open a hand,
+ * and always the between-rounds +Bot/× control); the banker box is never
+ * tapped by anyone, so it stays a plain <div>. */
+function createMBox({ button = false } = {}) {
+  const nameEl = el('span.bj-box__name', '');
+  const betEl = el('span.bj-box__bet', '');
+  const cardsHost = el('div.bj-box__cards');
+  const totalEl = el('span.bj-box__total', '');
+  const resultEl = el('div.bj-box__result', '');
+  const row = el('div.bj-box__row', nameEl, betEl);
+  const box = button
+    ? el('button.bj-box', { type: 'button', disabled: true }, row, cardsHost, totalEl, resultEl)
+    : el('div.bj-box', row, cardsHost, totalEl, resultEl);
+  return { box, nameEl, betEl, cardsHost, totalEl, resultEl };
+}
 
 export class BlackjackGame {
   /**
@@ -164,92 +190,55 @@ export class BlackjackGame {
     this.table = table;
     this.variant = variant === 'malaysian' ? 'malaysian' : 'american';
     this.isAmerican = this.variant === 'american';
-    this.engine = this.isAmerican ? US : MY;
     this.bet = table.min;
     this.lastBet = null;
-    this.round = null;
+    this.round = null; // American round only — see the class comment up top
     this.dealerRevealed = false;
     this.roundFinished = false;
-    // Malaysian only: which side of the table the human sits at. Chosen on a
-    // seat-picker screen before the felt renders; American has one seat and
-    // skips the picker entirely.
-    this.seat = this.isAmerican ? 'player' : null;
-    this.dround = null; // the dealer-seat round (distinct shape from this.round)
-    this.dealerSeatFinished = false;
     this.teardownFullscreen = null;
     this.rng = makeRng(randomSeed());
+
+    // Malaysian only, from here down. `role` is which of the five boxes the
+    // human sits in — never persisted, so a reload always starts as a player;
+    // `seatBots` (which of the four seats hold a bot) is the one thing that
+    // does persist, in the profile, so it survives a reload.
+    this.role = 'player';
+    this.seatBots = blackjackSeatBots(this.app.profile);
+    this.mround = null;
+    this.mFinished = true; // no round dealt yet — idle controls show straight away
+    this.mDeck = null;
+    this.mBankerRevealed = false;
+    // Bumped by paintMIdle()/paintMRoundStart() — every point the table is
+    // reset to a fresh idle or a fresh deal. A human banker's onMOpenSeat()
+    // is async (it awaits its own flip animation before mutating the round),
+    // so a bulk auto-settle from a *different*, faster action (the banker's
+    // own Hit busting, which settles every still-unopened seat at once) can
+    // finish the round while that flip is still in flight; if the player then
+    // swaps away before the flip's tail resumes, this token lets that tail
+    // recognise the table has moved on and stop touching it.
+    this.mEpoch = 0;
   }
 
   mount(root) {
     installCardDefs();
     this.root = root;
     // A shoe to show a count from even before the first deal — Malaysian
-    // replaces it every round anyway, American keeps this one across rounds.
+    // replaces its deck every round anyway, American keeps this one across
+    // rounds.
     this.shoe = createShoe(this.isAmerican ? 6 : 1, this.rng);
-    if (!this.seat) {
-      this.renderSeatChoice();
-      return;
+    if (this.isAmerican) {
+      this.renderTable();
+      this.paintActions();
+    } else {
+      this.renderMalaysianTable();
+      this.paintMIdle();
+      this.paintMActions();
     }
-    if (this.seat === 'dealer') {
-      this.renderDealerTable();
-      this.paintDealerActions();
-      return;
-    }
-    this.renderTable();
-    this.paintActions();
   }
 
   unmount() {
     this.stopped = true;
     this.teardownFullscreen?.();
-  }
-
-  // --- Malaysian seat choice -------------------------------------------------
-
-  renderSeatChoice() {
-    clear(this.root);
-    const bankroll = this.app.profile.bankroll;
-    const req = MY.dealerSeatBankrollRequirement(this.table);
-    const canDealer = MY.canPlayDealerSeat(this.table, bankroll);
-    this.root.append(
-      topbar(this.app),
-      el('main.page',
-        el('button.back-link', { type: 'button', onclick: () => this.leave() }, `← ${this.table.name}`),
-        el('div.page__head',
-          el('h1.page__title', 'Choose your seat'),
-          el('p.page__sub', 'Play one hand against the house, or deal against four bots with your own bankroll as the house.'),
-        ),
-        el('div.tiles',
-          el('button.tile', { type: 'button', style: '--accent:#a9701f', onclick: () => this.chooseSeat('player') },
-            el('span.tile__accent'),
-            el('h2.tile__name', 'Play as player'),
-            el('p.tile__tag', 'One hand against the house'),
-            el('p.tile__desc', 'Ban Ban, Ban Luck, 777 and Five Dragon pay out the instant they are made, and Run turns an opening 15 into an instant push.'),
-          ),
-          el('button.tile', {
-            type: 'button', style: '--accent:#7a1f4d', disabled: !canDealer,
-            onclick: () => { if (canDealer) this.chooseSeat('dealer'); },
-          },
-            el('span.tile__accent'),
-            el('h2.tile__name', 'Play as dealer'),
-            el('p.tile__tag', 'Four bots, your bankroll is the house'),
-            el('p.tile__desc', 'Deal, watch the bots play their hands face down, then open the ones you want once you reach 16.'),
-            !canDealer ? el('p.lobby__lock', `Needs ${formatChips(req, true)} bankroll to cover the table`) : null,
-          ),
-        ),
-      ),
-    );
-  }
-
-  chooseSeat(seat) {
-    this.seat = seat;
-    if (seat === 'dealer') {
-      this.renderDealerTable();
-      this.paintDealerActions();
-    } else {
-      this.renderTable();
-      this.paintActions();
-    }
   }
 
   // --- betting -------------------------------------------------------------
@@ -259,15 +248,11 @@ export class BlackjackGame {
     return this.bet >= this.table.min && this.bet <= this.table.max && this.bet <= bankroll && this.bet > 0;
   }
 
-  rulesKey() {
-    return this.variant === 'malaysian' && this.seat === 'dealer' ? 'malaysian-dealer' : this.variant;
-  }
-
   showRules() {
     const overlay = el('div.bj-overlay',
       el('div.bj-rules',
-        el('h2', `${variantName(this.variant)} rules${this.seat === 'dealer' ? ' — dealer seat' : ''}`),
-        el('ul', ...RULES_TEXT[this.rulesKey()].map((line) => el('li', line))),
+        el('h2', `${variantName(this.variant)} rules`),
+        el('ul', ...RULES_TEXT[this.variant].map((line) => el('li', line))),
         el('div.btn-row', { style: 'justify-content:center' },
           el('button.btn.btn--primary', { type: 'button', onclick: () => overlay.remove() }, 'Close'),
         ),
@@ -320,16 +305,11 @@ export class BlackjackGame {
     this.dealerRevealed = false;
     this.roundFinished = false;
     this.justShuffled = false;
-    if (this.isAmerican) {
-      if (needsReshuffle(this.shoe)) {
-        reshuffleShoe(this.shoe, this.rng);
-        this.justShuffled = true;
-      }
-      this.round = US.startRound({ shoe: this.shoe, bet: this.bet });
-    } else {
-      this.shoe = createShoe(1, this.rng);
-      this.round = MY.startRound({ deck: this.shoe, bet: this.bet });
+    if (needsReshuffle(this.shoe)) {
+      reshuffleShoe(this.shoe, this.rng);
+      this.justShuffled = true;
     }
+    this.round = US.startRound({ shoe: this.shoe, bet: this.bet });
     this.renderTable();
     this.runDealAnimation();
   }
@@ -338,8 +318,7 @@ export class BlackjackGame {
 
   committed() {
     if (!this.round || this.roundFinished) return this.bet;
-    if (this.isAmerican) return this.round.hands.reduce((s, h) => s + h.bet, 0) + (this.round.insuranceBet || 0);
-    return this.round.player.bet;
+    return this.round.hands.reduce((s, h) => s + h.bet, 0) + (this.round.insuranceBet || 0);
   }
 
   canAffordExtra(extra) {
@@ -351,15 +330,6 @@ export class BlackjackGame {
   animationsOn() {
     if (this.app.profile.settings?.animations === false) return false;
     return !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-  }
-
-  handsOf() {
-    if (!this.round) return [];
-    return this.isAmerican ? this.round.hands : [this.round.player];
-  }
-
-  totalOf(cards) {
-    return this.isAmerican ? americanTotal(cards) : malaysianTotal(cards);
   }
 
   shoeRemaining() {
@@ -390,7 +360,7 @@ export class BlackjackGame {
     n.leaveBtn = el('button.back-link', { type: 'button', 'aria-label': 'Leave table', onclick: () => this.leave() }, '←');
     n.betPill = el('span.bj-hud__pill', el('small', 'Bet'), el('b', formatChips(this.committed())));
     n.bankrollPill = el('span.bj-hud__pill', el('small', 'Bankroll'), el('b', formatChips(this.app.profile.bankroll)));
-    n.shoePill = el('span.bj-hud__pill', el('small', this.isAmerican ? 'Shoe' : 'Deck'), el('b', `${this.shoeRemaining()} left`));
+    n.shoePill = el('span.bj-hud__pill', el('small', 'Shoe'), el('b', `${this.shoeRemaining()} left`));
     const hud = el('div.bj-hud',
       n.leaveBtn,
       el('span.bj-hud__title', `${this.table.name} · ${variantName(this.variant)}`),
@@ -444,14 +414,9 @@ export class BlackjackGame {
    * reads by name, the same way a player's hand already does — never the
    * total that produced it (a "Soft 21" dealer hand is just "Blackjack"). */
   dealerHandLabel(cards) {
-    const t = this.totalOf(cards);
+    const t = americanTotal(cards);
     if (t.bust) return 'Bust';
-    if (this.isAmerican) {
-      if (this.round.dealerBlackjack) return 'Blackjack';
-    } else {
-      if (this.round.dealer.special === 'banban') return 'Ban Ban';
-      if (this.round.dealer.special === 'banluck') return 'Ban Luck';
-    }
+    if (this.round.dealerBlackjack) return 'Blackjack';
     return t.soft ? `Soft ${t.total}` : `${t.total}`;
   }
 
@@ -472,19 +437,10 @@ export class BlackjackGame {
   }
 
   handLabel(hand, cards) {
-    const t = this.totalOf(cards);
-    if (this.isAmerican) {
-      if (hand.busted) return 'Bust';
-      if (hand.surrendered) return 'Surrendered';
-      if (hand.blackjack) return 'Blackjack';
-      return t.soft ? `Soft ${t.total}` : `${t.total}`;
-    }
+    const t = americanTotal(cards);
     if (hand.busted) return 'Bust';
-    if (hand.result === 'banban') return 'Ban Ban';
-    if (hand.result === 'banluck') return 'Ban Luck';
-    if (hand.result === '777') return '777';
-    if (hand.result === 'five-dragon') return 'Five Dragon';
-    if (hand.result === 'run') return 'Run';
+    if (hand.surrendered) return 'Surrendered';
+    if (hand.blackjack) return 'Blackjack';
     return t.soft ? `Soft ${t.total}` : `${t.total}`;
   }
 
@@ -497,16 +453,15 @@ export class BlackjackGame {
       this.paintHud();
       return;
     }
-    const hands = this.handsOf();
+    const hands = this.round.hands;
     hands.forEach((hand, index) => {
       const cardsEl = el('div.bj-hand__cards');
       n.handCardsEls[index] = cardsEl;
       for (const card of hand.cards) cardsEl.append(cardElement(card));
       // The ring marks which of several split hands is live — with only one
       // hand there is nothing to distinguish it from, so it stays plain.
-      const active = this.isAmerican
-        && hands.length > 1 && this.round.phase === 'player' && index === this.round.activeHand;
-      const resultLine = this.round.settled ? el('div.bj-hand__result', resultText(hand, this.isAmerican)) : null;
+      const active = hands.length > 1 && this.round.phase === 'player' && index === this.round.activeHand;
+      const resultLine = this.round.settled ? el('div.bj-hand__result', resultText(hand)) : null;
       n.handsRow.append(el(`div.bj-hand${active ? '.is-active' : ''}`,
         cardsEl,
         el('div.bj-hand__foot',
@@ -531,26 +486,14 @@ export class BlackjackGame {
     if (this.round.settled) return; // still animating the dealer's reveal — finishRound() repaints this
     if (this.round.phase !== 'player') return;
 
-    if (this.isAmerican) {
-      const hand = this.round.hands[this.round.activeHand];
-      n.actions.append(
-        el('button.btn.btn--primary', { type: 'button', disabled: !US.canHit(this.round), onclick: () => this.onHit() }, 'Hit'),
-        el('button.btn', { type: 'button', disabled: !US.canStand(this.round), onclick: () => this.onStand() }, 'Stand'),
-        el('button.btn', { type: 'button', disabled: !US.canDouble(this.round) || !this.canAffordExtra(hand.bet), onclick: () => this.onDouble() }, 'Double'),
-        el('button.btn', { type: 'button', disabled: !US.canSplit(this.round) || !this.canAffordExtra(hand.bet), onclick: () => this.onSplit() }, 'Split'),
-        el('button.btn', { type: 'button', disabled: !US.canSurrender(this.round), onclick: () => this.onSurrender() }, 'Surrender'),
-      );
-    } else {
-      // Run sits before Hit/Stand, and only while it is actually on offer —
-      // the opening two cards, at exactly 15.
-      if (MY.canRun(this.round)) {
-        n.actions.append(el('button.btn.btn--primary', { type: 'button', onclick: () => this.onRun() }, 'Run'));
-      }
-      n.actions.append(
-        el('button.btn', { type: 'button', disabled: !MY.canHit(this.round), onclick: () => this.onHit() }, 'Hit'),
-        el('button.btn', { type: 'button', disabled: !MY.canStand(this.round), onclick: () => this.onStand(), title: MY.canStand(this.round) ? '' : 'Need at least 16 to stand' }, 'Stand'),
-      );
-    }
+    const hand = this.round.hands[this.round.activeHand];
+    n.actions.append(
+      el('button.btn.btn--primary', { type: 'button', disabled: !US.canHit(this.round), onclick: () => this.onHit() }, 'Hit'),
+      el('button.btn', { type: 'button', disabled: !US.canStand(this.round), onclick: () => this.onStand() }, 'Stand'),
+      el('button.btn', { type: 'button', disabled: !US.canDouble(this.round) || !this.canAffordExtra(hand.bet), onclick: () => this.onDouble() }, 'Double'),
+      el('button.btn', { type: 'button', disabled: !US.canSplit(this.round) || !this.canAffordExtra(hand.bet), onclick: () => this.onSplit() }, 'Split'),
+      el('button.btn', { type: 'button', disabled: !US.canSurrender(this.round), onclick: () => this.onSurrender() }, 'Surrender'),
+    );
   }
 
   buildInsurancePrompt() {
@@ -576,27 +519,31 @@ export class BlackjackGame {
   }
 
   onHit() {
-    const handIndex = this.isAmerican ? this.round.activeHand : 0;
-    this.engine.hit(this.round, this.shoe);
+    const handIndex = this.round.activeHand;
+    US.hit(this.round, this.shoe);
     this.afterAction();
     this.pulseLastCard(handIndex);
   }
 
+  /** Pulses the last card in one of American's own hand fans (this.nodes) —
+   * Malaysian's seats live in a different node namespace and pulse via
+   * pulseCard() below directly. */
   pulseLastCard(handIndex) {
     const container = this.nodes.handCardsEls?.[Math.max(0, handIndex)];
-    const card = container?.lastElementChild;
+    this.pulseCard(container?.lastElementChild);
+  }
+
+  /** Transform/opacity only (bj-card-enter, blackjack.css) — a card that just
+   * landed gets a small pop, shared by American's hand fans and Malaysian's
+   * seat boxes alike. */
+  pulseCard(card) {
     if (!card || !this.animationsOn()) return;
     card.classList.add('bj-card-enter');
     card.addEventListener('animationend', () => card.classList.remove('bj-card-enter'), { once: true });
   }
 
   onStand() {
-    this.engine.stand(this.round);
-    this.afterAction();
-  }
-
-  onRun() {
-    MY.run(this.round);
+    US.stand(this.round);
     this.afterAction();
   }
 
@@ -635,11 +582,11 @@ export class BlackjackGame {
       return;
     }
     const n = this.nodes;
-    const playerCards = this.isAmerican ? this.round.hands[0].cards : this.round.player.cards;
+    const playerCards = this.round.hands[0].cards;
     const dealerCards = this.round.dealer.cards;
-    // Deal order is the same in both rule sets: player, dealer, player, dealer
-    // face-down. Everything but the hole card flies as its real face — the
-    // hole card flies as a back and stays one until the dealer plays.
+    // Deal order: player, dealer, player, dealer face-down. Everything but
+    // the hole card flies as its real face — the hole card flies as a back
+    // and stays one until the dealer plays.
     const order = [
       { el: n.handCardsEls[0], i: 0, card: playerCards[0], faceDown: false },
       { el: n.dealerCards, i: 0, card: dealerCards[0], faceDown: false },
@@ -700,7 +647,7 @@ export class BlackjackGame {
   async revealDealer() {
     if (this.dealerRevealed || this.stopped) return;
     this.dealerRevealed = true;
-    if (!this.round.settled) this.engine.playDealer(this.round, this.shoe);
+    if (!this.round.settled) US.playDealer(this.round, this.shoe);
     this.paintActions();
 
     if (!this.animationsOn()) {
@@ -755,7 +702,7 @@ export class BlackjackGame {
   // --- settlement ----------------------------------------------------------
 
   finishRound() {
-    const net = this.engine.roundNet(this.round);
+    const net = US.roundNet(this.round);
     // The running played/won/net line now lives in the betting controls
     // (paintBettingControls -> statsLine), not the banner, so the result
     // here is read for its bankroll side effect only.
@@ -779,7 +726,7 @@ export class BlackjackGame {
   showBanner(net) {
     const win = net > 0;
     const push = net === 0;
-    const hands = this.handsOf();
+    const hands = this.round.hands;
     const cls = win ? 'is-win' : push ? 'is-push' : 'is-loss';
     const title = this.resultTitle(hands, net, push);
     const reason = this.resultReason(hands, net, push);
@@ -808,22 +755,6 @@ export class BlackjackGame {
   }
 
   resultTitle(hands, net, push) {
-    if (!this.isAmerican) {
-      const r = hands[0].result;
-      if (r === 'banban') return 'Ban Ban!';
-      if (r === 'banluck') return 'Ban Luck!';
-      if (r === '777') return '777!';
-      if (r === 'five-dragon') return 'Five Dragon!';
-      if (r === 'bust') return 'Bust';
-      if (r === 'run') return 'Run — push';
-      // The round can also end because the dealer held the special, not the
-      // player — say so, rather than a flat "You lose" for a 3x hit.
-      const dealerSpecial = this.round.dealer.special;
-      if (dealerSpecial === 'banban') return push ? 'Push — Ban Ban' : 'Dealer Ban Ban';
-      if (dealerSpecial === 'banluck') return push ? 'Push — Ban Luck' : 'Dealer Ban Luck';
-      if (push) return 'Push';
-      return net > 0 ? 'You win' : 'You lose';
-    }
     if (hands.length === 1 && hands[0].result === 'blackjack') return 'Blackjack!';
     if (push) return 'Push';
     return net > 0 ? 'You win' : 'You lose';
@@ -833,30 +764,6 @@ export class BlackjackGame {
    * just the amount. Multi-hand splits get a tally instead of one hand's
    * story, since a split round rarely has a single reason. */
   resultReason(hands, net, push) {
-    if (!this.isAmerican) {
-      const p = hands[0];
-      const dealerTotal = this.totalOf(this.round.dealer.cards).total;
-      const playerTotal = this.totalOf(p.cards).total;
-      switch (p.result) {
-        case 'banban': return 'Pays 3:1';
-        case 'banluck': return 'Pays 2:1';
-        case '777': return 'Three sevens, pays 7:1';
-        case 'five-dragon': return `Five cards at ${playerTotal}, pays ${playerTotal === 21 ? 3 : 2}:1`;
-        case 'bust': return `You bust with ${playerTotal}`;
-        case 'run': return 'Bet returned';
-        default: break;
-      }
-      const dealerSpecial = this.round.dealer.special;
-      if (dealerSpecial === 'banban' || dealerSpecial === 'banluck') {
-        return push ? 'Matched by your own special' : `Pays ${dealerSpecial === 'banban' ? 3 : 2}:1 to the dealer`;
-      }
-      if (this.round.dealer.cards.length === 5 && dealerTotal <= 21 && p.result === 'lose') {
-        return `Dealer's five-card ${dealerTotal} beats ${playerTotal}`;
-      }
-      if (dealerTotal > 21) return `Dealer busts with ${dealerTotal}`;
-      if (push) return `Push at ${playerTotal}`;
-      return net > 0 ? `${playerTotal} beats dealer's ${dealerTotal}` : `Dealer ${dealerTotal} beats ${playerTotal}`;
-    }
     if (hands.length > 1) {
       const won = hands.filter((h) => h.payout > 0).length;
       const lost = hands.filter((h) => h.payout < 0).length;
@@ -864,8 +771,8 @@ export class BlackjackGame {
       return `${won} won · ${lost} lost · ${pushed} push`;
     }
     const hand = hands[0];
-    const dealerTotal = this.totalOf(this.round.dealer.cards).total;
-    const playerTotal = this.totalOf(hand.cards).total;
+    const dealerTotal = americanTotal(this.round.dealer.cards).total;
+    const playerTotal = americanTotal(hand.cards).total;
     if (hand.result === 'blackjack') return 'Pays 3:2';
     if (hand.result === 'surrender') return 'Surrendered — half the bet back';
     if (hand.result === 'bust') return `You bust with ${playerTotal}`;
@@ -880,57 +787,72 @@ export class BlackjackGame {
   }
 
   // ===========================================================================
-  // Dealer seat: the human deals against four bots.
+  // The Malaysian table: one banker box, four seats, the human in one of
+  // them. See the class comment up top for why this owns its own render/
+  // paint/deal methods rather than sharing American's.
   // ===========================================================================
 
-  dseatDeckRemaining() {
-    return this.dseatDeck ? this.dseatDeck.cards.length - this.dseatDeck.dealt : 0;
+  /** Seats that would hold a bot if the human were banking right now — the
+   * one number both the Deal-as-banker gate and the 7x-per-seat bankroll
+   * requirement key off, whether or not the human is actually banking yet
+   * (swapping-to-banker checks the bankroll against this same count). */
+  mFilledSeatCountAsBanker() {
+    return this.seatBots.filter(Boolean).length;
   }
 
-  renderDealerTable() {
+  /** Seat descriptors for MY.startTableRound(): seat 0 is the human whenever
+   * they are playing (never a bot config's business), every other seat is a
+   * bot or empty per this.seatBots — and when the human is banking, seat 0
+   * follows that same array like the rest. */
+  buildSeatDescriptors() {
+    return [0, 1, 2, 3].map((i) => {
+      if (this.role === 'player' && i === 0) return { isHuman: true, name: 'You', bet: this.bet };
+      return this.seatBots[i] ? { isHuman: false, name: MY.BOT_NAMES[i] } : null;
+    });
+  }
+
+  renderMalaysianTable() {
     clear(this.root);
     const n = {};
-    this.dnodes = n;
+    this.mnodes = n;
 
     n.leaveBtn = el('button.back-link', { type: 'button', 'aria-label': 'Leave table', onclick: () => this.leave() }, '←');
     n.bankrollPill = el('span.bj-hud__pill', el('small', 'Bankroll'), el('b', formatChips(this.app.profile.bankroll)));
-    n.deckPill = el('span.bj-hud__pill', el('small', 'Deck'), el('b', `${this.dseatDeckRemaining()} left`));
+    n.deckPill = el('span.bj-hud__pill', el('small', 'Deck'), el('b', '0 left'));
     const hud = el('div.bj-hud',
       n.leaveBtn,
-      el('span.bj-hud__title', `${this.table.name} · Malaysian (Ban Luck) · Dealer seat`),
+      el('span.bj-hud__title', `${this.table.name} · Malaysian (Ban Luck)`),
       el('div.bj-hud__spacer'),
       n.deckPill, n.bankrollPill,
       el('button.btn', { type: 'button', onclick: () => this.showRules() }, 'Rules'),
     );
 
-    n.botSeats = [];
-    const botRow = el('div.bj-botrow');
-    MY.BOT_NAMES.forEach((name, i) => {
-      const nameEl = el('span.bj-botseat__name', name);
-      const betEl = el('span.bj-botseat__bet', '');
-      const cardsHost = el('div.bj-botseat__cards');
-      const totalEl = el('span.bj-botseat__total', '');
-      const resultEl = el('div.bj-botseat__result', '');
-      const seat = el('button.bj-botseat', { type: 'button', disabled: true, onclick: () => this.onOpenBot(i) },
-        nameEl, betEl, cardsHost, totalEl, resultEl);
-      n.botSeats.push({ seat, nameEl, betEl, cardsHost, totalEl, resultEl });
-      botRow.append(seat);
-    });
-    n.botRow = botRow;
+    n.banker = createMBox();
+    n.seats = [0, 1, 2, 3].map(() => createMBox({ button: true }));
+    const seatRow = el('div.bj-seatrow', ...n.seats.map((s) => s.box));
 
-    n.dealerLabel = el('span.bj-dealer__total', '');
-    n.dealerCards = el('div.bj-dealer__cards');
-    n.dealer = el('div.bj-dealer',
-      el('div.bj-dealer__row', el('span.bj-dealer__name', 'You (dealer)'), n.dealerLabel),
-      n.dealerCards,
+    n.swapNote = el('span.bj-swap__note', '');
+    n.swapBtn = el('button.bj-swap', { type: 'button', onclick: () => this.onSwap() },
+      el('span.bj-swap__icon', { html: SWAP_ICON_SVG }),
+      el('span.bj-swap__label', 'Swap'),
+      n.swapNote,
     );
-    n.dealerRows = el('div.bj-dealerseat-rows', botRow, n.dealer);
+
+    // Swap lives in its own row (not the mtable's own middle slot directly)
+    // so the result banner can sit beside it, between rounds, without
+    // hiding it — swap must stay visible and tappable the moment a round
+    // settles, not just once Deal/a bot toggle clears the banner.
+    n.midRow = el('div.bj-midrow', n.swapBtn);
+    n.mtable = el('div.bj-mtable', n.banker.box, n.midRow, seatRow);
 
     n.shoeIcon = el('div.bj-shoe', cardElement(null, { faceDown: true }));
-    n.bannerHost = el('div.bj-banner-host');
     n.actions = el('div.bj-actions');
 
-    n.felt = el('div.bj-felt', n.shoeIcon, n.dealerRows, n.bannerHost);
+    // No absolute banner-host here (unlike American's table, below): the
+    // result banner joins the swap button in its own row (showMBanner/
+    // restoreSwapSlot) so flexbox keeps both clear of the banker box, the
+    // seat row and every card in them — nothing to measure or clamp against.
+    n.felt = el('div.bj-felt', n.shoeIcon, n.mtable);
     n.table = el('div.bj-table', hud, n.felt, n.actions);
 
     this.root.append(
@@ -945,320 +867,741 @@ export class BlackjackGame {
     );
     this.teardownFullscreen?.();
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
-
-    this.dseatShown = [false, false, false, false];
-    this.paintDealerSeatIdle();
   }
 
-  paintDealerSeatHud() {
-    const n = this.dnodes;
-    n.deckPill.querySelector('b').textContent = `${this.dseatDeckRemaining()} left`;
+  paintMHud() {
+    const n = this.mnodes;
     n.bankrollPill.querySelector('b').textContent = formatChips(this.app.profile.bankroll);
+    // No shoe exists yet before the first deal — Malaysian builds a fresh
+    // one every round — so hide the count rather than show a misleading
+    // "0 left".
+    n.deckPill.style.display = this.mDeck ? '' : 'none';
+    if (this.mDeck) {
+      const left = this.mDeck.cards.length - this.mDeck.dealt;
+      n.deckPill.querySelector('b').textContent = `${left} left`;
+    }
   }
 
-  paintDealerSeatIdle() {
-    const n = this.dnodes;
-    n.botSeats.forEach((s) => {
+  /** Between rounds: the banker box and every seat show the idle state — a
+   * bot's name and a "×" to remove it, or "+ Bot" on an empty seat — rather
+   * than the last round's cards. This is also what a fresh mount() paints
+   * before anything has ever been dealt. */
+  paintMIdle() {
+    const n = this.mnodes;
+    this.mEpoch++; // invalidate any in-flight onMOpenSeat() tail from the round just left
+    this.restoreSwapSlot();
+    const b = n.banker;
+    const bankerIsYou = this.role === 'banker';
+    b.box.classList.toggle('bj-box--you', bankerIsYou);
+    b.nameEl.textContent = bankerIsYou ? 'You' : 'Banker';
+    b.betEl.textContent = '';
+    clear(b.cardsHost);
+    b.totalEl.textContent = '';
+    b.resultEl.textContent = '';
+    b.resultEl.className = 'bj-box__result';
+
+    for (let i = 0; i < 4; i++) this.paintSeatIdle(i);
+    this.paintMHud();
+  }
+
+  /** One seat's between-rounds affordance: a bot's name and "×" to remove
+   * it, or "+ Bot" on an empty seat, gated by the same 7x-per-seat bankroll
+   * rule Swap-to-banker uses. Shared by paintMIdle() (every seat, the true
+   * idle view) and paintMSettled() (only the seats that stayed empty last
+   * round — an occupied one keeps its just-finished hand instead). */
+  paintSeatIdle(i) {
+    const s = this.mnodes.seats[i];
+    clear(s.cardsHost);
+    s.totalEl.textContent = '';
+    s.resultEl.textContent = '';
+    s.resultEl.className = 'bj-box__result';
+    s.box.classList.remove('is-openable', 'is-active');
+    const isYouSeat = this.role === 'player' && i === 0;
+    s.box.classList.toggle('bj-box--you', isYouSeat);
+    if (isYouSeat) {
+      s.nameEl.textContent = 'You';
       s.betEl.textContent = '';
+      s.box.disabled = true;
+      s.box.onclick = null;
+      s.box.title = '';
+      return;
+    }
+    const hasBot = this.seatBots[i];
+    s.nameEl.textContent = hasBot ? MY.BOT_NAMES[i] : `Seat ${i + 1}`;
+    s.betEl.textContent = hasBot ? '×' : '+ Bot';
+    const addReq = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker() + 1);
+    const blocked = !hasBot && this.role === 'banker' && this.app.profile.bankroll < addReq;
+    s.box.disabled = blocked;
+    s.box.title = blocked ? `Needs ${formatChips(addReq, true)} bankroll to add a bot` : '';
+    s.box.onclick = () => this.onToggleSeatBot(i);
+  }
+
+  /** Right after a round ends: every box that held a hand keeps showing it —
+   * cards, total and result exactly as they finished — so the player can
+   * see why they won or lost. Only a seat that stayed empty gets the usual
+   * "+ Bot" idle affordance (paintSeatIdle); a bot's box becomes the "×
+   * remove" tap target again, and the human's own box (seat or banker)
+   * stays inert either way. Nothing here moves until Deal, Swap or a bot
+   * toggle actually changes the table (paintMRoundStart/paintMIdle). */
+  paintMSettled() {
+    this.mnodes.seats.forEach((s, i) => {
+      const p = this.mround.players[i];
+      if (!p) { this.paintSeatIdle(i); return; }
+      // A banker bust or banker special settles unopened seats in bulk
+      // without painting them, so their results would otherwise stay blank.
+      this.paintMSeat(i);
+      s.box.classList.remove('is-openable', 'is-active');
+      if (p.isHuman) {
+        s.box.disabled = true;
+        s.box.onclick = null;
+        s.box.title = '';
+      } else {
+        s.box.disabled = false;
+        s.box.onclick = () => this.onToggleSeatBot(i);
+        s.box.title = '';
+      }
+    });
+    this.paintMHud();
+  }
+
+  /** Adding/removing a bot: between rounds only, and adding one while
+   * banking is gated the same 7x-per-filled-seat way Swap-to-banker is. */
+  onToggleSeatBot(i) {
+    if (this.mround && !this.mFinished) return;
+    // A banker tapping seats open can land one tap just after the round
+    // settles; without this grace period that tap would remove the bot.
+    if (this.mFinished && performance.now() - this.mSettledAt < 800) return;
+    const hasBot = this.seatBots[i];
+    if (!hasBot && this.role === 'banker') {
+      const req = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker() + 1);
+      if (this.app.profile.bankroll < req) return;
+    }
+    this.seatBots = setBlackjackSeatBot(this.app.profile, i, !hasBot);
+    this.paintMIdle();
+    this.paintMActions();
+  }
+
+  /** Moves the human between the banker box and seat 1. Between rounds
+   * only; swapping to banker also needs the bankroll for whatever seats are
+   * currently configured as bots (0 filled seats needs 0 — Deal itself is
+   * what then asks for at least one). */
+  onSwap() {
+    if (this.mround && !this.mFinished) return;
+    if (this.role === 'player') {
+      const req = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker());
+      if (this.app.profile.bankroll < req) return;
+      this.role = 'banker';
+    } else {
+      this.role = 'player';
+    }
+    this.paintMIdle();
+    this.paintMActions();
+  }
+
+  /** Swap's own enabled/disabled state and, when it is disabled by the
+   * bankroll (not just "mid-round"), the amount that would unblock it. */
+  paintMSwap() {
+    const n = this.mnodes;
+    const midRound = !!this.mround && !this.mFinished;
+    let disabled = midRound;
+    let note = '';
+    if (midRound) {
+      note = 'Only between rounds';
+    } else if (this.role === 'player') {
+      const req = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker());
+      if (this.app.profile.bankroll < req) { disabled = true; note = `Needs ${formatChips(req, true)} to bank`; }
+    }
+    n.swapBtn.disabled = disabled;
+    n.swapBtn.title = note;
+    n.swapNote.textContent = note;
+    // Visible text, not just a title tooltip touch has no hover for — and
+    // it costs no space at all when there is nothing to say, the common case.
+    n.swapNote.style.display = note ? '' : 'none';
+  }
+
+  paintMActions() {
+    const n = this.mnodes;
+    clear(n.actions);
+    n.actions.classList.remove('is-betting');
+    this.paintMSwap();
+
+    if (!this.mround || this.mFinished) {
+      if (this.role === 'player') {
+        this.paintMBettingControls();
+      } else {
+        const filled = this.mFilledSeatCountAsBanker();
+        n.actions.append(el('button.btn.btn--primary', {
+          type: 'button', disabled: filled < 1, onclick: () => this.dealM(),
+        }, filled < 1 ? 'Add a bot to deal' : 'Deal'));
+        // Visible, not just each blocked seat's own title — the bankroll
+        // reason a touch device can never see on hover.
+        const addReq = MY.bankRequirement(this.table, filled + 1);
+        if (filled < 4 && this.app.profile.bankroll < addReq) {
+          n.actions.append(el('span.bj-hint', `Needs ${formatChips(addReq, true)} bankroll to add a bot`));
+        }
+      }
+      return;
+    }
+
+    if (this.mround.phase === 'players') {
+      const i = this.mround.activeSeat;
+      const p = this.mround.players[i];
+      if (!p?.isHuman) {
+        n.actions.append(el('span.bj-hint', 'The table is playing its hands…'));
+        return;
+      }
+      if (MY.canRunSeat(this.mround, i)) {
+        n.actions.append(el('button.btn.btn--primary', { type: 'button', onclick: () => this.onMRun() }, 'Run'));
+      }
+      n.actions.append(
+        el('button.btn', { type: 'button', disabled: !MY.canHitSeat(this.mround, i), onclick: () => this.onMHit() }, 'Hit'),
+        el('button.btn', {
+          type: 'button', disabled: !MY.canStandSeat(this.mround, i), onclick: () => this.onMStand(),
+          title: MY.canStandSeat(this.mround, i) ? '' : 'Need at least 16 to stand',
+        }, 'Stand'),
+      );
+      return;
+    }
+
+    if (this.mround.phase === 'banker') {
+      if (this.role === 'banker') {
+        n.actions.append(
+          el('button.btn.btn--primary', { type: 'button', disabled: !MY.canBankerHit(this.mround), onclick: () => this.onMBankerHit() }, 'Hit'),
+          el('span.bj-hint', 'Tap a seat to open'),
+        );
+      } else {
+        n.actions.append(el('span.bj-hint', 'The banker is playing it out…'));
+      }
+    }
+    // 'settled' shows nothing here — finishMRound() repaints the idle/betting
+    // controls once the banner is up.
+  }
+
+  /** Same shape as American's paintBettingControls(), in Malaysian's own
+   * node namespace and calling Malaysian's own deal/paint methods. */
+  paintMBettingControls() {
+    const n = this.mnodes;
+    n.actions.classList.add('is-betting');
+    const profile = this.app.profile;
+    const chips = chipDenominations(this.table);
+    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > profile.bankroll || this.lastBet < this.table.min;
+    n.actions.append(
+      el('div.bj-chip-row',
+        el('div.bj-bet-live', el('span', 'Bet'), el('b', formatChips(this.bet))),
+        ...chips.map((value) => el('button.btn.bj-chip', {
+          type: 'button',
+          disabled: this.bet + value > this.table.max || this.bet + value > profile.bankroll,
+          onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, profile.bankroll); this.paintMActions(); },
+        }, formatChips(value, true))),
+        el('button.btn', { type: 'button', onclick: () => { this.bet = 0; this.paintMActions(); } }, 'Clear'),
+        el('button.btn', { type: 'button', disabled: repeatDisabled, onclick: () => { this.bet = this.lastBet; this.paintMActions(); } }, 'Repeat bet'),
+        el('button.btn.btn--primary', { type: 'button', disabled: !this.canDeal(), onclick: () => this.dealM() }, 'Deal'),
+      ),
+    );
+  }
+
+  // --- dealing ---------------------------------------------------------------
+
+  async dealM() {
+    if (this.role === 'player') {
+      if (!this.canDeal()) return;
+      this.lastBet = this.bet;
+    } else if (this.mFilledSeatCountAsBanker() < 1) {
+      return;
+    }
+    this.mFinished = false;
+    this.mBankerRevealed = false;
+    // A single deck, freshly shuffled every round — the rule this table has
+    // always followed, human-banked or not.
+    this.mDeck = createShoe(1, this.rng);
+    const seats = this.buildSeatDescriptors();
+    this.mround = MY.startTableRound({
+      deck: this.mDeck, table: this.table, rng: this.rng, seats, bankerIsHuman: this.role === 'banker',
+    });
+    this.paintMRoundStart();
+    // No Hit/Stand/Run (or anything else) until the deal has actually
+    // landed on the felt — a tap during the flight must do nothing, so
+    // there is nothing tappable to show yet.
+    clear(this.mnodes.actions);
+    await this.runMDealAnimation();
+    if (this.stopped) return;
+    this.paintMAll();
+    this.paintMActions();
+    await this.advanceMTurns();
+  }
+
+  /** Wipes every box back to blank (no toggle affordance, no stale banner)
+   * right as a new round starts, and sets each occupied box's static label
+   * (name/"You") — runMDealAnimation() then fills in the cards themselves. */
+  paintMRoundStart() {
+    const n = this.mnodes;
+    this.mEpoch++; // same invalidation as paintMIdle() — see this.mEpoch's own comment
+    this.restoreSwapSlot();
+    n.seats.forEach((s, i) => {
+      s.box.onclick = null;
+      s.box.disabled = true;
+      s.box.title = '';
+      s.box.classList.remove('is-openable', 'is-active');
       clear(s.cardsHost);
+      s.betEl.textContent = '';
       s.totalEl.textContent = '';
       s.resultEl.textContent = '';
-      s.resultEl.className = 'bj-botseat__result';
-      s.seat.disabled = true;
-      s.seat.classList.remove('is-openable');
+      s.resultEl.className = 'bj-box__result';
+      const p = this.mround.players[i];
+      s.box.classList.toggle('bj-box--you', !!p?.isHuman);
+      s.nameEl.textContent = p ? (p.isHuman ? 'You' : p.name) : `Seat ${i + 1}`;
     });
-    n.dealerLabel.textContent = '';
-    clear(n.dealerCards);
-    this.paintDealerSeatHud();
+    const b = n.banker;
+    clear(b.cardsHost);
+    b.totalEl.textContent = '';
+    b.resultEl.textContent = '';
+    b.resultEl.className = 'bj-box__result';
+    const bankerYou = this.role === 'banker';
+    b.box.classList.toggle('bj-box--you', bankerYou);
+    b.nameEl.textContent = bankerYou ? 'You' : 'Banker';
+    this.paintMHud();
   }
 
-  paintDealerActions() {
-    const n = this.dnodes;
-    clear(n.actions);
-    if (!this.dround || this.dealerSeatFinished) {
-      n.actions.append(el('button.btn.btn--primary', { type: 'button', onclick: () => this.dealDealerRound() }, 'Deal'));
+  /** "Deal two each (seats in order, then the banker), with visible pacing" —
+   * one paint per occupant, staggered, rather than everything landing at
+   * once. The paints already reflect final state (MY.startTableRound() has
+   * run by the time this is called), including any bot that ran or was paid
+   * a special at the deal — those just appear resolved the moment their box
+   * is first painted, in step with the same seats-then-banker order. */
+  async runMDealAnimation() {
+    const n = this.mnodes;
+    const occupied = [0, 1, 2, 3].filter((i) => this.mround.players[i]);
+    if (!this.animationsOn()) {
+      occupied.forEach((i) => this.paintMSeat(i));
+      this.paintMBanker();
       return;
     }
-    if (this.dround.phase === 'bots') {
-      n.actions.append(el('span.bj-hint', 'The bots are playing their hands…'));
+    for (const i of occupied) {
+      await wait(MDEAL_STAGGER_MS);
+      if (this.stopped) return;
+      this.paintMSeat(i);
+      this.pulseCard(n.seats[i].cardsHost.lastElementChild);
+    }
+    await wait(MDEAL_STAGGER_MS);
+    if (this.stopped) return;
+    this.paintMBanker();
+  }
+
+  /** Every box, from the round's current (already-settled-where-applicable)
+   * state — used once after the deal lands and again whenever a step needs
+   * to refresh everything rather than one box. */
+  paintMAll() {
+    for (let i = 0; i < 4; i++) this.paintMSeat(i);
+    this.paintMBanker();
+    this.paintMHud();
+  }
+
+  /**
+   * One seat's box. Visibility follows the spec: as a player, every seat's
+   * cards (yours and every bot's) are face up the moment they are dealt or
+   * drawn; as banker, a seat stays face down until MY.openSeat() has run for
+   * it (`p.opened`) regardless of how many cards it holds.
+   *
+   * @param {number} i
+   * @param {{revealCount?: number}} [opts] `revealCount` shows only the
+   *   first N cards — used mid-turn by animateMSeatTurn() so a bot's hits
+   *   appear one at a time instead of jumping straight to the final fan.
+   */
+  paintMSeat(i, opts = {}) {
+    const n = this.mnodes.seats[i];
+    const p = this.mround?.players[i];
+    if (!p) {
+      clear(n.cardsHost);
+      n.betEl.textContent = ''; n.totalEl.textContent = ''; n.resultEl.textContent = '';
+      n.resultEl.className = 'bj-box__result';
+      n.nameEl.textContent = `Seat ${i + 1}`;
+      n.box.classList.remove('bj-box--you', 'is-active', 'is-openable');
       return;
     }
-    if (this.dround.phase === 'dealer') {
-      n.actions.append(
-        el('button.btn.btn--primary', { type: 'button', disabled: !MY.canDealerHit(this.dround), onclick: () => this.onDealerHit() }, 'Hit'),
-        el('span.bj-hint', 'Tap a player to open'),
-      );
+    n.box.classList.toggle('bj-box--you', p.isHuman);
+    n.nameEl.textContent = p.isHuman ? 'You' : p.name;
+    n.betEl.textContent = formatChips(p.bet);
+    const faceUp = this.role === 'player' || p.opened;
+    const revealCount = Math.min(opts.revealCount ?? p.cards.length, p.cards.length);
+    clear(n.cardsHost);
+    for (let c = 0; c < revealCount; c++) {
+      n.cardsHost.append(faceUp ? cardElement(p.cards[c]) : cardElement(null, { faceDown: true }));
+    }
+    if (this.role === 'banker' && !p.opened) {
+      n.totalEl.textContent = '';
+      n.resultEl.textContent = '';
+      n.resultEl.className = 'bj-box__result';
+    } else {
+      n.totalEl.textContent = seatHandLabel(p);
+      n.resultEl.textContent = p.opened ? `${seatResultLabel(p)} ${p.payout >= 0 ? '+' : '−'}${formatChips(Math.abs(p.payout))}` : '';
+      n.resultEl.className = p.opened ? `bj-box__result ${resultClass(p)}` : 'bj-box__result';
     }
   }
 
-  dealerHandLabelDS() {
-    const t = malaysianTotal(this.dround.dealer.cards);
-    if (this.dround.dealer.special === 'banban') return 'Ban Ban';
-    if (this.dround.dealer.special === 'banluck') return 'Ban Luck';
+  /** The banker's own box. As banker, it's the human's hand — always fully
+   * visible. As a bot, card 0 is up and card 1 is a hidden hole card (the
+   * same rule American's single dealer follows) until the banker's own turn
+   * begins (mBankerRevealed, flipped by flipMBankerHole()). */
+  paintMBanker() {
+    const n = this.mnodes.banker;
+    const banker = this.mround?.banker;
+    const isYou = this.role === 'banker';
+    n.box.classList.toggle('bj-box--you', isYou);
+    n.nameEl.textContent = isYou ? 'You' : 'Banker';
+    if (!banker) { clear(n.cardsHost); n.totalEl.textContent = ''; return; }
+    const revealed = isYou || this.mBankerRevealed;
+    const shown = revealed ? banker.cards.length : Math.min(2, banker.cards.length);
+    clear(n.cardsHost);
+    for (let i = 0; i < shown; i++) {
+      if (i === 1 && !revealed) n.cardsHost.append(el('div.bj-flip', cardElement(null, { faceDown: true })));
+      else n.cardsHost.append(cardElement(banker.cards[i]));
+    }
+    n.totalEl.textContent = revealed ? this.mBankerLabel() : '';
+  }
+
+  mBankerLabel() {
+    const t = malaysianTotal(this.mround.banker.cards);
+    if (t.bust) return 'Bust';
+    if (this.mround.banker.special === 'banban') return 'Ban Ban';
+    if (this.mround.banker.special === 'banluck') return 'Ban Luck';
     return t.soft ? `Soft ${t.total}` : `${t.total}`;
   }
 
-  /** count face-down backs, fanned the same overlapping way an opened hand
-   * is — one per card actually held, never a "×N" count next to a single
-   * icon, so a hidden hand reads the same shape as a revealed one. */
-  paintBotSeatFaceDown(i, count) {
-    const s = this.dnodes.botSeats[i];
-    const bot = this.dround.bots[i];
-    s.betEl.textContent = formatChips(bot.bet);
-    clear(s.cardsHost);
-    for (let c = 0; c < count; c++) s.cardsHost.append(cardElement(null, { faceDown: true }));
-    s.totalEl.textContent = '';
-    s.resultEl.textContent = '';
-    s.resultEl.className = 'bj-botseat__result';
-    s.seat.disabled = true;
-    s.seat.classList.remove('is-openable');
-    this.dseatShown[i] = false;
+  highlightActiveMSeat(i) {
+    this.mnodes.seats.forEach((s, idx) => s.box.classList.toggle('is-active', idx === i));
   }
 
-  paintBotSeatOpened(i) {
-    const s = this.dnodes.botSeats[i];
-    const bot = this.dround.bots[i];
-    clear(s.cardsHost);
-    for (const card of bot.cards) s.cardsHost.append(cardElement(card));
-    s.totalEl.textContent = botTotalLabel(bot);
-    const cls = bot.payout > 0 ? 'is-win' : bot.payout < 0 ? 'is-lose' : 'is-push';
-    s.resultEl.className = `bj-botseat__result ${cls}`;
-    s.resultEl.textContent = `${dealerSeatResultLabel(bot)} ${bot.payout >= 0 ? '+' : '−'}${formatChips(Math.abs(bot.payout))}`;
-    s.seat.disabled = true;
-    s.seat.classList.remove('is-openable');
-    this.dseatShown[i] = true;
+  clearMSeatHighlights() {
+    this.mnodes.seats.forEach((s) => s.box.classList.remove('is-active'));
   }
 
-  enableOpenableBotSeats() {
-    this.dround.bots.forEach((bot, i) => {
-      if (bot.opened) return;
-      const s = this.dnodes.botSeats[i];
-      const openable = MY.canOpenBot(this.dround, i);
-      s.seat.disabled = !openable;
-      s.seat.classList.toggle('is-openable', openable);
-    });
-  }
-
-  /** A single deck, freshly shuffled every round — the same rule the player
-   * seat's Malaysian table follows. Its own method (rather than inlined in
-   * dealDealerRound) so a test can substitute a stacked deck for a
-   * deterministic round the same way the player-seat tests already do via
-   * ctrl.deal. */
-  buildDealerSeatDeck() {
-    return createShoe(1, this.rng);
-  }
-
-  async dealDealerRound() {
-    this.dealerSeatFinished = false;
-    this.dseatDeck = this.buildDealerSeatDeck();
-    this.dround = MY.startDealerSeatRound({ deck: this.dseatDeck, table: this.table, rng: this.rng });
-    const n = this.dnodes;
-    clear(n.bannerHost); // the previous round's result must not outlive it
-    n.dealerLabel.textContent = '';
-    clear(n.dealerCards);
-    this.dround.bots.forEach((_, i) => this.paintBotSeatFaceDown(i, 2));
-    this.paintDealerActions();
-    this.paintDealerSeatHud();
-    if (!this.animationsOn()) {
-      for (const card of this.dround.dealer.cards) n.dealerCards.append(cardElement(card));
-      n.dealerLabel.textContent = this.dealerHandLabelDS();
-    } else {
-      for (const card of this.dround.dealer.cards) {
-        const node = cardElement(card);
-        node.classList.add('bj-card-enter');
-        n.dealerCards.append(node);
+  /** Drives seats in order: a bot's whole turn resolves and animates in one
+   * go, then the loop moves on by itself; reaching the human's own turn
+   * pauses here and paints their controls instead. Once every seat is done,
+   * hands off to the banker's turn (human-interactive or bot-scripted). */
+  async advanceMTurns() {
+    while (this.mround.phase === 'players') {
+      const i = this.mround.activeSeat;
+      const p = this.mround.players[i];
+      this.highlightActiveMSeat(i);
+      if (p.isHuman) {
+        this.paintMActions();
+        return;
       }
-      n.dealerLabel.textContent = this.dealerHandLabelDS();
-      await wait(300);
+      MY.playSeatTurn(this.mround, i, this.mDeck, this.rng);
+      await this.animateMSeatTurn(i);
       if (this.stopped) return;
+      this.paintMHud();
     }
-
-    // Any bot already resolved at the deal — a special, or a Run decided
-    // ahead of the dealer's own special — gets revealed first.
-    for (let i = 0; i < 4; i++) {
-      if (!this.dround.bots[i].opened) continue;
-      await wait(400);
-      if (this.stopped) return;
-      this.paintBotSeatOpened(i);
-    }
-    if (this.stopped) return;
-
-    if (this.dround.settled) { this.finishDealerSeatRound(); return; }
-
-    await this.runBotTurns();
-    if (this.stopped) return;
-    if (this.dround.settled) { this.finishDealerSeatRound(); return; }
-    this.paintDealerActions();
-    this.enableOpenableBotSeats();
+    this.clearMSeatHighlights();
+    if (this.mround.settled) { this.finishMRound(); return; }
+    await this.startMBankerPhase();
   }
 
-  async runBotTurns() {
-    for (let i = 0; i < 4; i++) {
-      const bot = this.dround.bots[i];
-      if (bot.opened) continue; // already resolved at the deal
-      MY.playBotTurn(this.dround, i, this.dseatDeck, this.rng);
-      await this.animateBotTurn(i);
-      if (this.stopped) return;
-      this.paintDealerSeatHud();
-    }
-  }
-
-  async animateBotTurn(i) {
-    const bot = this.dround.bots[i];
-    const s = this.dnodes.botSeats[i];
-    if (!this.animationsOn()) {
-      if (bot.opened) this.paintBotSeatOpened(i);
-      else this.paintBotSeatFaceDown(i, bot.cards.length); // jump straight to the final fan
-      return;
-    }
-    for (const action of bot.actions) {
-      await wait(600);
+  /** A bot seat's turn is already fully resolved (playSeatTurn ran
+   * synchronously) — this just paces revealing it, ~700ms per logged
+   * action, same pacing spec calls for. */
+  async animateMSeatTurn(i) {
+    const p = this.mround.players[i];
+    if (!this.animationsOn()) { this.paintMSeat(i); return; }
+    let count = 2;
+    for (const action of p.actions) {
+      await wait(SEAT_PACE_MS);
       if (this.stopped) return;
       if (action === 'hit') {
-        // A real extra back joins the fan — matching count, not a text badge.
-        const back = cardElement(null, { faceDown: true });
-        back.classList.add('bj-card-enter');
-        s.cardsHost.append(back);
-        back.addEventListener('animationend', () => back.classList.remove('bj-card-enter'), { once: true });
+        count += 1;
+        this.paintMSeat(i, { revealCount: count });
+        this.pulseCard(this.mnodes.seats[i].cardsHost.lastElementChild);
       }
     }
     if (this.stopped) return;
-    if (bot.opened) this.paintBotSeatOpened(i); // ran, 777 or Five Dragon, paid on the spot
-    // A stand or a hidden bust stays face down — nothing more to show here;
-    // the fan above already reflects the final card count.
+    this.paintMSeat(i);
   }
 
-  async onDealerHit() {
-    if (!MY.canDealerHit(this.dround)) return;
-    MY.dealerHit(this.dround, this.dseatDeck);
-    const n = this.dnodes;
-    const card = this.dround.dealer.cards[this.dround.dealer.cards.length - 1];
-    const node = cardElement(card);
-    if (this.animationsOn()) node.classList.add('bj-card-enter');
-    n.dealerCards.append(node);
-    n.dealerLabel.textContent = this.dealerHandLabelDS();
-    this.paintDealerSeatHud();
-    if (this.dround.settled) {
-      // A bust, or a dealer 777/Five Dragon, just auto-settled every bot
-      // that was still unopened.
-      for (let i = 0; i < 4; i++) {
-        if (this.dseatShown[i]) continue;
-        await wait(this.animationsOn() ? 300 : 0);
-        if (this.stopped) return;
-        this.paintBotSeatOpened(i);
-      }
-      if (this.stopped) return;
-      this.finishDealerSeatRound();
+  // --- the human's own seat turn -------------------------------------------
+
+  /** Common tail for the human's own run/hit/stand: repaint, then only
+   * resume the turn-advancing loop once their seat is actually done — a hit
+   * that stays under 16 (or short of five cards) leaves them exactly where
+   * they were, waiting for another action. */
+  async afterMHumanAction(i) {
+    this.paintMActions();
+    const p = this.mround.players[i];
+    if (!p || p.opened || p.busted || p.stood) {
+      this.clearMSeatHighlights();
+      await this.advanceMTurns();
+    }
+  }
+
+  onMRun() {
+    const i = this.mround.activeSeat;
+    MY.runSeat(this.mround, i);
+    this.paintMSeat(i);
+    this.afterMHumanAction(i);
+  }
+
+  onMHit() {
+    const i = this.mround.activeSeat;
+    MY.hitSeat(this.mround, i, this.mDeck);
+    this.paintMSeat(i);
+    this.pulseCard(this.mnodes.seats[i].cardsHost.lastElementChild);
+    this.afterMHumanAction(i);
+  }
+
+  onMStand() {
+    const i = this.mround.activeSeat;
+    MY.standSeat(this.mround, i);
+    this.paintMSeat(i);
+    this.afterMHumanAction(i);
+  }
+
+  // --- the banker's turn -----------------------------------------------------
+
+  /** A human banker gets Hit + tap-to-open, exactly as the old dealer seat
+   * did. A bot banker reveals its hole card (the same technique as
+   * American's flipHoleCard) and then plays a fixed policy one action per
+   * bankerBotStep() call, paced ~700ms, painting only what changed. */
+  async startMBankerPhase() {
+    this.paintMActions();
+    if (this.role === 'banker') {
+      this.enableOpenableMSeats();
       return;
     }
-    this.enableOpenableBotSeats();
-    this.paintDealerActions();
-  }
-
-  async onOpenBot(i) {
-    if (!MY.canOpenBot(this.dround, i)) return;
-    const s = this.dnodes.botSeats[i];
-    const bot = this.dround.bots[i];
-    s.seat.disabled = true;
-    s.seat.classList.remove('is-openable');
-    clear(s.cardsHost);
-    const wraps = bot.cards.map(() => el('div.bj-flip', cardElement(null, { faceDown: true })));
-    wraps.forEach((w) => s.cardsHost.append(w));
-    if (this.animationsOn()) {
-      for (let c = 0; c < wraps.length; c++) {
-        if (c > 0) await wait(120);
-        if (this.stopped) return;
-        const wrap = wraps[c];
-        wrap.classList.add('is-flipping');
-        await wait(FLIP_MS / 2);
-        if (this.stopped) return;
-        clear(wrap);
-        wrap.append(cardElement(bot.cards[c]));
-        await wait(FLIP_MS / 2);
-        if (this.stopped) return;
-        wrap.classList.remove('is-flipping');
+    await this.flipMBankerHole();
+    if (this.stopped) return;
+    while (this.mround.phase === 'banker' && !this.mround.settled) {
+      const step = MY.bankerBotStep(this.mround, this.mDeck, this.rng);
+      if (step.type === 'done') break;
+      await wait(BANKER_PACE_MS);
+      if (this.stopped) return;
+      if (step.type === 'hit') {
+        this.paintMBanker();
+        this.pulseCard(this.mnodes.banker.cardsHost.lastElementChild);
+      } else if (step.type === 'open') {
+        this.paintMSeat(step.seatIndex);
+        this.flashMSeat(step.seatIndex);
       }
-    } else {
-      wraps.forEach((wrap, c) => { clear(wrap); wrap.append(cardElement(bot.cards[c])); });
+      this.paintMHud();
     }
-    MY.openBot(this.dround, i);
-    this.paintBotSeatOpened(i);
-    this.paintDealerSeatHud();
-    if (this.dround.settled) { this.finishDealerSeatRound(); return; }
-    this.enableOpenableBotSeats();
+    if (this.stopped) return;
+    this.finishMRound();
   }
 
-  finishDealerSeatRound() {
-    const net = MY.dealerSeatNet(this.dround);
+  /** Flip the banker's hole card face up — a transform-only scaleX flip
+   * with the face swapped in JS at the midpoint, the same technique as
+   * American's flipHoleCard, just against Malaysian's own nodes. */
+  async flipMBankerHole() {
+    const n = this.mnodes.banker;
+    this.mBankerRevealed = true;
+    const wrap = n.cardsHost.children[1];
+    if (!this.animationsOn() || !wrap || !wrap.classList.contains('bj-flip')) {
+      this.paintMBanker();
+      return;
+    }
+    wrap.classList.add('is-flipping');
+    await wait(FLIP_MS / 2);
+    if (this.stopped) return;
+    clear(wrap);
+    wrap.append(cardElement(this.mround.banker.cards[1]));
+    await wait(FLIP_MS / 2);
+    if (this.stopped) return;
+    wrap.classList.remove('is-flipping');
+    n.totalEl.textContent = this.mBankerLabel();
+  }
+
+  /** A brief highlight on the seat an opening just settled — border/shadow
+   * only (the same transition .bj-box already carries for is-active/
+   * is-openable), not a layout property, so it never causes a reflow. */
+  flashMSeat(i) {
+    const box = this.mnodes.seats[i].box;
+    box.classList.add('is-active');
+    setTimeout(() => box.classList.remove('is-active'), 500);
+  }
+
+  async onMBankerHit() {
+    if (!MY.canBankerHit(this.mround)) return;
+    MY.bankerHit(this.mround, this.mDeck);
+    this.paintMBanker();
+    this.pulseCard(this.mnodes.banker.cardsHost.lastElementChild);
+    this.paintMHud();
+    if (this.mround.settled) {
+      this.paintMAll();
+      this.finishMRound();
+      return;
+    }
+    this.enableOpenableMSeats();
+    this.paintMActions();
+  }
+
+  enableOpenableMSeats() {
+    for (let i = 0; i < 4; i++) {
+      const p = this.mround.players[i];
+      const s = this.mnodes.seats[i];
+      if (!p || p.opened) continue;
+      const openable = MY.canOpenSeat(this.mround, i);
+      s.box.disabled = !openable;
+      s.box.classList.toggle('is-openable', openable);
+      s.box.onclick = openable ? () => this.onMOpenSeat(i) : null;
+    }
+  }
+
+  async onMOpenSeat(i) {
+    if (!MY.canOpenSeat(this.mround, i)) return;
+    const epoch = this.mEpoch;
+    const s = this.mnodes.seats[i];
+    const p = this.mround.players[i];
+    s.box.disabled = true;
+    s.box.classList.remove('is-openable');
+    if (this.role === 'banker') {
+      // Face down until now — flip each card, same technique as the
+      // player-seat table's own hole-card flip.
+      clear(s.cardsHost);
+      const wraps = p.cards.map(() => el('div.bj-flip', cardElement(null, { faceDown: true })));
+      wraps.forEach((w) => s.cardsHost.append(w));
+      if (this.animationsOn()) {
+        for (let c = 0; c < wraps.length; c++) {
+          if (c > 0) await wait(120);
+          if (this.stopped || this.mEpoch !== epoch) return;
+          wraps[c].classList.add('is-flipping');
+          await wait(FLIP_MS / 2);
+          if (this.stopped || this.mEpoch !== epoch) return;
+          clear(wraps[c]);
+          wraps[c].append(cardElement(p.cards[c]));
+          await wait(FLIP_MS / 2);
+          if (this.stopped || this.mEpoch !== epoch) return;
+          wraps[c].classList.remove('is-flipping');
+        }
+      } else {
+        wraps.forEach((wrap, c) => { clear(wrap); wrap.append(cardElement(p.cards[c])); });
+      }
+    }
+    // Same staleness check, one last time: a bulk auto-settle (the banker's
+    // own Hit busting mid-flip) or a swap can both resolve this round while
+    // the flip above was still running. Either way the table has moved on,
+    // so committing this seat's own open now would repaint over whatever the
+    // table is showing next (a fresh idle table or a fresh deal).
+    if (this.stopped || this.mEpoch !== epoch) return;
+    // As a player, this seat's cards were already face up throughout — an
+    // opening here is purely a settlement, so there is nothing to flip.
+    MY.openSeat(this.mround, i);
+    this.paintMSeat(i);
+    this.paintMHud();
+    if (this.mround.settled) { this.finishMRound(); return; }
+    this.enableOpenableMSeats();
+  }
+
+  // --- settlement ----------------------------------------------------------
+
+  finishMRound() {
+    const net = MY.tableRoundNet(this.mround);
     recordBlackjackResult(this.app.profile, 'blackjack', net);
-    this.dealerSeatFinished = true;
-    this.paintDealerSeatHud();
-    this.paintDealerActions();
-    this.showDealerSeatBanner(net);
+    this.mFinished = true;
+    this.mSettledAt = performance.now();
+    this.clearMSeatHighlights();
+    // Every seat can resolve at the deal itself (specials, every bot Run) and
+    // never reach the banker's own turn — startMBankerPhase()/flipMBankerHole
+    // then never run, and a bot banker's hole card would stay hidden even
+    // though the round is over. Force it face up here so the final hand is
+    // always fully visible, banker included, whichever way the round ended.
+    if (!this.mBankerRevealed) {
+      this.mBankerRevealed = true;
+      this.paintMBanker();
+    }
+    // Every hand — the banker's included — stays on the table exactly as it
+    // finished until Deal, Swap or a bot toggle changes it: the player has
+    // to be able to see why they won or lost, not just the delta.
+    this.showMBanner(net);
+    this.paintMSettled();
+    this.paintMActions();
   }
 
-  /** Same technique as the player-seat's showBanner(): measure the real gap
-   * — here, between the bot row and the dealer's own hand — rather than
-   * trusting the felt's own centre to land in it. Measures against n.dealer
-   * (the "You (dealer)"/total row and the cards together), not just the
-   * cards — the rows sit close together now that .bj-dealerseat-rows owns
-   * the felt's spare space instead of stretching them apart, so the banner
-   * must clear that label line too, not just duck under the card tops.
-   * Clamped a second way past just centring on the gap's midpoint: the
-   * banner's own measured half-height is kept inside an >=8px margin on
-   * each side, so a taller banner (a longer chip amount) cannot creep back
-   * into the seats above it or the dealer's row below it — the CSS gap is
-   * sized generously for this, but this is the actual guarantee. */
-  showDealerSeatBanner(net) {
+  /** YOUR result specifically (spec: "the result banner shows YOUR
+   * result") — as banker that is the aggregate house result, same as the
+   * old dealer seat; as a player it is your own seat's own outcome. */
+  mResultTitle(net, push) {
+    if (this.role === 'banker') return push ? 'Push' : net > 0 ? 'You win' : 'You lose';
+    const p = this.mround.players.find((pp) => pp && pp.isHuman);
+    if (p) {
+      const banker = this.mround.banker;
+      switch (p.result) {
+        case 'banban': return 'Ban Ban!';
+        case 'banluck': return 'Ban Luck!';
+        case '777': return '777!';
+        case 'five-dragon': return 'Five Dragon!';
+        case 'run': return 'Run — push';
+        case 'lose':
+          if (p.busted) return 'Bust';
+          if (banker.special === 'banban') return 'Banker Ban Ban';
+          if (banker.special === 'banluck') return 'Banker Ban Luck';
+          return 'You lose';
+        case 'win': return 'You win';
+        case 'push':
+          if (banker.special === 'banban') return 'Push — Ban Ban';
+          if (banker.special === 'banluck') return 'Push — Ban Luck';
+          return 'Push';
+        default: break;
+      }
+    }
+    return push ? 'Push' : net > 0 ? 'You win' : 'You lose';
+  }
+
+  /** The result joins the swap button in its own row (.bj-midrow), between
+   * the banker box and the seat row, instead of floating an absolutely
+   * positioned overlay over a measured gap — an earlier version of this
+   * measured the gap and clamped the banner into it, which could still push
+   * it into the banker box or the seat row when the gap was the tighter of
+   * the two; a version after that replaced swap outright, which fixed the
+   * overlap but also made swap untappable for the entire between-rounds
+   * window — the one time the player actually needs it, per the spec: swap
+   * (and every bot toggle) has to keep working the instant a round settles,
+   * without needing to deal again first. Sitting the two side by side in
+   * one flex row (gap >=8px) keeps the banner clear of swap, the banker box
+   * and the seat row by construction, and leaves swap fully live throughout.
+   * restoreSwapSlot() removes the banner once Deal, Swap or a bot toggle
+   * moves the table on. */
+  showMBanner(net) {
     const win = net > 0;
     const push = net === 0;
     const cls = win ? 'is-win' : push ? 'is-push' : 'is-loss';
-    const title = win ? 'You win' : push ? 'Push' : 'You lose';
-    const banner = el('div.bj-banner', { class: cls },
+    const title = this.mResultTitle(net, push);
+    const banner = el('div.bj-banner.bj-banner--inline', { class: cls },
       el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
     );
-    const n = this.dnodes;
-    clear(n.bannerHost);
-    n.bannerHost.append(banner);
-    const feltRect = n.felt.getBoundingClientRect();
-    const topRect = n.botRow.getBoundingClientRect();
-    const bottomRect = n.dealer.getBoundingClientRect();
-    const clearance = 8;
-    const safeTop = topRect.bottom + clearance;
-    const safeBottom = bottomRect.top - clearance;
-    // offsetHeight, not getBoundingClientRect(): the banner starts this
-    // frame at its pre-animation scale(0.92) (see .bj-banner/.is-on below),
-    // which getBoundingClientRect() would report as a smaller-than-real
-    // box — offsetHeight is the layout size the transform is applied to,
-    // unaffected by it, so it is the banner's true final size.
-    const halfHeight = banner.offsetHeight / 2;
-    let mid = (safeTop + safeBottom) / 2;
-    mid = Math.max(mid, safeTop + halfHeight);
-    mid = Math.min(mid, safeBottom - halfHeight);
-    const top = Math.min(Math.max(mid - feltRect.top, 0), feltRect.height);
-    banner.style.top = `${top}px`;
+    const n = this.mnodes;
+    this.restoreSwapSlot(); // never two banners stacked, if this is ever called twice running
+    n.midRow.append(banner);
+    n.bannerEl = banner;
     requestAnimationFrame(() => banner.classList.add('is-on'));
+  }
+
+  /** Removes the result banner from swap's row once it no longer needs to
+   * be there — called at the top of every repaint that moves the table on
+   * from "just settled" (a fresh deal, or the true idle view after Swap or
+   * a bot toggle). A no-op the rest of the time. */
+  restoreSwapSlot() {
+    const n = this.mnodes;
+    if (n.bannerEl) { n.bannerEl.remove(); n.bannerEl = null; }
   }
 }
 
-/** The hand itself, read the way a player at the table would say it out
- * loud — independent of dealerSeatResultLabel's win/lose/push framing below
- * it, which is about the payout, not what is actually in the hand. */
-function botTotalLabel(bot) {
-  if (bot.result === '777') return '777';
-  if (bot.result === 'five-dragon') return 'Five Dragon';
-  if (bot.special === 'banluck') return 'Ban Luck';
-  if (bot.special === 'banban') return 'Ban Ban';
-  const { total } = malaysianTotal(bot.cards);
-  return bot.busted ? `Bust ${total}` : `${total}`;
+/** A seat's hand, read the way a player at the table would say it out loud —
+ * independent of seatResultLabel's win/lose/push framing below it, which is
+ * about the payout, not what is actually in the hand. */
+function seatHandLabel(p) {
+  if (p.result === '777') return '777';
+  if (p.result === 'five-dragon') return 'Five Dragon';
+  if (p.special === 'banluck') return 'Ban Luck';
+  if (p.special === 'banban') return 'Ban Ban';
+  const { total } = malaysianTotal(p.cards);
+  return p.busted ? `Bust ${total}` : `${total}`;
 }
 
-/** A bot seat's short result label once opened — a bust says so, even
- * though the engine settles it as a plain lose/push, since "Bust" is more
- * informative than "Lose" for a hand that never got compared to a total. */
-function dealerSeatResultLabel(bot) {
-  if (bot.busted) return bot.result === 'push' ? 'Bust — push' : 'Bust';
-  switch (bot.result) {
+/** A seat's short result label once opened — a bust says so, even though the
+ * engine settles it as a plain lose/push, since "Bust" is more informative
+ * than "Lose" for a hand that never got compared to a total. */
+function seatResultLabel(p) {
+  if (p.busted) return p.result === 'push' ? 'Bust — push' : 'Bust';
+  switch (p.result) {
     case 'run': return 'Run — push';
     case 'banban': return 'Ban Ban';
     case 'banluck': return 'Ban Luck';
@@ -1271,28 +1614,18 @@ function dealerSeatResultLabel(bot) {
   }
 }
 
-function resultText(hand, isAmerican) {
-  if (isAmerican) {
-    switch (hand.result) {
-      case 'blackjack': return 'Blackjack, pays 3:2';
-      case 'win': return 'Win';
-      case 'lose': return 'Lose';
-      case 'push': return 'Push';
-      case 'bust': return 'Bust';
-      case 'surrender': return 'Surrendered';
-      default: return '';
-    }
-  }
+function resultClass(p) {
+  return p.payout > 0 ? 'is-win' : p.payout < 0 ? 'is-lose' : 'is-push';
+}
+
+function resultText(hand) {
   switch (hand.result) {
-    case 'banban': return 'Ban Ban, pays 3:1';
-    case 'banluck': return 'Ban Luck, pays 2:1';
-    case '777': return '777, pays 7:1';
-    case 'five-dragon': return 'Five Dragon';
-    case 'run': return 'Run, push';
+    case 'blackjack': return 'Blackjack, pays 3:2';
     case 'win': return 'Win';
     case 'lose': return 'Lose';
     case 'push': return 'Push';
     case 'bust': return 'Bust';
+    case 'surrender': return 'Surrendered';
     default: return '';
   }
 }
