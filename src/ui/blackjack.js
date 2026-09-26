@@ -832,10 +832,14 @@ export class BlackjackGame {
     n.mtable = el('div.bj-mtable', n.banker.box, n.swapBtn, seatRow);
 
     n.shoeIcon = el('div.bj-shoe', cardElement(null, { faceDown: true }));
-    n.bannerHost = el('div.bj-banner-host');
     n.actions = el('div.bj-actions');
 
-    n.felt = el('div.bj-felt', n.shoeIcon, n.mtable, n.bannerHost);
+    // No absolute banner-host here (unlike American's table, below): the
+    // result banner takes the swap button's own flex slot instead
+    // (showMBanner/restoreSwapSlot) so flexbox itself keeps it clear of the
+    // banker box, the seat row and every card in them — nothing to measure
+    // or clamp against.
+    n.felt = el('div.bj-felt', n.shoeIcon, n.mtable);
     n.table = el('div.bj-table', hud, n.felt, n.actions);
 
     this.root.append(
@@ -855,8 +859,14 @@ export class BlackjackGame {
   paintMHud() {
     const n = this.mnodes;
     n.bankrollPill.querySelector('b').textContent = formatChips(this.app.profile.bankroll);
-    const left = this.mDeck ? this.mDeck.cards.length - this.mDeck.dealt : 0;
-    n.deckPill.querySelector('b').textContent = `${left} left`;
+    // No shoe exists yet before the first deal — Malaysian builds a fresh
+    // one every round — so hide the count rather than show a misleading
+    // "0 left".
+    n.deckPill.style.display = this.mDeck ? '' : 'none';
+    if (this.mDeck) {
+      const left = this.mDeck.cards.length - this.mDeck.dealt;
+      n.deckPill.querySelector('b').textContent = `${left} left`;
+    }
   }
 
   /** Between rounds: the banker box and every seat show the idle state — a
@@ -865,6 +875,7 @@ export class BlackjackGame {
    * before anything has ever been dealt. */
   paintMIdle() {
     const n = this.mnodes;
+    this.restoreSwapSlot();
     const b = n.banker;
     const bankerIsYou = this.role === 'banker';
     b.box.classList.toggle('bj-box--you', bankerIsYou);
@@ -875,30 +886,63 @@ export class BlackjackGame {
     b.resultEl.textContent = '';
     b.resultEl.className = 'bj-box__result';
 
-    n.seats.forEach((s, i) => {
-      clear(s.cardsHost);
-      s.totalEl.textContent = '';
-      s.resultEl.textContent = '';
-      s.resultEl.className = 'bj-box__result';
+    for (let i = 0; i < 4; i++) this.paintSeatIdle(i);
+    this.paintMHud();
+  }
+
+  /** One seat's between-rounds affordance: a bot's name and "×" to remove
+   * it, or "+ Bot" on an empty seat, gated by the same 7x-per-seat bankroll
+   * rule Swap-to-banker uses. Shared by paintMIdle() (every seat, the true
+   * idle view) and paintMSettled() (only the seats that stayed empty last
+   * round — an occupied one keeps its just-finished hand instead). */
+  paintSeatIdle(i) {
+    const s = this.mnodes.seats[i];
+    clear(s.cardsHost);
+    s.totalEl.textContent = '';
+    s.resultEl.textContent = '';
+    s.resultEl.className = 'bj-box__result';
+    s.box.classList.remove('is-openable', 'is-active');
+    const isYouSeat = this.role === 'player' && i === 0;
+    s.box.classList.toggle('bj-box--you', isYouSeat);
+    if (isYouSeat) {
+      s.nameEl.textContent = 'You';
+      s.betEl.textContent = '';
+      s.box.disabled = true;
+      s.box.onclick = null;
+      s.box.title = '';
+      return;
+    }
+    const hasBot = this.seatBots[i];
+    s.nameEl.textContent = hasBot ? MY.BOT_NAMES[i] : `Seat ${i + 1}`;
+    s.betEl.textContent = hasBot ? '×' : '+ Bot';
+    const addReq = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker() + 1);
+    const blocked = !hasBot && this.role === 'banker' && this.app.profile.bankroll < addReq;
+    s.box.disabled = blocked;
+    s.box.title = blocked ? `Needs ${formatChips(addReq, true)} bankroll to add a bot` : '';
+    s.box.onclick = () => this.onToggleSeatBot(i);
+  }
+
+  /** Right after a round ends: every box that held a hand keeps showing it —
+   * cards, total and result exactly as they finished — so the player can
+   * see why they won or lost. Only a seat that stayed empty gets the usual
+   * "+ Bot" idle affordance (paintSeatIdle); a bot's box becomes the "×
+   * remove" tap target again, and the human's own box (seat or banker)
+   * stays inert either way. Nothing here moves until Deal, Swap or a bot
+   * toggle actually changes the table (paintMRoundStart/paintMIdle). */
+  paintMSettled() {
+    this.mnodes.seats.forEach((s, i) => {
+      const p = this.mround.players[i];
+      if (!p) { this.paintSeatIdle(i); return; }
       s.box.classList.remove('is-openable', 'is-active');
-      const isYouSeat = this.role === 'player' && i === 0;
-      s.box.classList.toggle('bj-box--you', isYouSeat);
-      if (isYouSeat) {
-        s.nameEl.textContent = 'You';
-        s.betEl.textContent = '';
+      if (p.isHuman) {
         s.box.disabled = true;
         s.box.onclick = null;
         s.box.title = '';
-        return;
+      } else {
+        s.box.disabled = false;
+        s.box.onclick = () => this.onToggleSeatBot(i);
+        s.box.title = '';
       }
-      const hasBot = this.seatBots[i];
-      s.nameEl.textContent = hasBot ? MY.BOT_NAMES[i] : `Seat ${i + 1}`;
-      s.betEl.textContent = hasBot ? '×' : '+ Bot';
-      const addReq = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker() + 1);
-      const blocked = !hasBot && this.role === 'banker' && this.app.profile.bankroll < addReq;
-      s.box.disabled = blocked;
-      s.box.title = blocked ? `Needs ${formatChips(addReq, true)} bankroll to add a bot` : '';
-      s.box.onclick = () => this.onToggleSeatBot(i);
     });
     this.paintMHud();
   }
@@ -941,13 +985,18 @@ export class BlackjackGame {
     const midRound = !!this.mround && !this.mFinished;
     let disabled = midRound;
     let note = '';
-    if (!midRound && this.role === 'player') {
+    if (midRound) {
+      note = 'Only between rounds';
+    } else if (this.role === 'player') {
       const req = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker());
       if (this.app.profile.bankroll < req) { disabled = true; note = `Needs ${formatChips(req, true)} to bank`; }
     }
     n.swapBtn.disabled = disabled;
-    n.swapBtn.title = midRound ? 'Only between rounds' : '';
+    n.swapBtn.title = note;
     n.swapNote.textContent = note;
+    // Visible text, not just a title tooltip touch has no hover for — and
+    // it costs no space at all when there is nothing to say, the common case.
+    n.swapNote.style.display = note ? '' : 'none';
   }
 
   paintMActions() {
@@ -964,6 +1013,12 @@ export class BlackjackGame {
         n.actions.append(el('button.btn.btn--primary', {
           type: 'button', disabled: filled < 1, onclick: () => this.dealM(),
         }, filled < 1 ? 'Add a bot to deal' : 'Deal'));
+        // Visible, not just each blocked seat's own title — the bankroll
+        // reason a touch device can never see on hover.
+        const addReq = MY.bankRequirement(this.table, filled + 1);
+        if (filled < 4 && this.app.profile.bankroll < addReq) {
+          n.actions.append(el('span.bj-hint', `Needs ${formatChips(addReq, true)} bankroll to add a bot`));
+        }
       }
       return;
     }
@@ -1044,10 +1099,14 @@ export class BlackjackGame {
       deck: this.mDeck, table: this.table, rng: this.rng, seats, bankerIsHuman: this.role === 'banker',
     });
     this.paintMRoundStart();
-    this.paintMActions();
+    // No Hit/Stand/Run (or anything else) until the deal has actually
+    // landed on the felt — a tap during the flight must do nothing, so
+    // there is nothing tappable to show yet.
+    clear(this.mnodes.actions);
     await this.runMDealAnimation();
     if (this.stopped) return;
     this.paintMAll();
+    this.paintMActions();
     await this.advanceMTurns();
   }
 
@@ -1056,7 +1115,7 @@ export class BlackjackGame {
    * (name/"You") — runMDealAnimation() then fills in the cards themselves. */
   paintMRoundStart() {
     const n = this.mnodes;
-    clear(n.bannerHost);
+    this.restoreSwapSlot();
     n.seats.forEach((s, i) => {
       s.box.onclick = null;
       s.box.disabled = true;
@@ -1410,11 +1469,20 @@ export class BlackjackGame {
     recordBlackjackResult(this.app.profile, 'blackjack', net);
     this.mFinished = true;
     this.clearMSeatHighlights();
-    // Measured against the just-settled boxes before they revert to idle —
-    // their position on the felt is identical either way, only the content
-    // inside them is about to change.
+    // Every seat can resolve at the deal itself (specials, every bot Run) and
+    // never reach the banker's own turn — startMBankerPhase()/flipMBankerHole
+    // then never run, and a bot banker's hole card would stay hidden even
+    // though the round is over. Force it face up here so the final hand is
+    // always fully visible, banker included, whichever way the round ended.
+    if (!this.mBankerRevealed) {
+      this.mBankerRevealed = true;
+      this.paintMBanker();
+    }
+    // Every hand — the banker's included — stays on the table exactly as it
+    // finished until Deal, Swap or a bot toggle changes it: the player has
+    // to be able to see why they won or lost, not just the delta.
     this.showMBanner(net);
-    this.paintMIdle();
+    this.paintMSettled();
     this.paintMActions();
   }
 
@@ -1448,36 +1516,36 @@ export class BlackjackGame {
     return push ? 'Push' : net > 0 ? 'You win' : 'You lose';
   }
 
-  /** Same technique as American's showBanner()/the old dealer seat's own
-   * banner: measure the real gap — here, between the banker box and the
-   * seat row (align-items:flex-start on .bj-seatrow means every seat shares
-   * the row's own top edge, so seats[0] alone is enough to read it) —
-   * rather than trusting the felt's centre to land in it, and clamp the
-   * banner's own measured half-height inside an >=8px margin on each side. */
+  /** The result takes over the swap button's own flex slot, between the
+   * banker box and the seat row, instead of floating an absolutely
+   * positioned overlay over a measured gap — a previous version of this
+   * measured the gap and clamped the banner into it, which could still push
+   * it into the banker box or the seat row when the gap was the tighter of
+   * the two. Replacing swap outright means flexbox itself keeps the banner
+   * clear of every box and every card in them; there is nothing left to
+   * measure or clamp. restoreSwapSlot() puts the swap button back the
+   * moment Deal, Swap or a bot toggle moves the table on. */
   showMBanner(net) {
     const win = net > 0;
     const push = net === 0;
     const cls = win ? 'is-win' : push ? 'is-push' : 'is-loss';
     const title = this.mResultTitle(net, push);
-    const banner = el('div.bj-banner', { class: cls },
+    const banner = el('div.bj-banner.bj-banner--inline', { class: cls },
       el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
     );
     const n = this.mnodes;
-    clear(n.bannerHost);
-    n.bannerHost.append(banner);
-    const feltRect = n.felt.getBoundingClientRect();
-    const topRect = n.banker.box.getBoundingClientRect();
-    const bottomRect = n.seats[0].box.getBoundingClientRect();
-    const clearance = 8;
-    const safeTop = topRect.bottom + clearance;
-    const safeBottom = bottomRect.top - clearance;
-    const halfHeight = banner.offsetHeight / 2;
-    let mid = (safeTop + safeBottom) / 2;
-    mid = Math.max(mid, safeTop + halfHeight);
-    mid = Math.min(mid, safeBottom - halfHeight);
-    const top = Math.min(Math.max(mid - feltRect.top, 0), feltRect.height);
-    banner.style.top = `${top}px`;
+    n.swapBtn.replaceWith(banner);
+    n.bannerEl = banner;
     requestAnimationFrame(() => banner.classList.add('is-on'));
+  }
+
+  /** Puts the swap button back in its flex slot once the result banner no
+   * longer needs it — called at the top of every repaint that moves the
+   * table on from "just settled" (a fresh deal, or the true idle view after
+   * Swap or a bot toggle). A no-op the rest of the time. */
+  restoreSwapSlot() {
+    const n = this.mnodes;
+    if (n.bannerEl) { n.bannerEl.replaceWith(n.swapBtn); n.bannerEl = null; }
   }
 }
 

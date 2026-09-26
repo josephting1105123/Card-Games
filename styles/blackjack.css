@@ -128,6 +128,11 @@
 }
 
 .bj-seatrow { display: flex; justify-content: center; align-items: flex-start; gap: clamp(4px, 1.4vw, 16px); width: 100%; }
+/* Every seat the same width regardless of content ("×" vs "+ Bot" vs a
+   three-digit bet), and it stays that way as a round plays out — flex:1 1 0
+   (not the box's own default 0 1 auto) makes all four share the row equally
+   by construction rather than each sizing to its own label. */
+.bj-seatrow > .bj-box { flex: 1 1 0; }
 
 .bj-box {
   flex: 0 1 auto; min-width: 0;
@@ -156,11 +161,14 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 .bj-box--you .bj-box__name { color: var(--gold-bright); }
 .bj-box__bet { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
 
-/* 11vh everywhere, phone sizes included, capped so a wide-but-not-tall
-   viewport (1280x720) never lets a 5-card fan outgrow the row's width
-   budget — the two landscape queries below only need to touch the
-   surrounding chrome, never this. */
-.bj-box__cards { --card-w: clamp(30px, 11vh, 64px); display: flex; min-height: calc(var(--card-w) * 1.4); align-items: center; justify-content: center; }
+/* 11vh everywhere, phone sizes included, capped so an unusually tall window
+   never lets a 5-card fan outgrow the row's width budget. The cap has to
+   clear >=15% of the viewport height at 1280x720 (PR #18's own floor for
+   these boxes) — 84px (84*1.4=117.6px, 16.3% of 720) does, with 11vh itself
+   resolving under the cap at every viewport this table is tested at, so the
+   two landscape queries below only need to touch the surrounding chrome,
+   never this. */
+.bj-box__cards { --card-w: clamp(30px, 11vh, 84px); display: flex; min-height: calc(var(--card-w) * 1.4); align-items: center; justify-content: center; }
 .bj-box__cards .card { margin-left: calc(var(--card-w) * -0.5); }
 .bj-box__cards .card:first-child { margin-left: 0; }
 /* Your own box: the same >=20vh floor the single-hand table always used —
@@ -196,7 +204,12 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 .bj-swap:not(:disabled):hover .bj-swap__icon { border-color: var(--gold-bright); }
 .bj-swap:not(:disabled):active .bj-swap__icon { transform: scale(0.92); }
 .bj-swap__label { font-size: clamp(10px, 1.3vw, 12px); letter-spacing: 0.08em; text-transform: uppercase; }
-.bj-swap__note { font-size: clamp(9.5px, 1.2vw, 11px); color: var(--text-tertiary); max-width: 22ch; text-align: center; }
+/* A blocked reason (bankroll, mid-round) has to be readable on a touch
+   screen that gets no hover/title tooltip at all — a flat 12px floor, not
+   the same vw-clamp the caption uses, which resolves under 12px at every
+   width this table is tested at. Shown/hidden from JS (paintMSwap), not
+   CSS, so it costs no space at all the rest of the time, the common case. */
+.bj-swap__note { font-size: 12px; line-height: 1.15; color: var(--text-tertiary); max-width: 22ch; text-align: center; }
 
 /* position + z-index: .bj-felt is itself position:relative (it anchors the
    banner), which alone would let its content paint above this non-positioned
@@ -247,6 +260,19 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 .bj-banner.is-loss .bj-banner__delta { color: var(--danger); }
 .bj-banner.is-push .bj-banner__delta { color: var(--text-secondary); }
 .bj-banner__reason { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); margin-top: 2px; white-space: nowrap; }
+
+/* Malaysian's own result banner (showMBanner/ui/blackjack.js) sits in the
+   swap button's flex slot instead of floating over a measured gap — drop
+   the absolute positioning and the centering translate, .bj-mtable's own
+   align-items:center does that job here. */
+/* margin, not just .bj-mtable's own gap: the gap alone is as little as 3-4px
+   at the tight phone breakpoints (sized for a swap icon, not an >=8px
+   clearance requirement) — an explicit 6px on top of it clears >=8px at
+   every size this table is tested at (measured: 9-26px), without eating so
+   much of the felt's own budget that the settled state's slimmer margins
+   (a single Deal button, not the in-round worst case) turn negative. */
+.bj-banner--inline { position: static; left: auto; top: auto; margin: 6px 0; transform: scale(0.92); }
+.bj-banner--inline.is-on { transform: scale(1); }
 
 .bj-toast {
   position: fixed; top: 14px; left: 50%; z-index: var(--z-overlay);
@@ -302,8 +328,10 @@ button.bj-box:not(:disabled) { cursor: pointer; }
   .bj-box--you .bj-box__cards { --card-w: clamp(52px, 15.5vh, 100px); }
   /* Icon only: the "Swap" caption is the first thing to give way at this
      height, same as the banner's reason line below — the circular badge
-     alone is still a clear, discoverable affordance. */
-  .bj-swap__label, .bj-swap__note { display: none; }
+     alone is still a clear, discoverable affordance. The note stays
+     (paintMSwap toggles its own display) — it only ever appears for a
+     blocked reason, and that has to stay visible even here. */
+  .bj-swap__label { display: none; }
   .bj-swap__icon { width: clamp(28px, 4.4vh, 36px); height: clamp(28px, 4.4vh, 36px); }
   .bj-actions { min-height: 28px; padding: 2px 10px 3px; gap: 6px; }
   .bj-actions .btn { padding: 4px 10px; font-size: 12px; }

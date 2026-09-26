@@ -636,3 +636,128 @@ test('malaysian: the bot banker makes the identical sequence of decisions for id
   }
   assert.ok(sawHit && sawOpen, 'expected both a hit and an opening to occur across 200 seeds');
 });
+
+// ---------------------------------------------------------------------------
+// Malaysian: specials and Run resolved for a bot seat itself (not just the
+// human, above), a human banker's own special/turn, and the bot banker's
+// basic below-16/at-16 policy in isolation from its "chase" branch.
+// ---------------------------------------------------------------------------
+
+test("malaysian: a bot seat's Run decision never reads the banker's cards (the peek guard)", () => {
+  // The same bot opening 15 (9,6) both times, with the same rng seed so its
+  // coin-flip run/decline call lands the same way twice over — the banker
+  // holds a completely different hand each time (a Ban Luck special vs. a
+  // plain low total). decideOpeningRunsForBots never reads round.banker, so
+  // these two must agree for every seed; if it ever peeked, some seed here
+  // would catch the two disagreeing.
+  for (let seed = 1; seed <= 50; seed++) {
+    const roundA = MY.startTableRound({
+      deck: stack(9, A, 6, Q), // seat1 9,6=15; banker A,Q = Ban Luck
+      table, rng: makeRng(`peek-${seed}`),
+      seats: [null, { isHuman: false, name: 'Bee' }, null, null],
+      bankerIsHuman: false,
+    });
+    const roundB = MY.startTableRound({
+      deck: stack(9, 3, 6, 4), // seat1 9,6=15 (same); banker 3,4=7, no special
+      table, rng: makeRng(`peek-${seed}`),
+      seats: [null, { isHuman: false, name: 'Bee' }, null, null],
+      bankerIsHuman: false,
+    });
+    assert.equal(
+      roundA.players[1].result === 'run',
+      roundB.players[1].result === 'run',
+      `seed ${seed}: the bot's run decision changed only because the banker's cards did`,
+    );
+  }
+});
+
+test('malaysian: with a human banker, nothing opens below 16', () => {
+  const deck = stack(A, 9, 9, A, 7, 4, 3);
+  // seat0 A,A = Ban Ban (paid instantly, opened at the deal); seat1 9,7=16;
+  // banker (human) 9,4=13, then hits a 3 -> 16.
+  const round = MY.startTableRound({
+    deck, table, rng: () => 0,
+    seats: [{ isHuman: true, bet: 100 }, { isHuman: true, bet: 100 }, null, null],
+    bankerIsHuman: true,
+  });
+  assert.equal(round.players[0].result, 'banban');
+  MY.standSeat(round, 1);
+  assert.equal(round.phase, 'banker');
+  assert.equal(malaysianTotal(round.banker.cards).total, 13);
+  assert.equal(MY.canOpenSeat(round, 1), false, 'a human banker is gated by the same 16 floor a bot banker is');
+  MY.bankerHit(round, deck);
+  assert.equal(malaysianTotal(round.banker.cards).total, 16);
+  assert.equal(MY.canOpenSeat(round, 1), true);
+});
+
+test("malaysian: a human banker's own special settles every seat, same as a bot banker's", () => {
+  const deck = stack(9, A, 5, Q); // seat0 9,5=14, no special; banker (human) A,Q = Ban Luck
+  const round = MY.startTableRound({
+    deck, table, rng: () => 0,
+    seats: [{ isHuman: true, bet: 100 }, null, null, null],
+    bankerIsHuman: true,
+  });
+  assert.equal(round.banker.special, 'banluck');
+  assert.equal(round.phase, 'settled', "the banker's own special ends the round at once, human-banked or not");
+  assert.equal(round.players[0].result, 'lose');
+  assert.equal(round.players[0].payout, -200);
+});
+
+test("malaysian: a bot seat's own special is paid at the deal, before any turn", () => {
+  const deck = stack(A, 9, A, 4); // seat1 (bot) A,A = Ban Ban; banker 9,4=13, no special
+  const round = MY.startTableRound({
+    deck, table, rng: () => 0,
+    seats: [null, { isHuman: false, name: 'Bee' }, null, null],
+    bankerIsHuman: false,
+  });
+  const p = round.players[1];
+  assert.equal(p.special, 'banban');
+  assert.equal(p.opened, true, 'paid the instant the first two cards land, not deferred to its turn');
+  assert.equal(p.result, 'banban');
+  assert.equal(p.payout, p.bet * 3);
+});
+
+test("malaysian: a bot seat's Five Dragon pays mid-turn, the same as a human's", () => {
+  const deck = stack(TWO, 9, TWO, 9, TWO, TWO, TWO); // seat1 (bot) five 2s = 10; banker 9,9
+  const round = MY.startTableRound({
+    deck, table, rng: () => 0,
+    seats: [null, { isHuman: false, name: 'Bee' }, null, null],
+    bankerIsHuman: false,
+  });
+  assert.equal(round.phase, 'players');
+  MY.playSeatTurn(round, 1, deck, () => 0);
+  const p = round.players[1];
+  assert.equal(p.cards.length, 5);
+  assert.equal(malaysianTotal(p.cards).total, 10);
+  assert.equal(p.result, 'five-dragon');
+  assert.equal(p.payout, p.bet * 2);
+  assert.equal(p.opened, true, 'settled mid-turn, not deferred to the banker opening it');
+});
+
+test('malaysian: the bot banker draws below 16 and opens instead from 16, once a 3+ card seat is waiting', () => {
+  const deck = stack(9, 9, 5, TWO, 3, 3, TWO);
+  // seat0 (human) 9,5=14, hits a 3 -> 17 (three cards), stands; banker 9,2=11.
+  const round = MY.startTableRound({
+    deck, table, rng: () => 0,
+    seats: [{ isHuman: true, bet: 100 }, null, null, null],
+    bankerIsHuman: false,
+  });
+  MY.hitSeat(round, 0, deck);
+  assert.equal(malaysianTotal(round.players[0].cards).total, 17);
+  MY.standSeat(round, 0);
+  assert.equal(round.phase, 'banker');
+  assert.equal(malaysianTotal(round.banker.cards).total, 11);
+
+  let step = MY.bankerBotStep(round, deck, () => 0);
+  assert.equal(step.type, 'hit', 'still below 16');
+  assert.equal(malaysianTotal(round.banker.cards).total, 14);
+
+  step = MY.bankerBotStep(round, deck, () => 0);
+  assert.equal(step.type, 'hit', 'still below 16');
+  assert.equal(malaysianTotal(round.banker.cards).total, 16);
+
+  step = MY.bankerBotStep(round, deck, () => 0);
+  assert.equal(step.type, 'open', 'at 16 with a three-card seat waiting, it opens rather than drawing again');
+  assert.equal(step.seatIndex, 0);
+  assert.equal(round.phase, 'settled');
+});
