@@ -425,3 +425,21 @@
      to clear its own cards by >= 4px. */
   .play--self .play__name { top: auto; bottom: -1.5em; }
 }
+
+/* A phone's browser bar can shrink height past what the 460px query above
+   was tuned for: at ~330-350px, self's own played cards — still at
+   .play__cards's general 40px floor — land under 4px below the landlord's
+   three. Only self's cards need to shrink: the landlord's three itself
+   doesn't move, and the left/right opponents' played cards sit clear of it
+   horizontally already (.play--left/.play--right are off-centre; the
+   landlord's three is pinned to the middle). 37px keeps the rank index (the
+   corner digit/letter) >= 12 CSS px tall — cardart.js pins its cap height to
+   DIGIT_H/VB_H = 33.5/140 of the rendered card height (card-w * 1.4), so
+   0.335 * 37 =~ 12.4px — with a little room to spare, and 41.6% (nudged down
+   from the 460px query's 40.5%, to match the shorter card) splits the
+   now-larger slack evenly: ~5px clear of the landlord's three above the
+   cards, ~5px clear of the controls pill below the caption. */
+@media (orientation: landscape) and (max-height: 350px) {
+  .play--self .play__cards .card { --card-w: 37px; }
+  .play--self { top: 41.6%; }
+}
