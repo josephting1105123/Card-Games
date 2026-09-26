@@ -225,6 +225,33 @@ export function settleDouDiZhu({ lobby, result, seat, bankroll, rescueMode = fal
 }
 
 /**
+ * Big Two has no multiplier — F1: "each loser pays cardsLeft × rate to the
+ * winner, no multipliers" — so there is no stake/landlord-double arithmetic
+ * to redo here. What still applies, exactly as it does for Dou Di Zhu, is the
+ * pair of safety nets: a win is capped at handCap(lobby) pots, a loss at
+ * lossCap(lobby, bankroll, rescueMode). `gross` is the human seat's raw,
+ * uncapped payout from games/big2/engine.js's settle().
+ *
+ * @param {object} args
+ * @param {Lobby} args.lobby
+ * @param {number} args.gross      the human seat's zero-sum payout, before any cap
+ * @param {number} args.bankroll   before settling
+ * @param {boolean} [args.rescueMode]
+ * @returns {{delta: number, gross: number, capped: boolean, won: boolean, cap: number}}
+ */
+export function settleBigTwo({ lobby, gross, bankroll, rescueMode = false }) {
+  const won = gross > 0;
+  if (won) {
+    const cap = handCap(lobby);
+    const delta = Math.min(gross, cap);
+    return { delta, gross, capped: delta !== gross, won, cap };
+  }
+  const cap = lossCap(lobby, bankroll, rescueMode);
+  const delta = -Math.min(-gross, cap);
+  return { delta, gross, capped: delta !== gross, won, cap };
+}
+
+/**
  * What a room of this coin opens with: the coin's pot, and a stack of
  * STARTING_STACK_MULTIPLE of them.
  * @param {string} currencyCode
