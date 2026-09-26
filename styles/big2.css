@@ -375,3 +375,13 @@
 @media (orientation: landscape) and (max-height: 460px) {
   .b2-hud { padding-top: 3px; padding-bottom: 3px; }
 }
+
+/* At the shortest phone heights, a hand with plays showing both north and
+   south fills the whole column, the spacer reaches zero and the controls
+   are pushed down into the hand's raise headroom. Trimming the controls'
+   padding and the play cards frees the ~15px that squeeze needs. */
+@media (orientation: landscape) and (max-height: 350px) {
+  .b2-controls { padding-top: 2px; padding-bottom: 2px; }
+  .b2-controls .btn { padding-top: 3px; padding-bottom: 3px; }
+  .b2-play__cards .card { --card-w: clamp(22px, 7vh, 58px); }
+}
