@@ -197,12 +197,20 @@ export class BigTwoGame {
       isWinner: seat === this.state.winner,
     }));
 
+    // Short landscape (the same 460px threshold big2.css's compact result
+    // layout switches on) has no room for Elo and Chips as two lines, so
+    // they're combined into one here rather than left to CSS to arrange —
+    // reliable regardless of how many other lines (capped/bankrupt/rescue)
+    // end up between them.
+    const compact = globalThis.matchMedia?.('(orientation: landscape) and (max-height: 460px)')?.matches;
     const lines = [
       `Winner: <span>${names[this.state.winner]}</span>${this.state.winner === 0 ? ' — you went out first' : ''}`,
       `Rate: <span>${formatChips(this.rate)}</span> per card left`,
-      `Elo: <span>${before} → ${elo.rating}</span> (${elo.delta >= 0 ? '+' : ''}${elo.delta}, ${ratingTitle(elo.rating)})`,
-      `Chips: <span>${formatChips(profile.bankroll)}</span>`,
+      compact
+        ? `Elo <span>${before} → ${elo.rating}</span> (${elo.delta >= 0 ? '+' : ''}${elo.delta}) · Chips <span>${formatChips(profile.bankroll)}</span>`
+        : `Elo: <span>${before} → ${elo.rating}</span> (${elo.delta >= 0 ? '+' : ''}${elo.delta}, ${ratingTitle(elo.rating)})`,
     ];
+    if (!compact) lines.push(`Chips: <span>${formatChips(profile.bankroll)}</span>`);
     if (settlement.capped) {
       lines.splice(2, 0, `Loss capped at <span>${formatChips(Math.abs(settlement.delta))}</span> (gross ${formatChips(Math.abs(settlement.gross))})`);
     }
@@ -608,6 +616,16 @@ class Big2View {
     const felt = this.nodes.felt;
     const N = view.you.hand.length; // HAND_SIZE, pre-shuffle
 
+    // Belt and suspenders alongside .is-dealing's own opacity:0/pointer-events:none
+    // (see big2.css): disable every control outright rather than trust opacity
+    // and hit-testing alone to keep an invisible button from taking a tap.
+    // Each button's own disabled state (Sort is never disabled; Hint/Pass/Play
+    // depend on whose turn the new hand opens on) is restored, not just reset
+    // to enabled, once the deal lands.
+    const controlButtons = [this.nodes.sortBtn, this.nodes.hintBtn, this.nodes.passBtn, this.nodes.playBtn];
+    const priorDisabled = controlButtons.map((b) => b.disabled);
+    for (const b of controlButtons) b.disabled = true;
+
     table.classList.add('is-dealing');
 
     let skipped = false;
@@ -627,6 +645,7 @@ class Big2View {
       table.removeEventListener('pointerdown', onTap, { capture: true });
       dealer.remove();
       table.classList.remove('is-dealing');
+      controlButtons.forEach((b, i) => { b.disabled = priorDisabled[i]; });
       for (const seatNode of [this.nodes.seatTop, this.nodes.seatLeft, this.nodes.seatRight]) {
         for (const child of seatNode.backs.children) child.style.opacity = '';
       }
@@ -727,18 +746,41 @@ class Big2View {
           `${r.delta >= 0 ? '+' : '−'}${formatChips(Math.abs(r.delta))}`),
       )),
     );
-    const overlay = el('div.b2-overlay',
-      el('div.b2-result',
-        el('h2', { class: `b2-result__title ${win ? 'is-win' : 'is-loss'}` }, title),
-        el('div', { class: `b2-result__big-delta ${win ? 'is-win' : 'is-loss'}` }, deltaText),
-        rowsEl,
-        el('ul.b2-result__lines', ...lines.map((line) => el('li', { html: line }))),
-        el('div.btn-row', { style: 'justify-content:center' },
-          el('button.btn.btn--primary', { type: 'button', onclick: () => { overlay.remove(); onAgain?.(); } }, againLabel),
-          el('button.btn', { type: 'button', onclick: () => { overlay.remove(); onLeave?.(); } }, 'Leave'),
-        ),
-      ),
+    // Title and delta share one row (big2.css puts them side by side only
+    // under the short-landscape query — the default, roomier sizes keep them
+    // stacked as before).
+    const head = el('div.b2-result__head',
+      el('h2', { class: `b2-result__title ${win ? 'is-win' : 'is-loss'}` }, title),
+      el('div', { class: `b2-result__big-delta ${win ? 'is-win' : 'is-loss'}` }, deltaText),
     );
+    const nextBtn = el('button.btn.btn--primary', { type: 'button', onclick: (e) => { e.stopPropagation(); overlay.remove(); onAgain?.(); } }, againLabel);
+    const leaveBtn = el('button.btn', { type: 'button', onclick: (e) => { e.stopPropagation(); overlay.remove(); onLeave?.(); } }, 'Leave');
+    // F4: every hand is revealed face up in place, but the sheet and its
+    // dimmed backdrop were sitting right on top of the seats — this toggle
+    // collapses the card to a slim bar (result + Next hand) docked over the
+    // HUD, which big2.css keeps clear of every seat plate and revealed card
+    // at every viewport this table supports, and clears the backdrop so the
+    // felt underneath is genuinely visible, not just technically undestroyed.
+    const toggleBtn = el('button.b2-result__toggle', {
+      type: 'button',
+      onclick: (e) => { e.stopPropagation(); setCollapsed(!overlay.classList.contains('is-collapsed')); },
+    }, 'Show table');
+    const card = el('div.b2-result',
+      head,
+      rowsEl,
+      el('ul.b2-result__lines', ...lines.map((line) => el('li', { html: line }))),
+      el('div.btn-row', { style: 'justify-content:center' }, nextBtn, leaveBtn),
+      toggleBtn,
+    );
+    const overlay = el('div.b2-overlay', card);
+    function setCollapsed(collapsed) {
+      overlay.classList.toggle('is-collapsed', collapsed);
+      toggleBtn.textContent = collapsed ? 'Show result' : 'Show table';
+    }
+    // Tapping the collapsed bar anywhere restores the sheet; Next hand's own
+    // handler already stops the click reaching here, so it still just plays
+    // the next hand instead of re-expanding first.
+    card.addEventListener('click', () => { if (overlay.classList.contains('is-collapsed')) setCollapsed(false); });
     this.root.append(overlay);
     return overlay;
   }

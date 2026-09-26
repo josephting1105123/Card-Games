@@ -171,7 +171,16 @@
   position: relative; height: var(--b2-hand-h);
   margin: 0 auto; width: 100%;
 }
-.b2-hand .card { --card-w: calc(var(--b2-hand-h) / 1.4); }
+/* Card height comes from --b2-hand-h minus a reserved headroom, not the box's
+   full height: a card sitting bottom:0 and exactly as tall as the box (the
+   original formula) has nowhere to go when raised on hover/select below, so
+   the raise reached straight into .b2-controls floating just above — F4
+   audit measured up to 13px of overlap. (var(--b2-hand-h) * 0.19 + 2px)
+   clears the larger, .22-selected raise with >=2px still spare at every
+   viewport this table supports: the raise and the headroom are both a fixed
+   proportion of --b2-hand-h, so the margin between them holds as that
+   variable scales (checked at 844x330, 844x390 and 1280x720). */
+.b2-hand .card { --card-w: calc((var(--b2-hand-h) - (var(--b2-hand-h) * 0.19 + 2px)) / 1.4); }
 .b2-hand__inner { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); height: 100%; }
 
 .b2-hand .card {
@@ -221,19 +230,46 @@
    change to one table's result sheet can never silently move the other's. */
 
 .b2-overlay {
-  position: fixed; inset: 0; z-index: var(--z-overlay); display: grid; place-items: center; padding: 18px;
+  position: fixed; inset: 0; z-index: var(--z-overlay); display: grid;
+  /* Read by .b2-result's max-height below too, so the clearance the padding
+     promises and the cap that keeps the sheet inside it can't drift apart. */
+  --b2-result-pad-y: max(18px, 23vh);
+  /* "safe center", not plain center: a plain center overflows equally in both
+     directions once the item is taller than the padded area, which is
+     exactly what let an unusually long result (multiple optional lines at
+     once — capped loss and a bankrupt notice together) push back up above
+     the top padding and into seatTop's plate/revealed cards at 1280x720.
+     "safe" falls back to start alignment rather than let that happen, so the
+     23vh top padding below is a genuine floor on the sheet's top edge, not
+     just the common case. */
+  align-items: safe center; justify-items: center;
+  /* Top padding alone, not the centering math, is what has to clear seatTop's
+     plate and revealed cards. 23vh clears that band with margin at 720.
+     Reverted to a plain 8px for the short-landscape query below, where this
+     table is a different shape (phones use the collapse toggle for this,
+     not headroom — see .is-collapsed there). */
+  padding: var(--b2-result-pad-y) 18px 18px;
   background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
 }
 .b2-result {
-  width: min(92vw, 540px); max-height: 90vh; overflow-y: auto; text-align: center;
+  width: min(92vw, 540px);
+  /* Capped to the space the overlay's own padding actually leaves, not a flat
+     90vh: "safe center" only protects the sheet's top edge from riding up
+     over seatTop, it does nothing about the bottom edge. Content long enough
+     to exceed this (worst case: 4 rows plus every optional line at once —
+     measured 610px against ~536px available at 1280x720) now scrolls inside
+     the box via overflow-y instead of pushing past the viewport's own edge. */
+  max-height: min(90vh, calc(100vh - var(--b2-result-pad-y) - 18px));
+  overflow-y: auto; text-align: center;
   padding: 24px 26px 20px; border-radius: var(--r-lg);
   border: 1px solid rgba(205, 174, 108, 0.4); background: linear-gradient(170deg, #123a2d, #07241b);
   box-shadow: var(--shadow-8);
 }
+.b2-result__head { margin: 0 0 14px; }
 .b2-result__title { font-size: clamp(24px, 5vw, 36px); margin: 0 0 4px; }
 .b2-result__title.is-win { color: var(--gold-bright); }
 .b2-result__title.is-loss { color: #f0a58f; }
-.b2-result__big-delta { font-size: clamp(20px, 4vw, 28px); margin: 6px 0 14px; font-variant-numeric: lining-nums tabular-nums; }
+.b2-result__big-delta { font-size: clamp(20px, 4vw, 28px); margin: 0; font-variant-numeric: lining-nums tabular-nums; }
 .b2-result__big-delta.is-win { color: var(--ok); }
 .b2-result__big-delta.is-loss { color: var(--danger); }
 
@@ -248,6 +284,77 @@
 
 .b2-result__lines { list-style: none; margin: 0 0 18px; padding: 0; font-size: 14.5px; line-height: 1.5; color: var(--text-secondary); display: grid; gap: 6px; }
 .b2-result__lines span { color: var(--gold); }
+
+/* Small, unobtrusive: this is a secondary escape hatch (Leave/Next hand are
+   the primary actions), not another button competing with them. */
+.b2-result__toggle {
+  display: block; margin: 10px auto 0; padding: 4px 10px; background: none; border: 0;
+  font-family: var(--font); font-size: 12.5px; color: var(--text-tertiary); text-decoration: underline;
+  cursor: pointer;
+}
+.b2-result__toggle:hover { color: var(--gold); }
+
+/* --- "Show table": collapses the sheet to a slim bar so F4's face-up reveal
+   is actually visible, not just technically present under a dimmed modal.
+   Docked over the HUD rather than the felt itself: the HUD is the one band
+   on this table with no seat plate or card in it at any viewport, so a bar
+   confined to that band can never cover a revealed hand by construction,
+   without having to chase seat positions across three screen sizes. */
+.b2-overlay.is-collapsed {
+  place-items: start center; padding: 6px 12px; background: transparent; backdrop-filter: none;
+  pointer-events: none;
+}
+.b2-overlay.is-collapsed .b2-result {
+  display: flex; align-items: baseline; gap: 12px; width: auto; max-width: 92vw; max-height: none; overflow: visible;
+  padding: 6px 8px 6px 16px; cursor: pointer; pointer-events: auto;
+}
+.b2-overlay.is-collapsed .b2-result__head { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.b2-overlay.is-collapsed .b2-result__title { font-size: 14px; }
+.b2-overlay.is-collapsed .b2-result__big-delta { font-size: 14px; }
+.b2-overlay.is-collapsed .b2-result__rows,
+.b2-overlay.is-collapsed .b2-result__lines,
+.b2-overlay.is-collapsed .b2-result__toggle,
+.b2-overlay.is-collapsed .btn-row .btn:not(.btn--primary) {
+  display: none;
+}
+.b2-overlay.is-collapsed .btn-row { margin: 0; }
+.b2-overlay.is-collapsed .btn-row .btn--primary { padding: 4px 10px; font-size: 12.5px; }
+
+/* --- short landscape (phone browser bar): the sheet above is sized for a
+   full-height screen and would run past a 330-390px-tall viewport, buttons
+   included — see F4 audit. Every number below was checked against an actual
+   settle() (4 seat rows, a capped-loss line) at 844x330, the tightest case,
+   with >=8px still clear above and below the sheet. */
+@media (orientation: landscape) and (max-height: 460px) {
+  /* This table is a different shape at phone heights: the 23vh top padding
+     above (sized for 1280x720's much taller HUD/seat band) would eat most of
+     a 330-390px viewport on its own. Phones lean on the collapse toggle
+     instead of headroom to keep the sheet off the seats. */
+  .b2-overlay { padding: 8px; }
+  .b2-result {
+    padding: 10px 16px 12px; max-height: calc(100vh - 16px);
+  }
+  .b2-result__head { display: flex; align-items: baseline; justify-content: center; gap: 10px; margin: 0 0 6px; }
+  .b2-result__title { font-size: 18px; margin: 0; }
+  .b2-result__big-delta { font-size: 16px; }
+  .b2-result__rows { gap: 0; margin: 0 0 6px; padding: 4px 8px; }
+  .b2-result__row { font-size: 12.5px; padding: 1px 0; }
+  .b2-result__lines { font-size: 12px; line-height: 1.3; margin: 0 0 8px; gap: 2px; }
+  .b2-result__toggle { margin-top: 4px; }
+
+  /* The collapsed bar's own safe band (the HUD strip above seatTop) is only
+     ~40px tall at these heights — measured, not assumed, since it is the
+     seat plate's own top clamp doing the work, not a plain fraction of the
+     viewport — against the roomier defaults above, which alone measured
+     tall enough to reach past seatTop's plate at 844x390. Every value below
+     was sized to that ~40px, not guessed. */
+  .b2-overlay.is-collapsed { padding: 2px 8px; }
+  .b2-overlay.is-collapsed .b2-result { padding: 2px 6px; gap: 6px; }
+  .b2-overlay.is-collapsed .b2-result__head { gap: 5px; }
+  .b2-overlay.is-collapsed .b2-result__title,
+  .b2-overlay.is-collapsed .b2-result__big-delta { font-size: 11.5px; }
+  .b2-overlay.is-collapsed .btn-row .btn--primary { padding: 2px 7px; font-size: 10.5px; }
+}
 
 /* --- portrait guard, same idea as table.css's .rotate-gate ------------------ */
 
