@@ -208,6 +208,15 @@ export class BlackjackGame {
     this.mFinished = true; // no round dealt yet — idle controls show straight away
     this.mDeck = null;
     this.mBankerRevealed = false;
+    // Bumped by paintMIdle()/paintMRoundStart() — every point the table is
+    // reset to a fresh idle or a fresh deal. A human banker's onMOpenSeat()
+    // is async (it awaits its own flip animation before mutating the round),
+    // so a bulk auto-settle from a *different*, faster action (the banker's
+    // own Hit busting, which settles every still-unopened seat at once) can
+    // finish the round while that flip is still in flight; if the player then
+    // swaps away before the flip's tail resumes, this token lets that tail
+    // recognise the table has moved on and stop touching it.
+    this.mEpoch = 0;
   }
 
   mount(root) {
@@ -829,16 +838,20 @@ export class BlackjackGame {
       n.swapNote,
     );
 
-    n.mtable = el('div.bj-mtable', n.banker.box, n.swapBtn, seatRow);
+    // Swap lives in its own row (not the mtable's own middle slot directly)
+    // so the result banner can sit beside it, between rounds, without
+    // hiding it — swap must stay visible and tappable the moment a round
+    // settles, not just once Deal/a bot toggle clears the banner.
+    n.midRow = el('div.bj-midrow', n.swapBtn);
+    n.mtable = el('div.bj-mtable', n.banker.box, n.midRow, seatRow);
 
     n.shoeIcon = el('div.bj-shoe', cardElement(null, { faceDown: true }));
     n.actions = el('div.bj-actions');
 
     // No absolute banner-host here (unlike American's table, below): the
-    // result banner takes the swap button's own flex slot instead
-    // (showMBanner/restoreSwapSlot) so flexbox itself keeps it clear of the
-    // banker box, the seat row and every card in them — nothing to measure
-    // or clamp against.
+    // result banner joins the swap button in its own row (showMBanner/
+    // restoreSwapSlot) so flexbox keeps both clear of the banker box, the
+    // seat row and every card in them — nothing to measure or clamp against.
     n.felt = el('div.bj-felt', n.shoeIcon, n.mtable);
     n.table = el('div.bj-table', hud, n.felt, n.actions);
 
@@ -875,6 +888,7 @@ export class BlackjackGame {
    * before anything has ever been dealt. */
   paintMIdle() {
     const n = this.mnodes;
+    this.mEpoch++; // invalidate any in-flight onMOpenSeat() tail from the round just left
     this.restoreSwapSlot();
     const b = n.banker;
     const bankerIsYou = this.role === 'banker';
@@ -1115,6 +1129,7 @@ export class BlackjackGame {
    * (name/"You") — runMDealAnimation() then fills in the cards themselves. */
   paintMRoundStart() {
     const n = this.mnodes;
+    this.mEpoch++; // same invalidation as paintMIdle() — see this.mEpoch's own comment
     this.restoreSwapSlot();
     n.seats.forEach((s, i) => {
       s.box.onclick = null;
@@ -1426,6 +1441,7 @@ export class BlackjackGame {
 
   async onMOpenSeat(i) {
     if (!MY.canOpenSeat(this.mround, i)) return;
+    const epoch = this.mEpoch;
     const s = this.mnodes.seats[i];
     const p = this.mround.players[i];
     s.box.disabled = true;
@@ -1439,20 +1455,26 @@ export class BlackjackGame {
       if (this.animationsOn()) {
         for (let c = 0; c < wraps.length; c++) {
           if (c > 0) await wait(120);
-          if (this.stopped) return;
+          if (this.stopped || this.mEpoch !== epoch) return;
           wraps[c].classList.add('is-flipping');
           await wait(FLIP_MS / 2);
-          if (this.stopped) return;
+          if (this.stopped || this.mEpoch !== epoch) return;
           clear(wraps[c]);
           wraps[c].append(cardElement(p.cards[c]));
           await wait(FLIP_MS / 2);
-          if (this.stopped) return;
+          if (this.stopped || this.mEpoch !== epoch) return;
           wraps[c].classList.remove('is-flipping');
         }
       } else {
         wraps.forEach((wrap, c) => { clear(wrap); wrap.append(cardElement(p.cards[c])); });
       }
     }
+    // Same staleness check, one last time: a bulk auto-settle (the banker's
+    // own Hit busting mid-flip) or a swap can both resolve this round while
+    // the flip above was still running. Either way the table has moved on,
+    // so committing this seat's own open now would repaint over whatever the
+    // table is showing next (a fresh idle table or a fresh deal).
+    if (this.stopped || this.mEpoch !== epoch) return;
     // As a player, this seat's cards were already face up throughout — an
     // opening here is purely a settlement, so there is nothing to flip.
     MY.openSeat(this.mround, i);
@@ -1516,15 +1538,20 @@ export class BlackjackGame {
     return push ? 'Push' : net > 0 ? 'You win' : 'You lose';
   }
 
-  /** The result takes over the swap button's own flex slot, between the
-   * banker box and the seat row, instead of floating an absolutely
-   * positioned overlay over a measured gap — a previous version of this
+  /** The result joins the swap button in its own row (.bj-midrow), between
+   * the banker box and the seat row, instead of floating an absolutely
+   * positioned overlay over a measured gap — an earlier version of this
    * measured the gap and clamped the banner into it, which could still push
    * it into the banker box or the seat row when the gap was the tighter of
-   * the two. Replacing swap outright means flexbox itself keeps the banner
-   * clear of every box and every card in them; there is nothing left to
-   * measure or clamp. restoreSwapSlot() puts the swap button back the
-   * moment Deal, Swap or a bot toggle moves the table on. */
+   * the two; a version after that replaced swap outright, which fixed the
+   * overlap but also made swap untappable for the entire between-rounds
+   * window — the one time the player actually needs it, per the spec: swap
+   * (and every bot toggle) has to keep working the instant a round settles,
+   * without needing to deal again first. Sitting the two side by side in
+   * one flex row (gap >=8px) keeps the banner clear of swap, the banker box
+   * and the seat row by construction, and leaves swap fully live throughout.
+   * restoreSwapSlot() removes the banner once Deal, Swap or a bot toggle
+   * moves the table on. */
   showMBanner(net) {
     const win = net > 0;
     const push = net === 0;
@@ -1534,18 +1561,19 @@ export class BlackjackGame {
       el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
     );
     const n = this.mnodes;
-    n.swapBtn.replaceWith(banner);
+    this.restoreSwapSlot(); // never two banners stacked, if this is ever called twice running
+    n.midRow.append(banner);
     n.bannerEl = banner;
     requestAnimationFrame(() => banner.classList.add('is-on'));
   }
 
-  /** Puts the swap button back in its flex slot once the result banner no
-   * longer needs it — called at the top of every repaint that moves the
-   * table on from "just settled" (a fresh deal, or the true idle view after
-   * Swap or a bot toggle). A no-op the rest of the time. */
+  /** Removes the result banner from swap's row once it no longer needs to
+   * be there — called at the top of every repaint that moves the table on
+   * from "just settled" (a fresh deal, or the true idle view after Swap or
+   * a bot toggle). A no-op the rest of the time. */
   restoreSwapSlot() {
     const n = this.mnodes;
-    if (n.bannerEl) { n.bannerEl.replaceWith(n.swapBtn); n.bannerEl = null; }
+    if (n.bannerEl) { n.bannerEl.remove(); n.bannerEl = null; }
   }
 }
 

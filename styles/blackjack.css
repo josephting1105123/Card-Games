@@ -183,6 +183,14 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 .bj-box__result.is-lose { color: var(--danger); }
 .bj-box__result.is-push { color: var(--text-secondary); }
 
+/* Swap's own row: holds just the swap button between rounds, and the result
+   banner beside it once a round settles (showMBanner/restoreSwapSlot) — a
+   real flex sibling, never an overlay, so the two can never overlap and
+   swap never has to leave the DOM (and stop being tappable) to make room
+   for the banner. gap >=8px is the same clearance the banner needs from
+   every box, just spent here as the row's own gap instead of a margin. */
+.bj-midrow { display: flex; align-items: center; justify-content: center; gap: clamp(8px, 2vw, 16px); }
+
 /* --- swap: moves the human between the banker box and seat 1, between
    rounds only. A circular icon badge (the reversal glyph) plus a caption —
    not a bare icon button — so "Swap" reads without relying on an emoji
@@ -261,16 +269,18 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 .bj-banner.is-push .bj-banner__delta { color: var(--text-secondary); }
 .bj-banner__reason { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); margin-top: 2px; white-space: nowrap; }
 
-/* Malaysian's own result banner (showMBanner/ui/blackjack.js) sits in the
-   swap button's flex slot instead of floating over a measured gap — drop
-   the absolute positioning and the centering translate, .bj-mtable's own
-   align-items:center does that job here. */
-/* margin, not just .bj-mtable's own gap: the gap alone is as little as 3-4px
-   at the tight phone breakpoints (sized for a swap icon, not an >=8px
-   clearance requirement) — an explicit 6px on top of it clears >=8px at
-   every size this table is tested at (measured: 9-26px), without eating so
-   much of the felt's own budget that the settled state's slimmer margins
-   (a single Deal button, not the in-round worst case) turn negative. */
+/* Malaysian's own result banner (showMBanner/ui/blackjack.js) sits beside
+   the swap button in .bj-midrow instead of floating over a measured gap —
+   drop the absolute positioning and the centering translate; .bj-midrow's
+   own gap clears swap horizontally, and .bj-mtable's align-items:center
+   centres the row as a whole. Only the vertical clearance (to the banker
+   box above, the seat row below) is this element's own job: .bj-mtable's
+   ambient gap alone is as little as 3-4px at the tight phone breakpoints
+   (sized for a swap icon, not an >=8px requirement), so an explicit 6px
+   margin on top of it clears >=8px at every tested size (measured 9-26px)
+   without eating so much of the felt's own budget that the settled state's
+   slimmer margins (a single Deal button, not the in-round worst case) turn
+   negative. */
 .bj-banner--inline { position: static; left: auto; top: auto; margin: 6px 0; transform: scale(0.92); }
 .bj-banner--inline.is-on { transform: scale(1); }
 
