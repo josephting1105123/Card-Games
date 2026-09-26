@@ -9,6 +9,7 @@
 import { lobbyById } from './core/economy.js';
 import { loadProfile, reconcileRescue, saveProfile } from './core/profile.js';
 import { tableById as blackjackTableById } from './games/blackjack/tables.js';
+import { BigTwoGame } from './ui/big2.js';
 import { BlackjackGame } from './ui/blackjack.js';
 import { installCardDefs } from './ui/cardart.js';
 import { clear, el } from './ui/dom.js';
@@ -64,7 +65,7 @@ const app = {
         }
         const lobby = lobbyById(this.params.lobbyId);
         if (!lobby) return this.replace('lobby', { gameId });
-        const game = new SoloGame(this, { lobby, gameId });
+        const game = gameId === 'big2' ? new BigTwoGame(this, { lobby, gameId }) : new SoloGame(this, { lobby, gameId });
         this.controller = game;
         game.mount(root);
         break;
