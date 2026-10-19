@@ -119,9 +119,9 @@ function renderBlackjackScreen(app, root, paint) {
 export function renderMode(app, root, gameId) {
   if (gameId === 'blackjack') return renderBlackjackScreen(app, root, (mod) => mod.renderBlackjackMode(app, root));
   const game = gameById(gameId);
-  // Big Two is single-player only so far — F4: the tile stays put and says
-  // so, rather than disappearing, the same way a planned game's menu tile does.
-  const lanReady = gameId !== 'big2';
+  // A page served over http is a LAN or local host, so the same-Wi-Fi tile only
+  // makes sense there; over https the only server in reach is the public one.
+  const lanAvailable = location.protocol === 'http:';
   clear(root);
   root.append(
     topbar(app),
@@ -138,17 +138,20 @@ export function renderMode(app, root, gameId) {
           el('p.tile__tag', 'Against the house bots'),
           el('p.tile__desc', 'Pick a stake table. The bots get sharper as the pot grows, your chips and Elo are on the line, and a cap limits what any one hand can cost you.'),
         ),
-        el(lanReady ? 'button.tile' : 'div.tile.tile--locked', {
-          style: '--accent:#2f6fc8',
-          ...(lanReady ? { type: 'button', onclick: () => app.go('lan', { gameId }) } : {}),
-        },
+        el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => app.go('lan', { gameId, mode: 'online' }) },
           el('span.tile__accent'),
-          el('h2.tile__name', 'Local multiplayer'),
-          el('p.tile__tag', lanReady ? 'Same network · room code' : 'Coming later'),
-          el('p.tile__desc', lanReady
-            ? 'One device hosts, everyone else joins with a code. The host sets the pot, the starting chips and how many seats the bots fill.'
-            : 'Single player first. The same room-code hosting Dou Di Zhu uses is next for this table.'),
+          el('h2.tile__name', 'Play online'),
+          el('p.tile__tag', 'Friends anywhere · invite link'),
+          el('p.tile__desc', 'Make a room and send the link. Friends join from their own phones, wherever they are, and bots fill any empty seat.'),
         ),
+        lanAvailable
+          ? el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => app.go('lan', { gameId, mode: 'lan' }) },
+              el('span.tile__accent'),
+              el('h2.tile__name', 'Local network'),
+              el('p.tile__tag', 'Same Wi-Fi · room code'),
+              el('p.tile__desc', 'For a room run from your own computer with node server/server.js — everyone on the same Wi-Fi opens its address.'),
+            )
+          : null,
       ),
       el('div.rule'),
       el('div.card-panel',

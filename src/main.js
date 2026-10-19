@@ -27,7 +27,8 @@ const app = {
     this.teardown();
     this.route = route;
     this.params = params;
-    const hash = `#/${route}${params.gameId ? `/${params.gameId}` : ''}${params.variant ? `/${params.variant}` : ''}${params.lobbyId ? `/${params.lobbyId}` : ''}`;
+    const mode = route === 'lan' && params.mode ? `/${params.mode}` : '';
+    const hash = `#/${route}${params.gameId ? `/${params.gameId}` : ''}${params.variant ? `/${params.variant}` : ''}${params.lobbyId ? `/${params.lobbyId}` : ''}${mode}`;
     if (location.hash !== hash) history.pushState({ route, params }, '', hash);
     this.render();
   },
@@ -136,11 +137,20 @@ history.replaceState({ route: 'menu', params: {} }, '', location.hash || '#/menu
 // A deep link straight to a table has no lobby in memory after a reload, so the
 // router falls back to the picker rather than guessing.
 const parts = (location.hash || '').replace(/^#\//, '').split('/');
-if (parts[0] === 'mode' || parts[0] === 'lobby' || parts[0] === 'lan') {
+if (parts[0] === 'join') {
+  // An invite link. The code goes to the lobby in memory only; the hash is
+  // rewritten so a reload lands on the online screen instead of re-joining.
+  const joinCode = (parts[1] || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const params = { gameId: 'doudizhu', mode: 'online' };
+  history.replaceState({ route: 'lan', params }, '', '#/lan/doudizhu/online');
+  app.replace('lan', joinCode ? { ...params, joinCode } : params);
+} else if (parts[0] === 'mode' || parts[0] === 'lobby' || parts[0] === 'lan') {
   const gameId = parts[1] || 'doudizhu';
   const params = { gameId };
   // Only Blackjack's lobby route carries a variant segment (american/malaysian).
   if (gameId === 'blackjack' && parts[0] === 'lobby' && parts[2]) params.variant = parts[2];
+  // The lan route's third segment is online or lan; anything else is ignored.
+  if (parts[0] === 'lan' && (parts[2] === 'online' || parts[2] === 'lan')) params.mode = parts[2];
   app.replace(parts[0], params);
 } else {
   app.render();

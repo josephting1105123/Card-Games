@@ -36,20 +36,34 @@ export const S2C = {
   CHAT: 'chat',
 };
 
-export const DEFAULT_SETTINGS = {
-  game: 'doudizhu',
-  // A room deals out its own temporary coins rather than touching anybody's
-  // single-player purse. The host picks silver or gold; see core/currency.js.
-  currency: DEFAULT_ROOM_CURRENCY,
-  ...suggestedStakes(DEFAULT_ROOM_CURRENCY),
-  baseMultiplier: 2,
-  // Matches core/economy.js's HAND_CAP_FACTOR: doubled alongside the multiplier
-  // itself now that the base is a real factor rather than a floor, so an
-  // ordinary bomb or two still settles in full at the default room settings.
-  capFactor: 100,
-  botSkill: 'steady',
-  humanSeats: 2, // the rest of the three seats are filled by bots
-};
+/** Seats at the table, per game. A room's game is fixed when it is created. */
+export const SEATS_BY_GAME = { doudizhu: 3, big2: 4 };
+
+const knownGame = (id) => (Object.hasOwn(SEATS_BY_GAME, id) ? id : 'doudizhu');
+
+/** Defaults for a new room of `game`; an unknown game gets Dou Di Zhu's. */
+export function defaultSettings(game = 'doudizhu') {
+  const id = knownGame(game);
+  const base = {
+    game: id,
+    // A room deals out its own temporary coins rather than touching anybody's
+    // single-player purse. The host picks silver or gold; see core/currency.js.
+    currency: DEFAULT_ROOM_CURRENCY,
+    ...suggestedStakes(DEFAULT_ROOM_CURRENCY),
+  };
+  if (id === 'doudizhu') {
+    base.baseMultiplier = 2;
+    // Matches core/economy.js's HAND_CAP_FACTOR: doubled alongside the multiplier
+    // itself now that the base is a real factor rather than a floor, so an
+    // ordinary bomb or two still settles in full at the default room settings.
+    base.capFactor = 100;
+  }
+  base.botSkill = 'steady';
+  base.humanSeats = 2; // the rest of the seats are filled by bots
+  return base;
+}
+
+export const DEFAULT_SETTINGS = defaultSettings('doudizhu');
 
 export const SETTING_LIMITS = {
   // Low minimums on purpose: a room keeping score in ringgit wants a pot of 5,
@@ -64,7 +78,8 @@ export const SETTING_LIMITS = {
 
 /** Clamp whatever a host typed into something the table can actually run. */
 export function sanitiseSettings(input = {}) {
-  const out = { ...DEFAULT_SETTINGS };
+  const game = knownGame(input.game);
+  const out = defaultSettings(game);
   if (isRoomCurrency(input.currency)) out.currency = String(input.currency).toLowerCase();
   else if (input.currency === undefined && input.pot === undefined) {
     Object.assign(out, suggestedStakes(out.currency));
@@ -79,13 +94,14 @@ export function sanitiseSettings(input = {}) {
   out.pot = Number.isFinite(pot) ? clamp('pot', pot) : suggestedStakes(out.currency).pot;
   const stack = Number(input.startingChips);
   out.startingChips = clamp('startingChips', Number.isFinite(stack) ? stack : stackForPot(out.pot));
-  for (const key of ['baseMultiplier', 'capFactor']) {
+  // Big Two settles by cards left, so it has no multiplier or loss cap to carry.
+  for (const key of game === 'doudizhu' ? ['baseMultiplier', 'capFactor'] : []) {
     const value = Number(input[key]);
     if (Number.isFinite(value)) out[key] = clamp(key, value);
   }
   if (typeof input.botSkill === 'string') out.botSkill = input.botSkill;
   const humans = Number(input.humanSeats);
-  if (Number.isFinite(humans)) out.humanSeats = Math.min(3, Math.max(1, Math.round(humans)));
+  if (Number.isFinite(humans)) out.humanSeats = Math.min(SEATS_BY_GAME[game], Math.max(1, Math.round(humans)));
   return out;
 }
 

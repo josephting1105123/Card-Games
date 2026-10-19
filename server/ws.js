@@ -15,6 +15,13 @@ const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const OP = { CONT: 0x0, TEXT: 0x1, BINARY: 0x2, CLOSE: 0x8, PING: 0x9, PONG: 0xa };
 /** Refuse anything larger rather than buffering it. */
 const MAX_MESSAGE = 1 << 20; // 1 MiB
+/** More than this many messages inside the window closes the connection. */
+const FLOOD_MAX_MESSAGES = 40;
+const FLOOD_WINDOW_MS = 10_000;
+/** A real message is one frame or a couple; dozens of fragments is a client wasting memory. */
+const MAX_FRAGMENTS = 64;
+/** RFC 6455 §5.5: control frames carry at most 125 bytes of payload. */
+const MAX_CONTROL_PAYLOAD = 125;
 
 export function acceptKey(clientKey) {
   return createHash('sha1').update(clientKey + GUID).digest('base64');
@@ -34,7 +41,9 @@ export class WsConnection extends EventEmitter {
     this.buffer = Buffer.alloc(0);
     this.fragments = [];
     this.fragmentOp = null;
+    this.fragmentBytes = 0;
     this.data = {}; // room code, seat, name: whatever the app wants to hang here
+    this.recentMessages = []; // arrival times inside the flood window
 
     // An EventEmitter with no 'error' listener throws, which would take the whole
     // host down the first time a phone slept mid-hand and the socket reset. A
@@ -43,6 +52,12 @@ export class WsConnection extends EventEmitter {
 
     socket.on('data', (chunk) => this.onData(chunk));
     socket.on('close', () => this.onClose());
+    // The HTTP server keeps sockets half-open after a bare FIN, so without this a
+    // client that half-closes holds its per-IP slot until the heartbeat notices.
+    socket.on('end', () => {
+      this.destroy();
+      socket.destroy?.();
+    });
     socket.on('error', (error) => {
       this.lastError = error;
       this.emit('error', error);
@@ -86,6 +101,7 @@ export class WsConnection extends EventEmitter {
       offset += 8;
     }
     if (length > MAX_MESSAGE) throw new Error('frame too large');
+    if (opcode >= OP.CLOSE && (length > MAX_CONTROL_PAYLOAD || !fin)) throw new Error('invalid control frame');
     // A client frame must be masked; the spec says fail the connection otherwise.
     if (!masked) throw new Error('client frame was not masked');
     if (buf.length < offset + 4 + length) return false;
@@ -95,6 +111,10 @@ export class WsConnection extends EventEmitter {
     const payload = Buffer.allocUnsafe(length);
     for (let i = 0; i < length; i++) payload[i] = buf[offset + i] ^ mask[i & 3];
     this.buffer = buf.subarray(offset + length);
+
+    // Every frame costs parsing work, whatever it carries, so pings, pongs and
+    // unfinished fragments count against the window as much as a delivered message.
+    if (!this.countFrame()) return false;
 
     switch (opcode) {
       case OP.PING:
@@ -110,6 +130,7 @@ export class WsConnection extends EventEmitter {
         if (!fin) {
           this.fragmentOp = opcode;
           this.fragments = [payload];
+          this.fragmentBytes = payload.length;
           return true;
         }
         this.deliver(opcode, payload);
@@ -117,12 +138,14 @@ export class WsConnection extends EventEmitter {
       case OP.CONT: {
         if (this.fragmentOp === null) throw new Error('continuation without a start frame');
         this.fragments.push(payload);
-        const total = this.fragments.reduce((n, p) => n + p.length, 0);
-        if (total > MAX_MESSAGE) throw new Error('message too large');
+        this.fragmentBytes += payload.length;
+        if (this.fragmentBytes > MAX_MESSAGE) throw new Error('message too large');
+        if (this.fragments.length > MAX_FRAGMENTS) throw new Error('too many fragments');
         if (!fin) return true;
         const joined = Buffer.concat(this.fragments);
         const op = this.fragmentOp;
         this.fragments = [];
+        this.fragmentBytes = 0;
         this.fragmentOp = null;
         this.deliver(op, joined);
         return true;
@@ -132,7 +155,24 @@ export class WsConnection extends EventEmitter {
     }
   }
 
+  /**
+   * A real client sends a handful of moves per hand; a script hammering the
+   * public host should not get to cost the room hub work for every frame.
+   * @returns {boolean} false when the flood limit closed the connection
+   */
+  countFrame() {
+    const now = Date.now();
+    this.recentMessages.push(now);
+    while (this.recentMessages[0] <= now - FLOOD_WINDOW_MS) this.recentMessages.shift();
+    if (this.recentMessages.length > FLOOD_MAX_MESSAGES) {
+      this.close(1008, 'too many messages');
+      return false;
+    }
+    return true;
+  }
+
   deliver(opcode, payload) {
+    if (!this.open) return;
     if (opcode !== OP.TEXT) return; // this app speaks JSON only
     this.emit('message', payload.toString('utf8'));
   }
@@ -213,9 +253,11 @@ export class WsConnection extends EventEmitter {
 /**
  * Handle HTTP upgrades on `server` at `path`.
  * @param {import('node:http').Server} server
- * @param {{path?: string, onConnection: (conn: WsConnection) => void, heartbeatMs?: number}} options
+ * `verifyUpgrade(req)` runs before the 101: return true to accept, or
+ * `{status, reason}` to answer with that HTTP error instead.
+ * @param {{path?: string, onConnection: (conn: WsConnection, req: import('node:http').IncomingMessage) => void, heartbeatMs?: number, verifyUpgrade?: (req: import('node:http').IncomingMessage) => true | {status: number, reason: string}}} options
  */
-export function attachWebSocket(server, { path = '/lan', onConnection, heartbeatMs = 15_000 }) {
+export function attachWebSocket(server, { path = '/lan', onConnection, heartbeatMs = 15_000, verifyUpgrade }) {
   const connections = new Set();
 
   server.on('upgrade', (req, socket) => {
@@ -223,6 +265,12 @@ export function attachWebSocket(server, { path = '/lan', onConnection, heartbeat
     const key = req.headers['sec-websocket-key'];
     if (url.pathname !== path || req.headers.upgrade?.toLowerCase() !== 'websocket' || !key) {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    const verdict = verifyUpgrade ? verifyUpgrade(req) : true;
+    if (verdict !== true) {
+      socket.write(`HTTP/1.1 ${verdict.status} ${verdict.reason}\r\n\r\n`);
       socket.destroy();
       return;
     }
@@ -237,7 +285,7 @@ export function attachWebSocket(server, { path = '/lan', onConnection, heartbeat
     const conn = new WsConnection(socket);
     connections.add(conn);
     conn.on('close', () => connections.delete(conn));
-    onConnection(conn);
+    onConnection(conn, req);
   });
 
   // A sleeping phone or a dropped Wi-Fi link never sends a FIN, so the socket
