@@ -23,6 +23,7 @@ export const C2S = {
   AGAIN: 'again',
   LEAVE: 'leave',
   CHAT: 'chat',
+  RESUME: 'resume',         // reclaim a held seat with the token from the ROOM frame
 };
 
 export const S2C = {

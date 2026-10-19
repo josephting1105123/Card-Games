@@ -9,12 +9,8 @@
 import { lobbyById } from './core/economy.js';
 import { loadProfile, reconcileRescue, saveProfile } from './core/profile.js';
 import { tableById as blackjackTableById } from './games/blackjack/tables.js';
-import { BigTwoGame } from './ui/big2.js';
-import { BlackjackGame } from './ui/blackjack.js';
-import { installCardDefs } from './ui/cardart.js';
 import { clear, el } from './ui/dom.js';
 import { renderLobby, renderMenu, renderMode } from './ui/screens.js';
-import { SoloGame } from './ui/solo.js';
 
 const root = document.getElementById('app');
 
@@ -23,7 +19,11 @@ const app = {
   route: 'menu',
   params: {},
   controller: null,
+  // Bumped on every navigation so a lazy import that lands late can tell the
+  // user has already moved on and drop its result instead of painting over it.
+  nav: 0,
   go(route, params = {}) {
+    this.nav += 1;
     this.teardown();
     this.route = route;
     this.params = params;
@@ -32,6 +32,7 @@ const app = {
     this.render();
   },
   replace(route, params = {}) {
+    this.nav += 1;
     this.teardown();
     this.route = route;
     this.params = params;
@@ -58,24 +59,33 @@ const app = {
         if (gameId === 'blackjack') {
           const table = blackjackTableById(this.params.lobbyId);
           if (!table) return this.replace('lobby', { gameId, variant: this.params.variant });
-          const game = new BlackjackGame(this, { table, variant: this.params.variant });
-          this.controller = game;
-          game.mount(root);
+          mountTable(this, './ui/blackjack.js', (mod) => new mod.BlackjackGame(this, { table, variant: this.params.variant }));
           break;
         }
         const lobby = lobbyById(this.params.lobbyId);
         if (!lobby) return this.replace('lobby', { gameId });
-        const game = gameId === 'big2' ? new BigTwoGame(this, { lobby, gameId }) : new SoloGame(this, { lobby, gameId });
-        this.controller = game;
-        game.mount(root);
+        // Each table is its own module, so the menu never downloads the games it
+        // did not open.
+        if (gameId === 'big2') mountTable(this, './ui/big2.js', (mod) => new mod.BigTwoGame(this, { lobby, gameId }));
+        else mountTable(this, './ui/solo.js', (mod) => new mod.SoloGame(this, { lobby, gameId }));
         break;
       }
       case 'lan':
       case 'lanroom':
-        renderLoading(root, 'Loading local multiplayer…');
-        import('./ui/lan.js')
-          .then((mod) => mod.renderLan(this, root, this.params))
-          .catch((error) => renderError(root, this, error));
+        {
+          // Same guard as mountTable: Back before the import lands must not let
+          // the late screen paint over whatever the user navigated to.
+          const nav = this.nav;
+          const params = this.params;
+          renderLoading(root, 'Loading local multiplayer…');
+          import('./ui/lan.js')
+            .then((mod) => {
+              if (this.nav === nav) mod.renderLan(this, root, params);
+            })
+            .catch((error) => {
+              if (this.nav === nav) renderError(root, this, error);
+            });
+        }
         break;
       default:
         renderMenu(this, root);
@@ -85,6 +95,21 @@ const app = {
     return undefined;
   },
 };
+
+function mountTable(context, specifier, create) {
+  const nav = context.nav;
+  renderLoading(root, 'Dealing…');
+  import(specifier)
+    .then((mod) => {
+      if (context.nav !== nav) return;
+      const game = create(mod);
+      context.controller = game;
+      game.mount(root);
+    })
+    .catch((error) => {
+      if (context.nav === nav) renderError(root, context, error);
+    });
+}
 
 function renderLoading(target, message) {
   clear(target);
@@ -106,7 +131,6 @@ window.addEventListener('popstate', (event) => {
   else app.replace('menu');
 });
 
-installCardDefs();
 history.replaceState({ route: 'menu', params: {} }, '', location.hash || '#/menu');
 
 // A deep link straight to a table has no lobby in memory after a reload, so the
@@ -120,6 +144,18 @@ if (parts[0] === 'mode' || parts[0] === 'lobby' || parts[0] === 'lan') {
   app.replace(parts[0], params);
 } else {
   app.render();
+}
+
+// The most common next tap is a Dou Di Zhu table. Fetch it once the menu has
+// painted and the main thread is idle, so that tap finds it already loaded
+// (solo.js pulls in tableview and the card art). Blackjack and Big Two stay on
+// demand; warming all three would put back most of what lazy loading took out.
+if (app.route === 'menu' || app.route === 'mode' || app.route === 'lobby') {
+  const warm = () => {
+    import('./ui/solo.js').catch(() => {});
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(warm, { timeout: 4000 });
+  else setTimeout(warm, 1500);
 }
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

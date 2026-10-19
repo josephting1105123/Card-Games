@@ -11,7 +11,7 @@
 
 import { deflateSync, crc32 as zlibCrc32 } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const OUT = fileURLToPath(new URL('../assets/icons/', import.meta.url));
 
@@ -248,4 +248,5 @@ function main() {
   console.log('favicon.svg');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+// On Windows argv[1] is a backslash drive path, so a hand-built file:// string never equals import.meta.url.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
