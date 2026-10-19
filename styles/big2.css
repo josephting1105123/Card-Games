@@ -119,6 +119,18 @@
 }
 .b2-play__cards .card:first-child { margin-left: 0; }
 
+/* A table-wide notice (someone left / is back). Out of flow, opacity-only fade,
+   and never intercepts a tap meant for the cards or controls underneath. */
+.b2-caption {
+  position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
+  z-index: 3; max-width: 44%; text-align: center; pointer-events: none;
+  padding: 4px 12px; border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.6); color: var(--ivory);
+  font-size: var(--t-caption); line-height: 1.3;
+  opacity: 0; transition: opacity 240ms var(--ease-std);
+}
+.b2-caption.is-shown { opacity: 1; }
+
 .b2-play.is-empty { opacity: 0; }
 .b2-play.is-fading { opacity: 0; }
 

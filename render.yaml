@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: card-games
+    runtime: node
+    plan: free
+    buildCommand: echo "no build step"
+    startCommand: node server/server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: PUBLIC
+        value: "1"
+      - key: NODE_VERSION
+        value: "22"
+      # Render's X-Forwarded-For arrives as "client, cloudflare-edge, render-lb",
+      # so the real client is the third entry from the right. Quick Vote measured
+      # this on 2026-10-17. Check it again after the first deploy: with a wrong
+      # value every player shares one per-IP connection bucket (or a client can
+      # pick its own). See the "TRUST_PROXY_HOPS" section of the Quick Vote README.
+      - key: TRUST_PROXY_HOPS
+        value: "3"
+      # The public host only accepts WebSockets through cards.entropicsoftwarelabs.com by default; PUBLIC_HOSTS=* opens it to the onrender.com hostname for testing before DNS (no env entry needed).
+      - key: ALLOWED_ORIGINS
+        value: "https://josephting1105123.github.io,https://entropicsoftwarelabs.com,https://www.entropicsoftwarelabs.com"

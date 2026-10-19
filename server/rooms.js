@@ -13,14 +13,10 @@
 
 import { randomBytes } from 'node:crypto';
 import { makeRng } from '../src/core/rng.js';
-import { settleDouDiZhu } from '../src/core/economy.js';
-import { Phase, bid, createGame, pass, play, seatView } from '../src/games/doudizhu/engine.js';
-import { botTurn } from '../src/games/doudizhu/match.js';
-import { skillByName } from '../src/games/doudizhu/ai.js';
 import { C2S, S2C, encode, sanitiseSettings } from '../src/net/protocol.js';
 import { generateCode } from '../src/net/roomcode.js';
+import { gameAdapter } from './games.js';
 
-const SEATS = 3;
 const BOT_NAMES = ['Mei', 'Chen', 'Lin', 'Bao', 'Fang', 'Hui'];
 const BOT_STEP_MS = 700;
 // Clients run a 3-4.5s deal animation; a bot that bids inside it acts on cards
@@ -30,9 +26,17 @@ const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000;
 // A dropped player's seat is held for a resume, but not for ever: a room that
 // is never full would otherwise keep a ghost in it until someone evicts it.
 const HELD_SEAT_TTL_MS = 10 * 60 * 1000;
+const MAX_ROOMS = 300;
+// One connection could otherwise fill the whole server with lobbies nobody uses.
+const MAX_ROOMS_PER_IP = 3;
+// Failed code lookups before a connection is cut off: a guessing script gets a few tries.
+const MAX_LOOKUP_MISSES = 5;
+// Chips kept for players who left; a room that churns names must not grow this without bound.
+const MAX_DEPARTED = 32;
+const LIMIT_LOG_INTERVAL_MS = 60_000;
 
 export class RoomHub {
-  /** @param {{advertisedHost?: string, port?: number, botStepMs?: number, dealGraceMs?: number, heldSeatTtlMs?: number}} [options] */
+  /** @param {{advertisedHost?: string, port?: number, public?: boolean, maxRooms?: number, maxRoomsPerIp?: number, botStepMs?: number, dealGraceMs?: number, heldSeatTtlMs?: number, log?: (text: string) => void}} [options] */
   constructor(options = {}) {
     /** @type {Map<string, object>} */
     this.rooms = new Map();
@@ -40,6 +44,8 @@ export class RoomHub {
       botStepMs: BOT_STEP_MS,
       dealGraceMs: DEAL_GRACE_MS,
       heldSeatTtlMs: HELD_SEAT_TTL_MS,
+      maxRooms: MAX_ROOMS,
+      maxRoomsPerIp: MAX_ROOMS_PER_IP,
       ...options,
     };
     this.sweeper = setInterval(() => this.sweep(), 60_000);
@@ -52,7 +58,15 @@ export class RoomHub {
   }
 
   attach(conn) {
-    conn.sendJson({ t: S2C.WELCOME, id: conn.id, host: this.options.advertisedHost, port: this.options.port });
+    // A public server has no LAN address worth showing, so clients never see one.
+    const isPublic = !!this.options.public;
+    conn.sendJson({
+      t: S2C.WELCOME,
+      id: conn.id,
+      host: isPublic ? null : this.options.advertisedHost,
+      port: this.options.port,
+      public: isPublic,
+    });
     conn.on('message', (text) => {
       let message;
       try {
@@ -68,14 +82,70 @@ export class RoomHub {
       }
       return undefined;
     });
-    conn.on('close', () => this.disconnect(conn));
+    conn.on('close', () => {
+      const code = conn.data.room;
+      try {
+        this.disconnect(conn);
+      } catch (error) {
+        this.isolate(this.rooms.get(code), error);
+      }
+    });
     // A reset from a client that vanished is normal; the seat is handled by the
     // close that follows, and nothing about it should reach the console.
     conn.on('error', () => {});
   }
 
+  /** One line a minute at most: a flood hitting a limit must not become a flood of log lines. */
+  logLimit(text) {
+    const now = Date.now();
+    if (now - (this.lastLimitLog ?? 0) < LIMIT_LOG_INTERVAL_MS) return;
+    this.lastLimitLog = now;
+    (this.options.log ?? console.warn)(text);
+  }
+
   fail(conn, message, code) {
     conn.sendJson(code ? { t: S2C.ERROR, message, code } : { t: S2C.ERROR, message });
+  }
+
+  /**
+   * Count a lookup that found nothing (unknown room code, dead resume token) and
+   * answer it. The last allowed miss cuts the connection off.
+   */
+  lookupFailed(conn, message, code) {
+    conn.data.lookupMisses = (conn.data.lookupMisses ?? 0) + 1;
+    if (conn.data.lookupMisses >= MAX_LOOKUP_MISSES) {
+      this.fail(conn, 'too many failed attempts', 'rate_limited');
+      conn.close(1008, 'too many failed lookups');
+      return undefined;
+    }
+    return this.fail(conn, message, code);
+  }
+
+  /**
+   * A throw inside one room's timer, action or teardown ends that table's hand and
+   * nothing else. The room goes back to its lobby: a stale state left in 'playing'
+   * would wedge the table (no bot timer, no way to deal), and a 'finished' phase
+   * with no result frame leaves clients on a table that never settles.
+   */
+  isolate(room, error) {
+    console.error('room error:', error);
+    if (!room) return;
+    clearTimeout(room.botTimer);
+    try {
+      // Before the state goes: it names whose purses are still keyed by member id.
+      this.stashLeavers(room);
+    } catch (stashError) {
+      console.error('room error while filing purses:', stashError);
+    }
+    room.phase = 'lobby';
+    room.state = null;
+    room.lastResult = null;
+    try {
+      this.broadcast(room, { t: S2C.ERROR, message: 'this table hit a problem and was reset — deal again' });
+      this.broadcastRoom(room);
+    } catch (broadcastError) {
+      console.error('room error while reporting:', broadcastError);
+    }
   }
 
   handle(conn, message) {
@@ -86,9 +156,9 @@ export class RoomHub {
       case C2S.SEAT_FILL: return this.setHumanSeats(conn, message);
       case C2S.START: return this.start(conn);
       case C2S.AGAIN: return this.again(conn);
-      case C2S.BID: return this.action(conn, (room, seat) => bid(room.state, seat, Number(message.value)));
-      case C2S.PLAY: return this.action(conn, (room, seat) => play(room.state, seat, message.cards ?? []));
-      case C2S.PASS: return this.action(conn, (room, seat) => pass(room.state, seat));
+      case C2S.BID:
+      case C2S.PLAY:
+      case C2S.PASS: return this.action(conn, message);
       case C2S.CHAT: return this.chat(conn, message);
       case C2S.RESUME: return this.resume(conn, message);
       case C2S.LEAVE: return this.disconnect(conn, true);
@@ -99,16 +169,39 @@ export class RoomHub {
   // --- room lifecycle --------------------------------------------------------
 
   create(conn, message) {
+    // Checked before leaving the current room: a refused create should not
+    // cost the player the seat they already have.
+    if (this.rooms.size >= this.options.maxRooms) this.evictMemberless();
+    if (this.rooms.size >= this.options.maxRooms) {
+      return this.fail(conn, 'the server is full right now — try again in a few minutes', 'server_full');
+    }
+    const ip = conn.data?.ip;
+    // An address the server flagged as a proxy's (ipTrusted false) is shared by
+    // every player behind it, so a per-address cap would lock them all out together.
+    if (ip && conn.data.ipTrusted !== false) {
+      // The room this connection is about to leave does not count against it.
+      let live = 0;
+      for (const other of this.rooms.values()) {
+        if (other.creatorIp === ip && other.members.size > 0 && other.code !== conn.data.room) live += 1;
+      }
+      if (live >= this.options.maxRoomsPerIp) {
+        this.logLimit(`per-IP room cap reached by ${ip} (X-Forwarded-For entries: ${conn.data.forwardedEntries ?? 'unknown'})`);
+        return this.fail(conn, 'too many rooms from your connection', 'rate_limited');
+      }
+    }
     if (conn.data.room) this.disconnect(conn, true);
     let code = generateCode();
     while (this.rooms.has(code)) code = generateCode();
     const settings = sanitiseSettings(message.settings);
+    const adapter = gameAdapter(settings.game);
     const room = {
       code,
+      adapter,
+      creatorIp: conn.data?.ip,
       hostId: conn.id,
       settings,
       members: new Map(),
-      seats: new Array(SEATS).fill(null),
+      seats: new Array(adapter.seats).fill(null),
       state: null,
       phase: 'lobby',
       botTimer: null,
@@ -126,16 +219,21 @@ export class RoomHub {
     const member = this.seat(room, conn, message.name);
     this.sendRoom(room, member, { code });
     this.broadcastRoom(room);
+    return undefined;
   }
 
   join(conn, message) {
     const code = String(message.code ?? '').toUpperCase();
     const room = this.rooms.get(code);
-    if (!room) return this.fail(conn, `no room with the code ${code}`);
+    if (!room) return this.lookupFailed(conn, `no room with the code ${code}`);
     if (room.phase === 'playing') return this.fail(conn, 'that hand is still being played — join when it ends');
     // Leave the old seat first: a player re-joining the room they already fill
     // frees their own seat, so it must not count against capacity or evict a ghost.
-    if (conn.data.room) this.disconnect(conn, true);
+    if (conn.data.room) {
+      this.disconnect(conn, true);
+      // Leaving the room it is about to rejoin may have dropped it as empty.
+      if (!this.rooms.has(room.code)) this.rooms.set(room.code, room);
+    }
     // A member who dropped still holds a seat for a resume, so they count here.
     // The longest-gone one is the first to lose theirs to a newcomer.
     let evict = null;
@@ -187,7 +285,8 @@ export class RoomHub {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can change the settings');
     if (room.phase !== 'lobby') return this.fail(conn, 'the settings are locked once a hand is dealt');
-    room.settings = sanitiseSettings({ ...room.settings, ...message.settings });
+    // The game is fixed at create: the seats array and the engine are built for it.
+    room.settings = sanitiseSettings({ ...room.settings, ...message.settings, game: room.settings.game });
     for (const id of room.chips.keys()) room.chips.set(id, room.settings.startingChips);
     room.departed.clear(); // a new starting stack resets everyone, including those away
     this.broadcastRoom(room);
@@ -198,7 +297,7 @@ export class RoomHub {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can change the seats');
     if (room.phase !== 'lobby') return this.fail(conn, 'the seats are locked once a hand is dealt');
-    const wanted = Math.min(SEATS, Math.max(room.members.size, Math.round(Number(message.humanSeats) || 1)));
+    const wanted = Math.min(room.adapter.seats, Math.max(room.members.size, Math.round(Number(message.humanSeats) || 1)));
     room.settings.humanSeats = wanted;
     this.broadcastRoom(room);
     return undefined;
@@ -210,23 +309,32 @@ export class RoomHub {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can start the hand');
     if (room.phase === 'playing') return this.fail(conn, 'the hand is already running');
-    this.deal(room);
+    try {
+      this.deal(room);
+    } catch (error) {
+      this.isolate(room, error);
+    }
     return undefined;
   }
 
   again(conn) {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can deal again');
-    this.deal(room);
+    try {
+      this.deal(room);
+    } catch (error) {
+      this.isolate(room, error);
+    }
     return undefined;
   }
 
   deal(room) {
     clearTimeout(room.botTimer);
-    const skill = skillByName(room.settings.botSkill);
+    const { adapter } = room;
+    const skill = adapter.skillByName(room.settings.botSkill);
     const spare = [...BOT_NAMES].sort(() => Math.random() - 0.5);
     const players = [];
-    for (let seat = 0; seat < SEATS; seat++) {
+    for (let seat = 0; seat < adapter.seats; seat++) {
       const memberId = room.seats[seat];
       const member = memberId ? room.members.get(memberId) : null;
       if (member && member.connected) {
@@ -238,7 +346,7 @@ export class RoomHub {
       }
     }
     const seed = randomBytes(8).toString('hex');
-    room.state = createGame({ seed, players, baseMultiplier: room.settings.baseMultiplier });
+    room.state = adapter.createGame({ seed, players, settings: room.settings });
     room.rng = makeRng(`${seed}:bots`);
     room.phase = 'playing';
     room.handNo += 1;
@@ -249,125 +357,88 @@ export class RoomHub {
     this.scheduleBots(room);
   }
 
-  action(conn, apply) {
+  action(conn, message) {
     const room = this.roomOf(conn);
+    const apply = room.adapter.actions[message.t];
+    if (!apply) return this.fail(conn, 'that move is not part of this game');
     if (room.phase !== 'playing' || !room.state) return this.fail(conn, 'no hand is running');
     const member = room.members.get(conn.data.member);
     if (!member) return this.fail(conn, 'you are not seated');
-    const result = apply(room, member.seat);
+    const before = room.adapter.snapshot(room.state, member.seat);
+    const result = apply(room.state, member.seat, message);
     if (!result?.ok) return this.fail(conn, result?.error ?? 'that move was refused');
-    this.describeLastAction(room, member.seat);
-    room.lastActivity = Date.now();
-    this.afterAction(room);
+    // The move is already applied; a throw from here on would leave a 'playing'
+    // room that nothing is scheduled to advance.
+    try {
+      this.announce(room, member.seat, undefined, before);
+      room.lastActivity = Date.now();
+      this.afterAction(room);
+    } catch (error) {
+      this.isolate(room, error);
+    }
     return undefined;
   }
 
   afterAction(room) {
     this.broadcastViews(room);
-    if (room.state.phase === Phase.FINISHED) this.settle(room);
+    if (room.adapter.isFinished(room.state)) this.settle(room);
     else this.scheduleBots(room);
   }
 
   scheduleBots(room) {
     clearTimeout(room.botTimer);
-    if (!room.state || room.state.phase === Phase.FINISHED) return;
+    if (!room.state || room.adapter.isFinished(room.state)) return;
     // Fresh cards (a new hand, or the engine's redeal after three passes) get the
     // deal animation's worth of quiet before the first bot moves. The deadline is
     // stored, not just applied once, so a drop or resume inside the grace (which
     // reschedules) cannot cut it short.
-    const dealKey = `${room.handNo}:${room.state.deal}`;
+    const dealKey = `${room.handNo}:${room.state.deal ?? 0}`;
     if (dealKey !== room.dealKey) room.graceUntil = Date.now() + this.options.dealGraceMs;
     room.dealKey = dealKey;
-    const seat = room.state.phase === Phase.BIDDING ? room.state.bidding.turn : room.state.turn;
-    if (!room.state.players[seat]?.isBot) return;
+    if (!room.adapter.isBotTurn(room.state)) return;
     const delay = Math.max(this.options.botStepMs, (room.graceUntil ?? 0) - Date.now());
     room.botTimer = setTimeout(() => {
-      if (!this.rooms.has(room.code) || !room.state) return;
-      const acted = botTurn(room.state, room.rng);
-      if (acted) this.describeLastAction(room, acted.seat, acted);
-      this.afterAction(room);
+      try {
+        if (!this.rooms.has(room.code) || !room.state) return;
+        const before = room.adapter.snapshot(room.state, room.adapter.seatOnTurn(room.state));
+        const acted = room.adapter.botTurn(room.state, room.rng);
+        if (acted) this.announce(room, acted.seat, acted, before);
+        this.afterAction(room);
+      } catch (error) {
+        this.isolate(room, error);
+      }
     }, delay);
   }
 
-  /**
-   * Only bidding is broadcast as a spoken bubble. Plays and passes travel in the
-   * seat view as trickPlays and land on the felt in front of the seat that made
-   * them, which says who moved without a caption.
-   */
-  describeLastAction(room, seat, acted) {
-    const last = room.state.log[room.state.log.length - 1];
-    if (acted?.kind !== 'bid' && last?.kind !== 'bid') return;
-    const value = acted?.value ?? last.value;
-    this.broadcast(room, { t: S2C.EVENT, kind: 'say', seat, text: value === 0 ? 'No call' : `${value}` });
+  /** Events go out before the view that reflects them, so a client can animate the move it is about to see. */
+  announce(room, seat, acted, before) {
+    for (const event of room.adapter.describeAction(room.state, seat, acted, before)) {
+      this.broadcast(room, { t: S2C.EVENT, ...event });
+    }
   }
 
   settle(room) {
-    const result = room.state.result;
-    const lobby = {
-      pot: room.settings.pot,
-      baseMultiplier: room.settings.baseMultiplier,
-      capFactor: room.settings.capFactor,
-      rescue: false,
-    };
-    // Work out what the losers actually pay after their caps, then hand exactly
-    // that much to the winning side. Against bots a cap can leave the winner
-    // "owed" chips nobody paid; between real players it cannot, or the room
-    // would mint chips every capped hand.
-    const rows = [];
-    const losers = [];
-    const winners = [];
-    for (let seat = 0; seat < SEATS; seat++) {
-      const player = room.state.players[seat];
-      const bankroll = room.chips.get(player.id) ?? room.settings.startingChips;
-      const settlement = settleDouDiZhu({ lobby, result, seat, bankroll });
-      const row = {
-        seat,
-        name: player.name,
-        isBot: player.isBot,
-        delta: settlement.delta,
-        capped: settlement.capped,
-        won: settlement.won,
-        bankroll,
-      };
-      rows.push(row);
-      (settlement.won ? winners : losers).push(row);
-    }
+    const { frame, changes } = room.adapter.settle(room);
+    for (const [id, chips] of changes) room.chips.set(id, chips);
+    this.stashLeavers(room);
+    room.phase = 'finished';
+    // Kept so a player who resumes after the hand ended still sees the result.
+    room.lastResult = frame;
+    this.broadcast(room, frame);
+    this.broadcastRoom(room);
+  }
 
-    const pot = losers.reduce((sum, row) => sum + Math.abs(row.delta), 0);
-    const totalClaimed = winners.reduce((sum, row) => sum + row.delta, 0);
-    if (totalClaimed > 0) {
-      let handedOut = 0;
-      winners.forEach((row, index) => {
-        const share = index === winners.length - 1
-          ? pot - handedOut                                   // the last seat takes the remainder
-          : Math.floor((pot * row.delta) / totalClaimed);     // otherwise pro rata
-        handedOut += share;
-        row.capped = row.capped || share !== row.delta;
-        row.delta = share;
-      });
-    }
-
-    for (const row of rows) {
-      const player = room.state.players[row.seat];
-      room.chips.set(player.id, Math.max(0, row.bankroll + row.delta));
-      row.chips = room.chips.get(player.id);
-      delete row.bankroll;
-    }
-    // Someone who left mid-hand kept their purse keyed by member id so this
-    // settlement could pay it; now that it has, file it under their name so a
-    // rejoin finds it. Real bots carry no " (bot)" suffix and are left alone.
-    for (const player of room.state.players) {
+  /**
+   * Someone who left mid-hand kept their purse keyed by member id so a settlement
+   * could pay it; once the hand is over (settled or abandoned) file it under their
+   * name so a rejoin finds it. Real bots carry no " (bot)" suffix and are left alone.
+   */
+  stashLeavers(room) {
+    for (const player of room.state?.players ?? []) {
       if (room.members.has(player.id) || !room.chips.has(player.id) || !BOT_SUFFIX.test(player.name)) continue;
       this.stash(room, player.name.replace(BOT_SUFFIX, ''), room.chips.get(player.id));
       room.chips.delete(player.id);
     }
-    room.phase = 'finished';
-    // result.multiplier already carries the room's base factor — the engine was
-    // created with it — so there is no floor left to apply here.
-    // Kept so a player who resumes after the hand ended still sees the result.
-    room.lastResult = { t: S2C.RESULT, result, rows, multiplier: result.multiplier };
-    this.broadcast(room, room.lastResult);
-    this.broadcastRoom(room);
   }
 
   chat(conn, message) {
@@ -398,10 +469,11 @@ export class RoomHub {
     member.connected = false;
     if (playing) {
       // Hand the seat to a bot so the table does not wedge mid-hand.
-      const player = room.state.players[member.seat];
-      player.isBot = true;
-      player.skill = skillByName(room.settings.botSkill);
-      player.name = `${member.name} (bot)`;
+      room.adapter.toBot(
+        room.state.players[member.seat],
+        room.adapter.skillByName(room.settings.botSkill),
+        `${member.name} (bot)`,
+      );
       this.broadcast(room, { t: S2C.EVENT, kind: 'left', seat: member.seat, name: member.name });
       this.scheduleBots(room);
     }
@@ -419,6 +491,14 @@ export class RoomHub {
       member.disconnectedAt = Date.now();
     }
 
+    // A lobby nobody is left in has no hand to finish and no one to resume, so
+    // keeping it for the sweep only lets create-and-leave loops fill the cap.
+    if (explicit && room.phase !== 'playing' && room.members.size === 0) {
+      clearTimeout(room.botTimer);
+      this.rooms.delete(code);
+      return;
+    }
+
     if ([...room.members.values()].every((m) => !m.connected)) {
       clearTimeout(room.botTimer);
       room.emptySince = Date.now();
@@ -433,7 +513,7 @@ export class RoomHub {
     const room = this.rooms.get(String(message.code ?? '').toUpperCase());
     const token = String(message.token ?? '');
     const member = room && token ? [...room.members.values()].find((m) => m.token === token) : null;
-    if (!room || !member) return this.fail(conn, 'that seat is no longer held', 'resume_failed');
+    if (!room || !member) return this.lookupFailed(conn, 'that seat is no longer held', 'resume_failed');
 
     if (conn.data.room && (conn.data.room !== room.code || conn.data.member !== member.id)) {
       this.disconnect(conn, true);
@@ -465,10 +545,7 @@ export class RoomHub {
     if (playing) {
       // The hand may have been dealt while they were away, with a bot id in the
       // seat; settle() pays the purse named by player.id, so put theirs back.
-      const player = room.state.players[member.seat];
-      player.isBot = false;
-      player.id = member.id;
-      player.name = member.name;
+      room.adapter.toHuman(room.state.players[member.seat], member.id, member.name);
       this.broadcast(room, { t: S2C.EVENT, kind: 'back', seat: member.seat, name: member.name });
       // The seat is human again, so this cancels a pending bot move rather than
       // letting the bot take the turn the player just came back to.
@@ -494,6 +571,19 @@ export class RoomHub {
     if (chips === undefined) return;
     const key = name.toLowerCase();
     room.departed.set(key, (room.departed.get(key) ?? 0) + chips);
+    while (room.departed.size > MAX_DEPARTED) room.departed.delete(room.departed.keys().next().value);
+  }
+
+  /** Drop rooms with no members, longest-empty first, until the room count is below the cap. */
+  evictMemberless() {
+    const empty = [...this.rooms.values()]
+      .filter((room) => room.members.size === 0)
+      .sort((a, b) => (a.emptySince ?? a.lastActivity) - (b.emptySince ?? b.lastActivity));
+    for (const room of empty) {
+      if (this.rooms.size < this.options.maxRooms) break;
+      clearTimeout(room.botTimer);
+      this.rooms.delete(room.code);
+    }
   }
 
   /** Keep the host pointing at someone who can deal; a connected member wins. */
@@ -584,7 +674,7 @@ export class RoomHub {
 
   sendView(room, member) {
     // `hand` lets the client tell hand 2 from hand 1; state.deal restarts at 0 each hand.
-    member.conn.sendJson({ t: S2C.VIEW, view: seatView(room.state, member.seat), hand: room.handNo });
+    member.conn.sendJson({ t: S2C.VIEW, view: room.adapter.seatView(room.state, member.seat), hand: room.handNo });
   }
 
   broadcastViews(room) {

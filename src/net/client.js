@@ -38,7 +38,7 @@ export class LanClient {
 
   /**
    * @param {string} url ws:// or wss:// endpoint
-   * @param {number} [timeoutMs]
+   * @param {number} [timeoutMs] a cold-starting public host needs far longer than a LAN one
    */
   connect(url, timeoutMs = 8_000) {
     return new Promise((resolve, reject) => {
@@ -52,7 +52,7 @@ export class LanClient {
       this.socket = socket;
       const timer = setTimeout(() => {
         socket.close();
-        reject(new Error(`no answer from ${url}. Is the host running and on this network?`));
+        reject(new Error(`no answer from ${url}. Is the host running and reachable?`));
       }, timeoutMs);
 
       socket.addEventListener('open', () => {
@@ -66,7 +66,7 @@ export class LanClient {
         if (!message) return;
         if (message.t === 'welcome') {
           this.id = message.id;
-          this.hostInfo = { host: message.host, port: message.port };
+          this.hostInfo = { host: message.host, port: message.port, public: message.public === true };
         }
         this.emit(message.t, message);
       });

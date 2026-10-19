@@ -11,6 +11,7 @@
  * over on purpose so the two tables read as the same app.
  */
 
+import { currencyLabel, formatMoney } from '../core/currency.js';
 import { RESCUE_EXIT, formatChips, lobbyAccess, settleBigTwo } from '../core/economy.js';
 import { ratingTitle } from '../core/elo.js';
 import { gameStats, recordResult } from '../core/profile.js';
@@ -24,6 +25,7 @@ import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 
+const CAPTION_MS = 2600;
 const BOT_NAMES = ['Mei', 'Chen', 'Lin', 'Bao', 'Fang', 'Hui', 'Qiao', 'Rong'];
 
 function sortHand(hand, mode) {
@@ -238,7 +240,7 @@ export class BigTwoGame {
   }
 }
 
-class Big2View {
+export class Big2View {
   constructor({ root, meta, handlers }) {
     installCardDefs();
     this.root = root;
@@ -258,7 +260,9 @@ class Big2View {
     clear(this.root);
     const n = this.nodes = {};
 
-    n.bankPill = el('span.b2-hud__pill', el('small', 'Chips'), el('b', formatChips(this.meta.bankroll ?? 0)));
+    n.bankPill = el('span.b2-hud__pill',
+      el('small', this.meta.currency ? currencyLabel(this.meta.currency) : 'Chips'),
+      el('b', this.money(this.meta.bankroll ?? 0)));
     const hud = el('div.b2-hud',
       el('button.back-link', { type: 'button', 'aria-label': 'Leave table', title: 'Leave table', onclick: () => this.handlers.onLeave?.() }, '←'),
       el('span.b2-hud__pill.b2-hud__pill--table', el('b', this.meta.lobbyName), el('small', this.meta.rateLabel)),
@@ -290,9 +294,11 @@ class Big2View {
     // seatLeft/seatRight/playLeft/playRight stay position:absolute, so their
     // place in this list is cosmetic.
     n.spacer = el('div.b2-spacer');
+    // Absolutely positioned, so it takes no part in the flow described above.
+    n.caption = el('div.b2-caption', { 'aria-hidden': 'true' });
     n.felt = el('div.b2-felt',
       n.seatTop.wrap, n.plays.top, n.spacer, n.plays.self, n.controls,
-      n.seatLeft.wrap, n.seatRight.wrap, n.plays.left, n.plays.right);
+      n.seatLeft.wrap, n.seatRight.wrap, n.plays.left, n.plays.right, n.caption);
 
     n.handInner = el('div.b2-hand__inner');
     n.hand = el('div.b2-hand', n.handInner);
@@ -337,9 +343,14 @@ class Big2View {
     this.renderHud();
   }
 
+  /** Solo tables pass no currency and keep the chip format; a room passes its coin. */
+  money(value, compact = false) {
+    return this.meta.currency ? formatMoney(value, this.meta.currency, compact) : formatChips(value, compact);
+  }
+
   setBankroll(value) {
     this.meta.bankroll = value;
-    this.nodes.bankPill.querySelector('b').textContent = formatChips(value);
+    this.nodes.bankPill.querySelector('b').textContent = this.money(value);
   }
 
   renderHud() {
@@ -571,6 +582,22 @@ class Big2View {
     this.nodes.comboLabel.textContent = message;
   }
 
+  /**
+   * Brief table-wide notice (a player left or came back). Sighted players get
+   * the caption; screen readers get the live region, so the caption itself is
+   * hidden from them rather than read twice.
+   */
+  caption(text) {
+    const node = this.nodes.caption;
+    if (!node) return;
+    const line = String(text ?? '');
+    node.textContent = line;
+    node.classList.add('is-shown');
+    clearTimeout(this.captionTimer);
+    this.captionTimer = setTimeout(() => node.classList.remove('is-shown'), CAPTION_MS);
+    announce(line);
+  }
+
   showHint() {
     if (!this.isYourTurn()) return;
     const view = this.view;
@@ -740,10 +767,10 @@ class Big2View {
   showResult({ title, win, deltaText, rows, lines, onAgain, onLeave, againLabel }) {
     const rowsEl = el('div.b2-result__rows',
       ...rows.map((r) => el('div', { class: `b2-result__row${r.isWinner ? ' is-winner' : ''}` },
-        el('span.b2-result__name', r.name),
-        el('span.b2-result__cards', `${r.cardsLeft} left`),
+        el('span.b2-result__name', String(r.name ?? '')),
+        el('span.b2-result__cards', `${Number(r.cardsLeft)} left`),
         el('span', { class: `b2-result__delta ${r.delta >= 0 ? 'is-win' : 'is-loss'}` },
-          `${r.delta >= 0 ? '+' : '−'}${formatChips(Math.abs(r.delta))}`),
+          `${r.delta >= 0 ? '+' : '−'}${this.money(Math.abs(r.delta))}`),
       )),
     );
     // Title and delta share one row (big2.css puts them side by side only
@@ -786,6 +813,7 @@ class Big2View {
   }
 
   destroy() {
+    clearTimeout(this.captionTimer);
     this.teardownFullscreen?.();
     clear(this.root);
   }

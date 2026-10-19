@@ -6,10 +6,12 @@ import { EventEmitter } from 'node:events';
 import net from 'node:net';
 import { WsConnection, acceptKey, attachWebSocket } from '../server/ws.js';
 import { RoomHub } from '../server/rooms.js';
-import { S2C } from '../src/net/protocol.js';
+import { gameAdapter } from '../server/games.js';
+import { C2S, S2C } from '../src/net/protocol.js';
 import { DEFAULT_ROOM_CURRENCY, SOLO_CURRENCY } from '../src/core/currency.js';
 import { ALPHABET, CODE_LENGTH, formatCode, generateCode, parseCode, socketUrlFor } from '../src/net/roomcode.js';
 import { legalPlays } from '../src/games/doudizhu/moves.js';
+import { legalPlays as bigTwoPlays } from '../src/games/big2/moves.js';
 
 test('the WebSocket accept key follows RFC 6455', () => {
   // The example from the specification.
@@ -233,6 +235,7 @@ test('a capped hand still conserves chips in a room', async (t) => {
   const hub = new RoomHub({ botStepMs: 1, dealGraceMs: 0 });
   const room = {
     code: 'TEST1',
+    adapter: gameAdapter('doudizhu'),
     hostId: 'h',
     settings: { pot: 50_000, startingChips: 25_000, baseMultiplier: 2, capFactor: 6, botSkill: 'casual', humanSeats: 1 },
     members: new Map(),
@@ -893,4 +896,321 @@ test('joining the full room you already sit in swaps your seat instead of being 
   assert.equal(bob.log.some((m) => m.t === S2C.ERROR), false);
   alice.close();
   bob.close();
+});
+
+// --- Big Two and hosting ------------------------------------------------------
+
+/** Like autopilot(), for Big Two: lead or beat with the first legal play, else pass. */
+function big2Autopilot(client) {
+  let stopped = false;
+  const act = (view) => {
+    if (view.phase !== 'playing' || view.turn !== view.seat) return;
+    const opts = { mustInclude: view.leadMustInclude };
+    const moves = bigTwoPlays(view.you.hand, view.trick?.combo ?? null, opts);
+    if (moves.length) client.send({ t: 'play', cards: moves[0].cards.map((c) => c.id) });
+    else client.send({ t: 'pass' });
+  };
+  client.socket.addEventListener('message', (event) => {
+    if (stopped) return;
+    const message = JSON.parse(event.data);
+    if (message.t === S2C.VIEW) act(message.view);
+  });
+  const latest = client.log.findLast((m) => m.t === S2C.VIEW);
+  if (latest) act(latest.view);
+  return () => { stopped = true; };
+}
+
+test('a Big Two room seats four, plays a hand with two bots, and conserves chips', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, created } = await twoPlayerRoom(host, { game: 'big2', pot: 1_000, startingChips: 10_000, botSkill: 'casual' });
+  assert.equal(created.room.settings.game, 'big2');
+  assert.equal(created.room.seats.length, 4);
+  assert.equal('baseMultiplier' in created.room.settings, false, 'Big Two carries no Dou Di Zhu multiplier');
+
+  big2Autopilot(alice);
+  big2Autopilot(bob);
+  alice.send({ t: 'start' });
+  const result = await alice.next(S2C.RESULT, 30_000);
+
+  assert.equal(result.game, 'big2');
+  assert.equal(result.rate, 100);
+  assert.equal(result.rows.length, 4);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.chips, 0), 4 * 10_000);
+  const winner = result.rows[result.winner];
+  assert.equal(winner.won, true);
+  assert.equal(winner.cardsLeft, 0);
+  for (const row of result.rows.filter((r) => !r.won)) {
+    assert.equal(row.delta, -row.cardsLeft * 100);
+    assert.equal(row.chips, 10_000 + row.delta);
+  }
+  const final = alice.log.findLast((m) => m.t === S2C.VIEW).view;
+  assert.equal(final.phase, 'finished');
+  assert.equal(final.revealedHands.length, 4, 'every hand is public once the hand ends');
+  alice.close();
+  bob.close();
+});
+
+test('a Big Two payout is capped at each loser bankroll and the winner gets only what was paid', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob } = await twoPlayerRoom(host, { game: 'big2', pot: 1_000, startingChips: 150, botSkill: 'casual' });
+  big2Autopilot(alice);
+  big2Autopilot(bob);
+  alice.send({ t: 'start' });
+  const result = await alice.next(S2C.RESULT, 30_000);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.chips, 0), 4 * 150);
+  for (const row of result.rows) assert.ok(row.chips >= 0);
+  for (const row of result.rows.filter((r) => !r.won)) {
+    assert.ok(row.delta >= -150);
+    assert.equal(row.capped, row.cardsLeft * 100 > 150);
+  }
+  assert.ok(result.rows.some((r) => r.capped), 'with a 150 stack at 100 a card, someone is capped');
+  alice.close();
+  bob.close();
+});
+
+test('Big Two plays and passes are announced before the view that shows them', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob } = await twoPlayerRoom(host, { game: 'big2', botSkill: 'casual' });
+  big2Autopilot(alice);
+  big2Autopilot(bob);
+  alice.send({ t: 'start' });
+  await alice.next(S2C.RESULT, 30_000);
+
+  let previous = null;
+  let pending = [];
+  let plays = 0;
+  let passes = 0;
+  let resolvedPasses = 0;
+  let leads = 0;
+  for (const frame of alice.log) {
+    if (frame.t === S2C.EVENT && (frame.kind === 'play' || frame.kind === 'pass')) {
+      pending.push(frame);
+    } else if (frame.t === S2C.VIEW) {
+      const { view } = frame;
+      const moved = previous ? view.history.length - previous.history.length : 0;
+      assert.equal(pending.length, moved, 'one event per move, ahead of the view that carries it');
+      if (pending.length) {
+        const [event] = pending;
+        const last = view.history[view.history.length - 1];
+        assert.equal(event.seat, last.seat);
+        assert.equal(event.kind, last.action);
+        if (event.kind === 'play') {
+          plays += 1;
+          assert.deepEqual(event.cards.map((c) => c.id), last.combo.cards.map((c) => c.id));
+          assert.equal(event.leading, previous.trick === null, 'leading means no trick was standing');
+          if (event.leading) leads += 1;
+        } else {
+          passes += 1;
+          assert.equal(event.resolved, view.trick === null, 'resolved means the pass cleared the trick');
+          if (event.resolved) resolvedPasses += 1;
+        }
+      }
+      pending = [];
+      previous = view;
+    }
+  }
+  assert.ok(plays > 0 && passes > 0 && leads > 0 && resolvedPasses > 0,
+    `a whole hand shows plays (${plays}), passes (${passes}), leads (${leads}) and a cleared trick (${resolvedPasses})`);
+  alice.close();
+  bob.close();
+});
+
+test('a bid is refused in a Big Two room', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice } = await twoPlayerRoom(host, { game: 'big2' });
+  alice.send({ t: 'start' });
+  await alice.next(S2C.VIEW);
+  alice.send({ t: 'bid', value: 1 });
+  assert.match((await alice.next(S2C.ERROR)).message, /not part of this game/);
+  alice.close();
+});
+
+test('humanSeats clamps to the seats the game has, and the game cannot change after create', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+
+  const big = await connect(host);
+  big.send({ t: 'create', name: 'Big', settings: { game: 'big2', humanSeats: 9 } });
+  const bigRoom = (await big.next(S2C.ROOM)).room;
+  assert.equal(bigRoom.settings.humanSeats, 4);
+  assert.equal(bigRoom.seats.length, 4);
+  big.send({ t: 'settings', settings: { game: 'doudizhu', pot: 50 } });
+  const updated = (await big.until(S2C.ROOM, (m) => m.room.settings.pot === 50)).room;
+  assert.equal(updated.settings.game, 'big2', 'a settings update cannot switch the game');
+  assert.equal(updated.seats.length, 4);
+  big.send({ t: 'seat_fill', humanSeats: 9 });
+  assert.equal((await big.until(S2C.ROOM, (m) => m.room.settings.humanSeats === 4)).room.seats.length, 4);
+
+  const dou = await connect(host);
+  dou.send({ t: 'create', name: 'Dou', settings: { game: 'doudizhu', humanSeats: 9 } });
+  const douRoom = (await dou.next(S2C.ROOM)).room;
+  assert.equal(douRoom.settings.humanSeats, 3);
+  assert.equal(douRoom.seats.length, 3);
+
+  const odd = await connect(host);
+  odd.send({ t: 'create', name: 'Odd', settings: { game: 'poker' } });
+  assert.equal((await odd.next(S2C.ROOM)).room.settings.game, 'doudizhu', 'an unknown game is Dou Di Zhu');
+  big.close();
+  dou.close();
+  odd.close();
+});
+
+test('a dropped Big Two player resumes mid-hand and takes the seat back from the bot', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, joined, code } = await twoPlayerRoom(host, { game: 'big2', pot: 1_000, startingChips: 10_000, botSkill: 'casual' });
+
+  // Alice stays quiet so the hand stalls on her turn while Bob is away.
+  alice.send({ t: 'start' });
+  await bob.next(S2C.VIEW);
+  bob.close();
+  const left = await alice.until(S2C.EVENT, (m) => m.kind === 'left');
+  assert.equal(left.seat, 1);
+  const away = await alice.until(S2C.VIEW, (m) => !m.view.players[1].isHuman);
+  assert.match(away.view.players[1].name, /bot/);
+
+  const back = await connect(host);
+  back.send({ t: 'resume', code, token: joined.token });
+  const room = await back.next(S2C.ROOM);
+  assert.equal(room.you, joined.you);
+  const view = (await back.next(S2C.VIEW)).view;
+  assert.equal(view.seat, 1);
+  assert.equal(view.players[1].isHuman, true, 'the seat is human again');
+  assert.equal(view.players[1].name, 'Bob');
+  assert.ok(view.you.hand.length > 0 && view.you.hand.length <= 13);
+  await alice.until(S2C.EVENT, (m) => m.kind === 'back' && m.seat === 1);
+
+  big2Autopilot(alice);
+  big2Autopilot(back);
+  const result = await alice.next(S2C.RESULT, 30_000);
+  assert.equal(result.game, 'big2');
+  assert.equal(result.rows[1].isBot, false);
+  assert.equal(result.rows[1].name, 'Bob');
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.chips, 0), 4 * 10_000);
+  alice.close();
+  back.close();
+});
+
+test('a public server hides its LAN address and says so in the welcome', async (t) => {
+  const open = await startHub({ public: true, advertisedHost: '192.168.1.5', port: 8787 });
+  const lan = await startHub({ advertisedHost: '192.168.1.5', port: 8787 });
+  t.after(() => { open.stop(); lan.stop(); });
+
+  const online = new Client(open.url);
+  await online.ready();
+  const welcome = await online.next(S2C.WELCOME);
+  assert.equal(welcome.host, null);
+  assert.equal(welcome.public, true);
+
+  const local = new Client(lan.url);
+  await local.ready();
+  const localWelcome = await local.next(S2C.WELCOME);
+  assert.equal(localWelcome.host, '192.168.1.5');
+  assert.equal(localWelcome.public, false);
+  online.close();
+  local.close();
+});
+
+test('creating a room at the cap is refused with server_full', async (t) => {
+  const host = await startHub({ maxRooms: 1 });
+  t.after(() => host.stop());
+  const first = await connect(host);
+  first.send({ t: 'create', name: 'First' });
+  await first.next(S2C.ROOM);
+
+  const second = await connect(host);
+  second.send({ t: 'create', name: 'Second' });
+  const refused = await second.next(S2C.ERROR);
+  assert.equal(refused.code, 'server_full');
+  assert.equal(host.hub.rooms.size, 1);
+
+  // Joining an existing room still works at the cap.
+  second.send({ t: 'join', code: [...host.hub.rooms.keys()][0], name: 'Second' });
+  assert.equal((await second.next(S2C.ROOM)).room.seats[1].name, 'Second');
+  first.close();
+  second.close();
+});
+
+// --- a throw inside a table resets it to its lobby -----------------------------
+
+test('a bot turn that throws returns the room to its lobby, and the next deal works', async (t) => {
+  const quiet = console.error;
+  console.error = () => {};
+  t.after(() => { console.error = quiet; });
+  const host = await startHub({ botStepMs: 5 });
+  t.after(() => host.stop());
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice' });
+  const created = await alice.next(S2C.ROOM);
+  const room = host.hub.rooms.get(created.room.code);
+  const real = room.adapter;
+  room.adapter = { ...real, isBotTurn: () => true, botTurn: () => { throw new Error('boom'); } };
+
+  alice.send({ t: 'start' });
+  const error = await alice.next(S2C.ERROR);
+  assert.match(error.message, /reset/);
+  assert.equal(room.phase, 'lobby');
+  assert.equal(room.state, null);
+  assert.equal(room.lastResult, null);
+
+  room.adapter = real;
+  alice.drain(S2C.VIEW);
+  alice.send({ t: 'start' });
+  assert.equal((await alice.next(S2C.VIEW)).view.you.hand.length, 17);
+  alice.close();
+});
+
+test('a throw after a move is applied resets the room instead of leaving it playing', async (t) => {
+  const quiet = console.error;
+  console.error = () => {};
+  t.after(() => { console.error = quiet; });
+  const host = await startHub({ botStepMs: 60_000 });
+  t.after(() => host.stop());
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice' });
+  const created = await alice.next(S2C.ROOM);
+  const room = host.hub.rooms.get(created.room.code);
+  alice.send({ t: 'start' });
+  await alice.next(S2C.VIEW);
+  assert.equal(room.phase, 'playing');
+  alice.drain(S2C.ROOM);
+
+  const real = room.adapter;
+  room.adapter = {
+    ...real,
+    actions: { ...real.actions, [C2S.BID]: () => ({ ok: true }) },
+    describeAction: () => [],
+    isFinished: () => { throw new Error('after the move'); },
+  };
+  alice.send({ t: 'bid', bid: 1 });
+  await alice.until(S2C.ROOM, (m) => m.room.phase === 'lobby');
+  assert.equal(room.phase, 'lobby');
+  assert.equal(room.state, null);
+  room.adapter = real;
+});
+
+test('a deal that throws leaves the room in its lobby', async (t) => {
+  const quiet = console.error;
+  console.error = () => {};
+  t.after(() => { console.error = quiet; });
+  const host = await startHub();
+  t.after(() => host.stop());
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice' });
+  const created = await alice.next(S2C.ROOM);
+  const room = host.hub.rooms.get(created.room.code);
+  const real = room.adapter;
+  room.adapter = { ...real, createGame: () => { throw new Error('bad deal'); } };
+  alice.send({ t: 'start' });
+  assert.match((await alice.next(S2C.ERROR)).message, /reset/);
+  assert.equal(room.phase, 'lobby');
+  room.adapter = real;
+  alice.close();
 });
