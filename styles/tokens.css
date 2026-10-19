@@ -1,8 +1,12 @@
 /* ==========================================================================
    tokens.css — design tokens for Card Games.
-   Structure follows the OffBridge site: one token sheet everything else reads,
-   a fluid type scale, motion and elevation as variables. The palette is this
-   app's own: green baize, gold rule, claret. Dark is the only theme — a card
+   One token sheet everything else reads: a fluid type scale, motion and
+   elevation as variables. The direction is a club card room: flat deep-green
+   baize lit by a single overhead lamp, cream type, thin brass hairlines, small
+   radii like printed card stock. Surfaces carry no sheen; the only gradients
+   are the lamp, the table's own falloff, and the dock scrim under each hand
+   (a bottom-up dark gradient in table.css .dock / big2.css .b2-dock),
+   deliberate: a shadow so the fan reads against the felt. Dark is the only theme — a card
    table lit from above does not have a light mode.
    All other CSS reads only these vars.
    ========================================================================== */
@@ -66,6 +70,23 @@
   --hairline: rgba(205, 174, 108, 0.22);
   --hairline-strong: rgba(205, 174, 108, 0.42);
 
+  /* ----- Surfaces: flat baize under one lamp ----- */
+  --lamp: radial-gradient(90% 70% at 50% -10%, rgba(255, 240, 200, 0.06), transparent 70%);
+  --felt-surface:
+    radial-gradient(70% 60% at 50% 35%, rgba(255, 240, 200, 0.07), transparent 70%),
+    radial-gradient(130% 110% at 50% 115%, rgba(0, 0, 0, 0.5), transparent 60%),
+    var(--felt-table);
+  --panel: rgba(0, 0, 0, 0.2);
+  --panel-solid: #0a241c;
+  --row-hover: rgba(205, 174, 108, 0.06);
+  --selection: rgba(205, 174, 108, 0.35);
+  --hud-bg: rgba(0, 0, 0, 0.3);
+  --pill-bg: rgba(0, 0, 0, 0.22);
+  --plate-bg: rgba(0, 0, 0, 0.36);
+  --controls-bg: rgba(4, 16, 12, 0.78);
+  --input-bg: rgba(0, 0, 0, 0.25);
+  --danger-line: rgba(226, 105, 79, 0.5);
+
   /* ----- Semantic ----- */
   --ok: #6fc28a;
   --danger: #e2694f;
@@ -90,14 +111,14 @@
   --t-body: 1.0625rem;  /* 17px */
   --t-small: 0.9375rem; /* 15px */
   --t-caption: 0.8125rem;
-  --t-label: 0.75rem;   /* tracked-out uppercase micro-labels */
-  --track-label: 0.15em;
+  --t-label: 0.75rem;   /* smallest caption size */
 
   /* ----- Radius ----- */
-  --r-xs: 6px;
-  --r-sm: 9px;
-  --r-md: 10px;
-  --r-lg: 14px;
+  --card-radius: 6px;   /* printed card corner; --r-xs is for chrome, not cards */
+  --r-xs: 3px;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
   --r-pill: 999px;
 
   /* ----- Spacing (4px rhythm) ----- */
@@ -112,7 +133,7 @@
   --s-34: 34px;
   --s-48: 48px;
 
-  --container-max: 1180px;
+  --container-max: 1080px;
   --gutter: clamp(14px, 3vw, 28px);
 
   /* ----- Motion ----- */

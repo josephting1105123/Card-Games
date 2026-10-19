@@ -201,7 +201,7 @@ class LanScreens {
     clear(this.root);
     this.root.append(
       el('header.topbar',
-        el('div.topbar__brand', el('span.topbar__suits', '♠♥♣♦'), el('b', this.online ? 'Play online' : 'Local multiplayer')),
+        el('div.topbar__brand', el('b', this.online ? 'Play online' : 'Local multiplayer')),
       ),
       el('main.page', ...children),
     );
@@ -238,16 +238,14 @@ class LanScreens {
       ),
       this.reachable() ? null : this.notReachable(),
       el('div.tiles',
-        el('button.tile', { type: 'button', style: '--accent:#cdae6c', onclick: () => this.renderCreate() },
-          el('span.tile__accent'),
+        el('button.tile', { type: 'button', onclick: () => this.renderCreate() },
           el('h2.tile__name', 'Create a room'),
           el('p.tile__tag', 'You are the host'),
           el('p.tile__desc', this.online
             ? 'Choose the coins, the pot, the starting stack and how many seats the bots fill, then share the invite link.'
             : 'Choose the coins, the pot, the starting stack, the multiplier and how many seats the bots fill, then hand out the code.'),
         ),
-        el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => this.renderJoin() },
-          el('span.tile__accent'),
+        el('button.tile', { type: 'button', onclick: () => this.renderJoin() },
           el('h2.tile__name', 'Join a room'),
           el('p.tile__tag', 'You have a code'),
           el('p.tile__desc', this.online
@@ -257,8 +255,8 @@ class LanScreens {
       ),
       this.online ? null : el('div.rule'),
       this.online ? null : el('div.card-panel',
-        el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'Hosting, in three steps'),
-        el('ol', { style: 'margin:0;padding-left:20px;line-height:1.8;color:#cfc9ba;font-size:14px' },
+        el('h2.panel__title', 'Hosting, in three steps'),
+        el('ol.panel__list',
           el('li', 'On the host machine: ', el('code', 'node server/server.js')),
           el('li', 'Everyone opens the http://… address it prints, on the same Wi-Fi'),
           el('li', 'Host creates a room, reads out the code, the rest join'),
@@ -270,9 +268,8 @@ class LanScreens {
   renderJoin({ code = '', fromInvite = false } = {}) {
     this.formRun += 1;
     this.reenable = null;
-    const codeInput = el('input.input', {
+    const codeInput = el('input.input.input--code', {
       id: 'join-code', placeholder: 'ABCDE', maxlength: 32, autocapitalize: 'characters', spellcheck: 'false', value: code,
-      style: 'font-family:var(--font);font-size:24px;letter-spacing:0.18em;text-align:center',
     });
     const nameInput = el('input.input', { id: 'join-name', value: this.name, maxlength: 18, placeholder: 'Your name' });
     const status = el('p.footnote', '');
@@ -317,7 +314,7 @@ class LanScreens {
           field('Room code', codeInput, this.online ? 'The five characters the host sent' : 'The five characters the host read out'),
           field('Your name', nameInput, 'Shown at the table'),
         ),
-        el('div.btn-row', { style: 'margin-top:18px' },
+        el('div.btn-row.btn-row--spaced',
           submit,
         ),
         status,
@@ -447,8 +444,8 @@ class LanScreens {
           isBig2 ? null : field('Hand ceiling (× pot)', cap, 'The most one hand can move, won or lost'),
           field('Bot strength', skill, 'For any seat a person does not take'),
         ),
-        el('p.field__hint', { style: 'margin:14px 0 0' }, preview),
-        el('div.btn-row', { style: 'margin-top:18px' },
+        el('p.field__hint.field__hint--block', preview),
+        el('div.btn-row.btn-row--spaced',
           submit,
         ),
         status,
@@ -1046,7 +1043,7 @@ class LanScreens {
           ? `Bot (${skills[room.settings.botSkill]?.name ?? room.settings.botSkill})`
           : (seat.connected === false ? `${String(seat.name)} (away)` : String(seat.name))),
         seat.isHost ? el('span', 'host') : null,
-        el('span', { style: 'color:var(--gold)' }, seat.id ? this.money(seat.chips, true) : '—'),
+        el('span.seat-list__chips', seat.id ? this.money(seat.chips, true) : '—'),
       ));
     });
 
@@ -1092,8 +1089,8 @@ class LanScreens {
           ? `Everyone opens http://${hostInfo.host}:${hostInfo.port} on this network, then joins with ${room.code}. From another page, the full code is ${fullCode}.`
           : `Others join with ${room.code}`),
         seatList,
-        el('div.stat-grid', { style: 'margin-top:18px' }, ...tiles),
-        el('div.btn-row', { style: 'margin-top:20px' },
+        el('div.stat-grid.stat-grid--spaced', ...tiles),
+        el('div.btn-row.btn-row--spaced',
           isHost
             ? el('button.btn.btn--primary.btn--big', { type: 'button', disabled: !ready, onclick: () => this.client.start() }, 'Deal')
             : el('span.footnote', 'The host will deal when everyone is in.'),

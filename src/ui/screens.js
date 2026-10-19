@@ -10,6 +10,7 @@ import {
   formatChips, lobbyAccess,
 } from '../core/economy.js';
 import { ratingTitle } from '../core/elo.js';
+import { cardFromId } from '../core/cards.js';
 import { gameStats } from '../core/profile.js';
 import { GAMES, gameById } from '../games/registry.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
@@ -18,46 +19,71 @@ import { clear, el } from './dom.js';
 export function topbar(app) {
   const profile = app.profile;
   return el('header.topbar',
-    el('div.topbar__brand', el('span.topbar__suits', '♠♥♣♦'), el('b', 'Card Games')),
+    el('div.topbar__brand', el('b', 'Card Games')),
     el('div.topbar__spacer'),
     el('div', { class: `chip-purse${profile.rescueMode ? ' is-rescue' : ''}` },
-      el('small', profile.rescueMode ? 'Rescue' : 'Chips'),
       el('span', formatChips(profile.bankroll)),
+      el('small', profile.rescueMode ? 'rescue chips' : 'chips'),
     ),
   );
 }
+
+// Which cards each menu tile shows. Ids: 53 big joker, 48 two of spades, 3 three of
+// diamonds, 44 ace of spades, 41 king of hearts.
+const TILE_FANS = {
+  doudizhu: { ids: [53, 48], opts: { style: 'bold' } },
+  big2: { ids: [48, 3], opts: {} },
+  blackjack: { ids: [44, 41], opts: {} },
+};
 
 export function renderMenu(app, root) {
   clear(root);
   const profile = app.profile;
   const tiles = el('div.tiles');
 
+  const fans = [];
   for (const game of GAMES) {
-    const ready = game.status === 'ready';
-    const stats = ready ? gameStats(profile, game.id) : null;
-    const tile = el(ready ? 'button.tile' : 'div.tile.tile--locked', {
-      style: `--accent:${game.accent}`,
-      ...(ready ? { type: 'button', onclick: () => app.go('mode', { gameId: game.id }) } : {}),
-    },
-      el('span.tile__accent'),
+    if (game.status !== 'ready') continue;
+    const stats = gameStats(profile, game.id);
+    const fan = el('span.tile__fan', { 'aria-hidden': 'true' });
+    const spec = TILE_FANS[game.id];
+    if (spec) fans.push({ fan, spec });
+    const tile = el('button.tile.tile--game', { type: 'button', onclick: () => app.go('mode', { gameId: game.id }) },
+      fan,
       el('h2.tile__name', game.name, game.nameZh ? el('span.tile__zh', game.nameZh) : null),
       el('p.tile__tag', `${game.tagline} · ${game.players} player${game.players > 1 ? 's' : ''}`),
       el('p.tile__desc', game.description),
       el('div.tile__foot',
-        el('span', { class: `badge ${ready ? 'badge--ready' : 'badge--soon'}` }, ready ? 'Playable' : 'Planned'),
-        stats
-          ? el('span.badge.badge--elo', game.noElo
-              ? `Played ${stats.played} · Won ${stats.won} · Net ${formatChips(stats.net ?? 0)}`
-              : `Elo ${stats.rating} · ${stats.played} played`)
-          : el('span', ''),
+        game.noElo
+          ? el('span', el('b', `${stats.played}`), ' played')
+          : el('span', 'Elo ', el('b', `${stats.rating}`)),
+        game.noElo
+          ? el('span', `${stats.won} won · net ${formatChips(stats.net ?? 0)}`)
+          : el('span', `${stats.played} played`),
       ),
     );
     tiles.append(tile);
   }
 
+  // The card art is ~25 KB and only decoration, so it loads after the menu is up.
+  // If the user has already moved on, or the import fails, the fans stay empty.
+  const nav = app.nav;
+  import('./cardart.js')
+    .then(({ installCardDefs, cardElement }) => {
+      if (app.nav !== nav) return;
+      installCardDefs();
+      for (const { fan, spec } of fans) {
+        if (!fan.isConnected) continue;
+        for (const id of spec.ids) fan.append(cardElement(cardFromId(id), spec.opts));
+      }
+    })
+    .catch((error) => console.warn('Menu card art did not load', error));
+
+  const planned = GAMES.filter((game) => game.status === 'planned').map((game) => game.name);
+
   const doudizhu = gameStats(profile, 'doudizhu');
-  const record = el('div.card-panel',
-    el('h2', { style: 'font-family:var(--font);margin:0 0 12px;font-size:20px' }, 'Your record'),
+  const record = el('section.record',
+    el('h2.panel__title', 'Your record'),
     el('div.stat-grid',
       stat('Chips', formatChips(profile.bankroll)),
       stat('Dou Di Zhu Elo', `${doudizhu.rating}`),
@@ -73,7 +99,6 @@ export function renderMenu(app, root) {
     el('main.page',
       el('div.page__head',
         el('h1.page__title', 'Pick a game'),
-        el('p.page__sub', 'Dou Di Zhu, Big Two and Blackjack are dealt and ready. Niu Niu and Texas Hold’em are queued behind them and keep their place in the list.'),
       ),
       profile.rescueMode
         ? el('div.notice.notice--warn',
@@ -81,9 +106,9 @@ export function renderMenu(app, root) {
             `Only the 400 pot is open, losses cannot take you below zero, and the normal rooms unlock again at ${formatChips(RESCUE_EXIT)}.`)
         : null,
       tiles,
-      el('div.rule'),
+      planned.length ? el('p.menu__later', `Coming later: ${planned.join(', ')}.`) : null,
       record,
-      el('p.footnote', { style: 'margin-top:18px' },
+      el('p.footnote',
         'Chips are local to this device. Add the page to your home screen to play offline.'),
     ),
   );
@@ -132,21 +157,18 @@ export function renderMode(app, root, gameId) {
         el('p.page__sub', game.description),
       ),
       el('div.tiles',
-        el('button.tile', { type: 'button', style: '--accent:#cdae6c', onclick: () => app.go('lobby', { gameId }) },
-          el('span.tile__accent'),
+        el('button.tile', { type: 'button', onclick: () => app.go('lobby', { gameId }) },
           el('h2.tile__name', 'Single player'),
           el('p.tile__tag', 'Against the house bots'),
           el('p.tile__desc', 'Pick a stake table. The bots get sharper as the pot grows, your chips and Elo are on the line, and a cap limits what any one hand can cost you.'),
         ),
-        el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => app.go('lan', { gameId, mode: 'online' }) },
-          el('span.tile__accent'),
+        el('button.tile', { type: 'button', onclick: () => app.go('lan', { gameId, mode: 'online' }) },
           el('h2.tile__name', 'Play online'),
           el('p.tile__tag', 'Friends anywhere · invite link'),
           el('p.tile__desc', 'Make a room and send the link. Friends join from their own phones, wherever they are, and bots fill any empty seat.'),
         ),
         lanAvailable
-          ? el('button.tile', { type: 'button', style: '--accent:#2f6fc8', onclick: () => app.go('lan', { gameId, mode: 'lan' }) },
-              el('span.tile__accent'),
+          ? el('button.tile', { type: 'button', onclick: () => app.go('lan', { gameId, mode: 'lan' }) },
               el('h2.tile__name', 'Local network'),
               el('p.tile__tag', 'Same Wi-Fi · room code'),
               el('p.tile__desc', 'For a room run from your own computer with node server/server.js — everyone on the same Wi-Fi opens its address.'),
@@ -155,8 +177,8 @@ export function renderMode(app, root, gameId) {
       ),
       el('div.rule'),
       el('div.card-panel',
-        el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'House rules'),
-        el('ul', { style: 'margin:0;padding-left:20px;line-height:1.75;color:#cfc9ba;font-size:14px' },
+        el('h2.panel__title', 'House rules'),
+        el('ul.panel__list',
           ...(game.ruleNotes ?? []).map((note) => el('li', note)),
         ),
       ),
@@ -196,7 +218,7 @@ export function renderLobby(app, root, gameId, variant) {
       onclick: () => app.go('table', { gameId, lobbyId: lobby.id }),
     },
       isBig2
-        ? el('div.lobby__pot', `Per card ${formatChips(lobby.pot / 10, true)}`)
+        ? el('div.lobby__pot', formatChips(lobby.pot / 10, true), el('small', 'per card'))
         : el('div.lobby__pot', formatChips(lobby.pot, true)),
       el('div.lobby__name', lobby.name),
       el('div.lobby__meta', ...meta),
@@ -233,8 +255,8 @@ export function renderLobby(app, root, gameId, variant) {
       grid,
       el('div.rule'),
       el('div.card-panel',
-        el('h2', { style: 'font-family:var(--font);margin:0 0 10px;font-size:19px' }, 'How the caps work'),
-        el('ul', { style: 'margin:0;padding-left:20px;line-height:1.75;color:#cfc9ba;font-size:14px' }, ...capsNotes),
+        el('h2.panel__title', 'How the caps work'),
+        el('ul.panel__list', ...capsNotes),
       ),
     ),
   );

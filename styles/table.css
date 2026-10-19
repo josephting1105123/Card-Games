@@ -12,10 +12,7 @@
      would never reach an ancestor: the fan would then overflow upward and cover
      the trick. Each landing area overrides it on its own cards. */
   --card-w: clamp(44px, 7.4vw, 82px);
-  background:
-    radial-gradient(60% 50% at 50% 38%, rgba(255, 255, 255, 0.08), transparent 70%),
-    radial-gradient(120% 100% at 50% 120%, rgba(0, 0, 0, 0.55), transparent 60%),
-    linear-gradient(170deg, var(--felt-table), #0c3326 55%, #071c15);
+  background: var(--felt-surface);
 }
 
 /* --- head-up display ------------------------------------------------------- */
@@ -23,15 +20,15 @@
 .hud {
   display: flex; align-items: center; gap: clamp(8px, 1.6vw, 18px);
   padding: 8px clamp(10px, 2vw, 22px);
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0.08));
+  background: var(--hud-bg);
   border-bottom: 1px solid var(--hairline);
   font-size: clamp(12px, 1.6vw, 15px);
 }
 .hud__spacer { flex: 1; }
 .hud__pill {
   display: flex; align-items: baseline; gap: 6px; white-space: nowrap;
-  padding: 5px 11px; border-radius: var(--r-pill);
-  border: 1px solid var(--hairline-strong); background: rgba(0, 0, 0, 0.3);
+  padding: 5px 11px; border-radius: var(--r-sm);
+  border: 1px solid var(--hairline); background: var(--pill-bg);
 }
 .hud__pill b {
   font-size: 1.25em; font-weight: 600;
@@ -44,12 +41,12 @@
 .hud .back-link { font-size: 1.3em; padding: 2px 8px; line-height: 1; }
 .fullscreen-toggle {
   font: inherit; font-size: 1.1em; line-height: 1; color: var(--text-tertiary);
-  background: rgba(0, 0, 0, 0.3); border: 1px solid var(--hairline-strong); border-radius: var(--r-pill);
+  background: var(--pill-bg); border: 1px solid var(--hairline); border-radius: var(--r-sm);
   padding: 5px 9px; cursor: pointer;
 }
 .fullscreen-toggle:hover { color: var(--gold); border-color: var(--gold); }
 .fullscreen-toggle.is-on { color: var(--gold-bright); }
-.hud__pill small { font-size: 0.8em; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-tertiary); }
+.hud__pill small { font-size: 0.9em; font-style: italic; letter-spacing: 0; text-transform: lowercase; color: var(--text-tertiary); }
 .hud__pill.is-hot b { color: #ffb37a; }
 
 /* --- felt ----------------------------------------------------------------- */
@@ -66,19 +63,19 @@
 
 .seat__plate {
   display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 7px;
-  border-radius: var(--r-pill); border: 1px solid var(--hairline-strong);
-  background: rgba(0, 0, 0, 0.42); font-size: clamp(12px, 1.5vw, 14.5px); max-width: 100%;
+  border-radius: var(--r-sm); border: 1px solid var(--hairline-strong);
+  background: var(--plate-bg); font-size: clamp(12px, 1.5vw, 14.5px); max-width: 100%;
 }
-.seat__plate.is-turn { border-color: var(--gold-bright); box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.22); }
+.seat__plate.is-turn { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
 .seat__avatar {
   width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none;
-  font-size: 14px; font-weight: 600; color: #201a08;
-  background: linear-gradient(160deg, var(--gold-bright), #a98a48);
+  font-size: 14px; font-weight: 600; color: var(--ink);
+  background: var(--gold);
 }
-.seat__avatar.is-landlord { background: linear-gradient(160deg, #f0a0a0, var(--claret)); color: #fff2ef; }
+.seat__avatar.is-landlord { background: var(--claret); color: var(--ivory); }
 .seat__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seat__count { color: var(--gold); white-space: nowrap; font-variant-numeric: lining-nums tabular-nums; }
-.seat__role { font-size: var(--t-label); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-tertiary); }
+.seat__role { font-size: var(--t-label); font-style: italic; letter-spacing: 0; text-transform: lowercase; color: var(--text-tertiary); }
 /* Bidding is the only turn with nothing to show for itself, so it is the only
    thing that still speaks. Reserving its height permanently (the old
    min-height) pushed the seat tall enough to overlap the play zone once the
@@ -179,7 +176,7 @@
 
 .play__pass {
   font-size: clamp(13px, 1.7vw, 17px); color: var(--text-tertiary);
-  padding: 5px 16px; border-radius: var(--r-pill);
+  padding: 5px 16px; border-radius: var(--r-sm);
   background: rgba(0, 0, 0, 0.36); border: 1px solid var(--hairline);
 }
 
@@ -263,10 +260,10 @@
 .bid-panel {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   text-align: center; padding: 18px 26px; border-radius: var(--r-lg);
-  border: 1px solid var(--hairline-strong); background: rgba(6, 22, 17, 0.9);
+  border: 1px solid var(--hairline-strong); background: var(--panel-solid);
   box-shadow: var(--shadow-8); max-width: min(92vw, 460px);
 }
-.bid-panel h2 { margin: 0 0 4px; font-size: clamp(19px, 2.8vw, 26px); color: var(--ivory); }
+.bid-panel h2 { margin: 0 0 4px; font-size: clamp(19px, 2.8vw, 26px); font-weight: 500; color: var(--ivory); }
 .bid-panel p { margin: 0 0 14px; font-size: 15px; color: var(--text-tertiary); }
 .bid-panel .btn-row { justify-content: center; }
 
@@ -311,7 +308,7 @@
   background: none; display: block; line-height: 0;
   /* A box-shadow on the element beats a drop-shadow on the artwork: the filter
      is evaluated per pixel of a forty-card table, the shadow is not. */
-  border-radius: 6px;
+  border-radius: var(--card-radius);
   box-shadow: var(--shadow-1);
   /* Everything below is inherited into the <use> shadow tree, which outer
      selectors cannot reach. It is how the artwork gets its suit colour and its
@@ -333,12 +330,12 @@
 .hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
   transition: transform var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
-  cursor: pointer; border-radius: var(--r-xs);
+  cursor: pointer; border-radius: var(--card-radius);
 }
 .hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
 /* ~22% of card height, per spec. */
 .hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 10px 12px rgba(0, 0, 0, 0.5); }
-.hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--gold-bright); outline-offset: -2px; border-radius: var(--r-xs); }
+.hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--gold-bright); outline-offset: -2px; border-radius: var(--card-radius); }
 .hand .card:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
 
 /* No legal answer: the whole fan greys and stops responding, so Pass is plainly
@@ -351,8 +348,8 @@
 .controls {
   position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); z-index: 4;
   display: flex; align-items: center; justify-content: center; gap: clamp(6px, 1.2vw, 14px); flex-wrap: nowrap;
-  max-width: 94%; padding: 6px clamp(10px, 1.6vw, 16px); border-radius: var(--r-pill);
-  background: rgba(4, 16, 12, 0.68); border: 1px solid var(--hairline-strong); box-shadow: var(--shadow-3);
+  max-width: 94%; padding: 6px clamp(10px, 1.6vw, 16px); border-radius: var(--r-md);
+  background: var(--controls-bg); border: 1px solid var(--hairline-strong); box-shadow: var(--shadow-3);
 }
 .controls__you { font-size: clamp(12px, 1.6vw, 14.5px); color: var(--text-tertiary); white-space: nowrap; }
 .controls .btn { padding: clamp(6px, 1vh, 9px) clamp(10px, 1.8vw, 18px); font-size: clamp(13px, 1.7vw, 16px); }
@@ -368,10 +365,10 @@
 }
 .result {
   width: min(92vw, 520px); text-align: center; padding: 26px 26px 22px; border-radius: var(--r-lg);
-  border: 1px solid rgba(205, 174, 108, 0.4); background: linear-gradient(170deg, #123a2d, #07241b);
+  border: 1px solid var(--hairline-strong); background: var(--panel-solid);
   box-shadow: var(--shadow-8);
 }
-.result__title { font-size: clamp(26px, 5.2vw, 38px); margin: 0 0 4px; }
+.result__title { font-size: clamp(26px, 5.2vw, 38px); font-weight: 500; margin: 0 0 4px; }
 .result__title.is-win { color: var(--gold-bright); }
 .result__title.is-loss { color: #f0a58f; }
 .result__delta { font-size: clamp(22px, 4.2vw, 30px); margin: 6px 0 14px; font-variant-numeric: lining-nums tabular-nums; }
@@ -384,10 +381,10 @@
 @media (orientation: portrait) and (max-width: 960px) {
   .rotate-gate {
     position: fixed; inset: 0; z-index: var(--z-rotate-gate); display: grid; place-items: center; text-align: center;
-    padding: 30px; background: linear-gradient(170deg, #0f3b2d, #061a14); color: var(--text);
+    padding: 30px; background: var(--panel-solid); color: var(--text);
   }
   .rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--gold); }
-  .rotate-gate h2 { margin: 0 0 8px; font-size: 25px; color: var(--ivory); }
+  .rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 500; color: var(--ivory); }
   .rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
 }
 
