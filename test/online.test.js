@@ -69,17 +69,20 @@ function rawConnect(port, { origin, host, headers = {} } = {}) {
   });
 }
 
-/** Wait until `find` returns something truthy from the frames or the socket closes. */
+/**
+ * Wait until `find` returns something truthy from the frames or the socket closes.
+ * A frame that doesn't match just waits again; only the 2 s timer firing is a timeout.
+ */
 async function until(client, find) {
   for (;;) {
     const found = find(client.frames);
     if (found) return found;
     if (client.closed) throw new Error('socket closed first');
-    await new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(), 2000);
-      client.waiters.push(() => { clearTimeout(timer); resolve(); });
+    const timedOut = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(true), 2000);
+      client.waiters.push(() => { clearTimeout(timer); resolve(false); });
     });
-    if (!find(client.frames) && !client.closed) throw new Error('timed out waiting for a frame');
+    if (timedOut && !find(client.frames) && !client.closed) throw new Error('timed out waiting for a frame');
   }
 }
 
