@@ -14,7 +14,6 @@ import { gameStats } from '../core/profile.js';
 import { GAMES, gameById } from '../games/registry.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { clear, el } from './dom.js';
-import { renderBlackjackLobby, renderBlackjackMode } from './blackjack.js';
 
 export function topbar(app) {
   const profile = app.profile;
@@ -94,8 +93,31 @@ function stat(k, v) {
   return el('div.stat', el('div.stat__k', k), el('div.stat__v', v));
 }
 
+// Blackjack's screens live in the 70 KB blackjack module, which the menu has no
+// other use for, so it loads on first visit. app.nav moves on every navigation;
+// if it changed while the import was in flight the user has left, and painting
+// now would land on top of whatever screen they are on.
+function renderBlackjackScreen(app, root, paint) {
+  const nav = app.nav;
+  clear(root);
+  root.append(topbar(app), el('main.page', el('p.page__sub', 'Loading Blackjack…')));
+  import('./blackjack.js')
+    .then((mod) => {
+      if (app.nav === nav) paint(mod);
+    })
+    .catch((error) => {
+      if (app.nav !== nav) return;
+      clear(root);
+      root.append(topbar(app), el('main.page',
+        el('h1.page__title', 'That did not load'),
+        el('p.page__sub', String(error?.message ?? error)),
+        el('div.btn-row', el('button.btn', { type: 'button', onclick: () => app.go('menu') }, 'Back to the menu')),
+      ));
+    });
+}
+
 export function renderMode(app, root, gameId) {
-  if (gameId === 'blackjack') return renderBlackjackMode(app, root);
+  if (gameId === 'blackjack') return renderBlackjackScreen(app, root, (mod) => mod.renderBlackjackMode(app, root));
   const game = gameById(gameId);
   // Big Two is single-player only so far — F4: the tile stays put and says
   // so, rather than disappearing, the same way a planned game's menu tile does.
@@ -140,7 +162,7 @@ export function renderMode(app, root, gameId) {
 }
 
 export function renderLobby(app, root, gameId, variant) {
-  if (gameId === 'blackjack') return renderBlackjackLobby(app, root, variant);
+  if (gameId === 'blackjack') return renderBlackjackScreen(app, root, (mod) => mod.renderBlackjackLobby(app, root, variant));
   const game = gameById(gameId);
   const profile = app.profile;
   const isBig2 = gameId === 'big2';

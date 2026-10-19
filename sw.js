@@ -13,7 +13,7 @@
  * stamp by hand.
  */
 
-const CACHE = 'card-games-fa81e8dc4fcd';
+const CACHE = 'card-games-31068630fc81';
 
 const PRECACHE = [
   './',

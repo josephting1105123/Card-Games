@@ -16,6 +16,7 @@
 
 import { createServer } from 'node:http';
 import { createReadStream, promises as fs } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachWebSocket } from './ws.js';
@@ -43,6 +44,29 @@ const TYPES = {
   '.md': 'text/markdown; charset=utf-8',
 };
 
+// Text compresses to a fraction of its size; fonts, PNGs and icons are already compressed.
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.svg', '.txt', '.md']);
+
+// Compressed once per file version rather than per request. The key is the path;
+// size and mtime say whether the cached bytes still match what is on disk.
+const gzipCache = new Map();
+
+async function gzipped(file, stat) {
+  const cached = gzipCache.get(file);
+  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.body;
+  const body = gzipSync(await fs.readFile(file), { level: 9 });
+  gzipCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, body });
+  return body;
+}
+
+function etagMatches(header, etag) {
+  if (!header) return false;
+  if (header.trim() === '*') return true;
+  // Weak comparison: a client may send several tags, and may drop the W/ prefix.
+  const strip = (tag) => tag.trim().replace(/^W\//, '');
+  return header.split(',').some((tag) => strip(tag) === strip(etag));
+}
+
 const hub = new RoomHub({ advertisedHost: primaryAddress(), port: PORT });
 
 const server = createServer(async (req, res) => {
@@ -59,7 +83,7 @@ const server = createServer(async (req, res) => {
     }
     const file = resolvePath(url.pathname);
     if (!file) return json(res, 400, { error: 'bad path' });
-    return await serve(res, file, req.method === 'HEAD');
+    return await serve(req, res, file, req.method === 'HEAD');
   } catch (error) {
     return json(res, 500, { error: String(error?.message ?? error) });
   }
@@ -74,19 +98,36 @@ function resolvePath(pathname) {
   return target;
 }
 
-async function serve(res, file, headOnly) {
+async function serve(req, res, file, headOnly) {
   let stat;
   try {
     stat = await fs.stat(file);
   } catch {
     return json(res, 404, { error: 'not found' });
   }
-  if (stat.isDirectory()) return serve(res, join(file, 'index.html'), headOnly);
-  res.writeHead(200, {
-    'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'content-length': stat.size,
+  if (stat.isDirectory()) return serve(req, res, join(file, 'index.html'), headOnly);
+  const ext = extname(file).toLowerCase();
+  const etag = `W/"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
+  // no-cache means "revalidate before reuse"; with an ETag that is a 304, not a download.
+  const headers = {
+    'content-type': TYPES[ext] ?? 'application/octet-stream',
     'cache-control': 'no-cache',
-  });
+    etag,
+  };
+  // A 304 must carry the headers a 200 would, Vary included, or a cache could
+  // reuse the revalidated entry for a client that sent a different Accept-Encoding.
+  const compressible = COMPRESSIBLE.has(ext);
+  if (compressible) headers.vary = 'accept-encoding';
+  if (etagMatches(req.headers['if-none-match'], etag)) {
+    res.writeHead(304, headers);
+    return res.end();
+  }
+  if (compressible && /\bgzip\b/i.test(req.headers['accept-encoding'] ?? '')) {
+    const body = await gzipped(file, stat);
+    res.writeHead(200, { ...headers, 'content-encoding': 'gzip', 'content-length': body.length });
+    return res.end(headOnly ? undefined : body);
+  }
+  res.writeHead(200, { ...headers, 'content-length': stat.size });
   if (headOnly) return res.end();
   return createReadStream(file).pipe(res);
 }

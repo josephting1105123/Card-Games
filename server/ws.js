@@ -30,6 +30,7 @@ export class WsConnection extends EventEmitter {
     this.socket = socket;
     this.id = randomBytes(8).toString('hex');
     this.open = true;
+    this.lastSeen = Date.now();
     this.buffer = Buffer.alloc(0);
     this.fragments = [];
     this.fragmentOp = null;
@@ -52,6 +53,8 @@ export class WsConnection extends EventEmitter {
   }
 
   onData(chunk) {
+    // Any inbound bytes prove the peer is alive, pongs included.
+    this.lastSeen = Date.now();
     this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
     try {
       while (this.readFrame()) { /* keep draining */ }
@@ -185,6 +188,10 @@ export class WsConnection extends EventEmitter {
     body.write(reason, 2);
     this.sendFrame(OP.CLOSE, body);
     this.destroy();
+    // end() waits for the peer's FIN; a half-dead peer never sends one, and the
+    // connection has already left the heartbeat set, so tear the socket down.
+    const { socket } = this;
+    setTimeout(() => socket.destroy?.(), 1000).unref?.();
   }
 
   destroy() {
@@ -206,9 +213,9 @@ export class WsConnection extends EventEmitter {
 /**
  * Handle HTTP upgrades on `server` at `path`.
  * @param {import('node:http').Server} server
- * @param {{path?: string, onConnection: (conn: WsConnection) => void}} options
+ * @param {{path?: string, onConnection: (conn: WsConnection) => void, heartbeatMs?: number}} options
  */
-export function attachWebSocket(server, { path = '/lan', onConnection }) {
+export function attachWebSocket(server, { path = '/lan', onConnection, heartbeatMs = 15_000 }) {
   const connections = new Set();
 
   server.on('upgrade', (req, socket) => {
@@ -233,13 +240,23 @@ export function attachWebSocket(server, { path = '/lan', onConnection }) {
     onConnection(conn);
   });
 
-  // Drop connections that stop answering, so a room does not hold a dead seat.
+  // A sleeping phone or a dropped Wi-Fi link never sends a FIN, so the socket
+  // looks open for ever. Browsers answer pings on their own; a connection that
+  // has sent nothing for two intervals is treated as gone, which the room hub
+  // sees as a drop and hands the seat to a bot.
   const heartbeat = setInterval(() => {
     for (const conn of connections) {
-      if (conn.open) conn.ping();
-      else connections.delete(conn);
+      if (!conn.open) {
+        connections.delete(conn);
+      } else if (Date.now() - conn.lastSeen > heartbeatMs * 2) {
+        conn.destroy();
+        // end() on a dead peer waits for a FIN that never comes and leaks the fd.
+        conn.socket.destroy?.();
+      } else {
+        conn.ping();
+      }
     }
-  }, 25_000);
+  }, heartbeatMs);
   heartbeat.unref?.();
 
   return {

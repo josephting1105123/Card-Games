@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { EventEmitter } from 'node:events';
+import net from 'node:net';
 import { WsConnection, acceptKey, attachWebSocket } from '../server/ws.js';
 import { RoomHub } from '../server/rooms.js';
 import { S2C } from '../src/net/protocol.js';
@@ -49,9 +50,11 @@ class Client {
   constructor(url) {
     this.socket = new WebSocket(url);
     this.inbox = [];
+    this.log = []; // every frame received, in order, whether or not anything waited for it
     this.waiters = [];
     this.socket.addEventListener('message', (event) => {
       const message = JSON.parse(event.data);
+      this.log.push(message);
       const waiter = this.waiters.find((w) => w.type === message.t);
       if (waiter) {
         this.waiters.splice(this.waiters.indexOf(waiter), 1);
@@ -108,7 +111,7 @@ class Client {
 }
 
 async function startHost() {
-  const hub = new RoomHub({ botStepMs: 5 });
+  const hub = new RoomHub({ botStepMs: 5, dealGraceMs: 0 });
   const server = createServer((req, res) => res.end('ok'));
   const sockets = attachWebSocket(server, { path: '/lan', onConnection: (conn) => hub.attach(conn) });
   server.listen(0, '127.0.0.1');
@@ -227,7 +230,7 @@ test('a capped hand still conserves chips in a room', async (t) => {
   t.after(() => host.stop());
 
   // A big pot against small stacks guarantees the loss caps bite.
-  const hub = new RoomHub({ botStepMs: 1 });
+  const hub = new RoomHub({ botStepMs: 1, dealGraceMs: 0 });
   const room = {
     code: 'TEST1',
     hostId: 'h',
@@ -323,7 +326,7 @@ test('a client that vanishes does not take the host down with it', () => {
   assert.equal(closed, true, 'and its close is reported so the seat can be handled');
 });
 
-test('a reset client frees its seat and the room plays on', async (t) => {
+test('a reset client keeps its seat held and the room plays on', async (t) => {
   const host = await startHost();
   t.after(() => host.stop());
 
@@ -341,12 +344,553 @@ test('a reset client frees its seat and the room plays on', async (t) => {
   await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
 
   bob.close();
-  const after = await alice.until(S2C.ROOM, (m) => m.room.seats[1].id === null);
-  assert.equal(after.room.seats[1].id, null, "Bob's seat is free again");
+  const after = await alice.until(S2C.ROOM, (m) => m.room.seats[1].connected === false);
+  assert.equal(after.room.seats[1].name, 'Bob', "Bob's seat is held for him, shown as away");
 
-  // The host is still healthy enough to deal.
+  // The host is still healthy enough to deal; the held seat plays as a bot.
   alice.send({ t: 'start' });
   const view = await alice.next(S2C.VIEW);
   assert.equal(view.view.you.hand.length, 17);
+  assert.equal(view.view.players[1].isBot, true);
   alice.close();
+});
+
+/** Answer every VIEW that makes it this seat's turn with the simplest legal move. */
+function autopilot(client) {
+  let stopped = false;
+  const act = (view) => {
+    const seat = view.seat;
+    if (view.phase === 'bidding' && view.bidding.turn === seat) {
+      client.send({ t: 'bid', value: view.bidding.highest < 3 ? view.bidding.highest + 1 : 0 });
+    } else if (view.phase === 'playing' && view.turn === seat) {
+      const moves = legalPlays(view.you.hand, view.trick?.combo ?? null);
+      if (moves.length) client.send({ t: 'play', cards: moves[0].cards.map((c) => c.id) });
+      else client.send({ t: 'pass' });
+    }
+  };
+  client.socket.addEventListener('message', (event) => {
+    if (stopped) return;
+    const message = JSON.parse(event.data);
+    if (message.t === S2C.VIEW) act(message.view);
+  });
+  // The turn may already be sitting on this seat from a view that arrived
+  // before the pilot was switched on.
+  const latest = client.log.findLast((m) => m.t === S2C.VIEW);
+  if (latest) act(latest.view);
+  return () => { stopped = true; };
+}
+
+async function connect(host) {
+  const client = new Client(host.url);
+  await client.ready();
+  await client.next(S2C.WELCOME);
+  return client;
+}
+
+test('each member gets their own resume token and nobody sees anyone else\'s', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 2 } });
+  const created = await alice.next(S2C.ROOM);
+  assert.equal(typeof created.token, 'string');
+  assert.ok(created.token.length >= 16);
+
+  const bob = await connect(host);
+  bob.send({ t: 'join', code: created.room.code, name: 'Bob' });
+  const joined = await bob.next(S2C.ROOM);
+  assert.equal(typeof joined.token, 'string');
+  assert.notEqual(joined.token, created.token);
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
+
+  for (const [who, client, token, other] of [
+    ['Alice', alice, created.token, joined.token],
+    ['Bob', bob, joined.token, created.token],
+  ]) {
+    const rooms = client.log.filter((m) => m.t === S2C.ROOM);
+    assert.ok(rooms.length > 0);
+    for (const frame of rooms) assert.equal(frame.token, token, `${who}'s ROOM frames carry ${who}'s token`);
+    assert.equal(JSON.stringify(client.log).includes(other), false, `${who} never sees the other token`);
+  }
+  alice.close();
+  bob.close();
+});
+
+test('a dropped player resumes mid-hand, takes the seat back from the bot, and the hand settles', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 2 } });
+  const created = await alice.next(S2C.ROOM);
+  const code = created.room.code;
+  const bob = await connect(host);
+  bob.send({ t: 'join', code, name: 'Bob' });
+  const joined = await bob.next(S2C.ROOM);
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
+
+  // Alice stays quiet so the hand stalls on her turn while Bob is away.
+  alice.send({ t: 'start' });
+  await bob.next(S2C.VIEW);
+  bob.close();
+  const left = await alice.until(S2C.EVENT, (m) => m.kind === 'left');
+  assert.equal(left.seat, 1);
+  const away = await alice.until(S2C.VIEW, (m) => m.view.players[1].isBot);
+  assert.match(away.view.players[1].name, /bot/);
+
+  const back = await connect(host);
+  back.send({ t: 'resume', code, token: joined.token });
+  const room = await back.next(S2C.ROOM);
+  assert.equal(room.you, joined.you, 'the member id survives the new socket');
+  assert.equal(room.token, joined.token);
+  const view = await back.next(S2C.VIEW);
+  assert.equal(view.view.seat, 1);
+  assert.equal(view.view.you.hand.length, 17);
+  assert.equal(view.view.players[1].isBot, false, 'the seat is human again');
+  assert.equal(view.view.players[1].name, 'Bob');
+  await alice.until(S2C.EVENT, (m) => m.kind === 'back' && m.seat === 1);
+
+  // The old id must not be needed: the resumed socket can play for the seat.
+  autopilot(alice);
+  autopilot(back);
+  const result = await alice.next(S2C.RESULT, 20_000);
+  assert.equal(result.rows[1].isBot, false);
+  assert.equal(result.rows[1].name, 'Bob');
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.chips, 0), 3 * created.room.settings.startingChips,
+    'chips are conserved across the drop and the resume');
+  alice.close();
+  back.close();
+});
+
+test('resuming with a token nobody holds is refused', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 2 } });
+  const created = await alice.next(S2C.ROOM);
+
+  const stranger = await connect(host);
+  stranger.send({ t: 'resume', code: created.room.code, token: 'not-a-real-token' });
+  const bad = await stranger.next(S2C.ERROR);
+  assert.equal(bad.code, 'resume_failed');
+  stranger.send({ t: 'resume', code: 'ZZZZZ', token: created.token });
+  assert.equal((await stranger.next(S2C.ERROR)).code, 'resume_failed', 'an unknown room fails the same way');
+  stranger.send({ t: 'resume', code: created.room.code });
+  assert.equal((await stranger.next(S2C.ERROR)).code, 'resume_failed', 'a missing token fails too');
+  alice.close();
+  stranger.close();
+});
+
+test('a newcomer can join between hands but not during one', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 3 } });
+  const created = await alice.next(S2C.ROOM);
+  const code = created.room.code;
+  const bob = await connect(host);
+  bob.send({ t: 'join', code, name: 'Bob' });
+  await bob.next(S2C.ROOM);
+
+  alice.send({ t: 'start' });
+  await alice.next(S2C.VIEW);
+
+  const carol = await connect(host);
+  carol.send({ t: 'join', code, name: 'Carol' });
+  assert.match((await carol.next(S2C.ERROR)).message, /still being played/);
+
+  autopilot(alice);
+  autopilot(bob);
+  await alice.next(S2C.RESULT, 20_000);
+
+  carol.send({ t: 'join', code, name: 'Carol' });
+  const joined = await carol.next(S2C.ROOM);
+  assert.equal(joined.room.phase, 'finished');
+  assert.equal(joined.room.seats[2].name, 'Carol');
+  assert.equal(typeof joined.token, 'string');
+  alice.close();
+  bob.close();
+  carol.close();
+});
+
+test('a full room gives a dropped member\'s seat to a newcomer, oldest drop first', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 2 } });
+  const created = await alice.next(S2C.ROOM);
+  const code = created.room.code;
+  const bob = await connect(host);
+  bob.send({ t: 'join', code, name: 'Bob' });
+  const joined = await bob.next(S2C.ROOM);
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
+
+  const dave = await connect(host);
+  dave.send({ t: 'join', code, name: 'Dave' });
+  assert.match((await dave.next(S2C.ERROR)).message, /full/);
+
+  bob.close();
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].connected === false);
+  dave.send({ t: 'join', code, name: 'Dave' });
+  const taken = await dave.next(S2C.ROOM);
+  assert.equal(taken.room.seats[1].name, 'Dave');
+
+  const late = await connect(host);
+  late.send({ t: 'resume', code, token: joined.token });
+  assert.equal((await late.next(S2C.ERROR)).code, 'resume_failed', 'the evicted seat can no longer be resumed');
+  alice.close();
+  dave.close();
+  late.close();
+});
+
+test('views carry a hand number that goes up on every deal', async (t) => {
+  const host = await startHost();
+  t.after(() => host.stop());
+
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 1 } });
+  await alice.next(S2C.ROOM);
+
+  alice.send({ t: 'start' });
+  const first = await alice.next(S2C.VIEW);
+  assert.equal(first.hand, 1);
+  const stop = autopilot(alice);
+  await alice.next(S2C.RESULT, 20_000);
+  stop();
+
+  alice.send({ t: 'again' });
+  const second = await alice.until(S2C.VIEW, (m) => m.hand === 2);
+  assert.equal(second.view.you.hand.length, 17);
+  alice.close();
+});
+
+test('the heartbeat drops a connection that goes silent and keeps one that answers', async (t) => {
+  const server = createServer((req, res) => res.end('ok'));
+  let silentClosed;
+  const dropped = new Promise((resolve) => { silentClosed = resolve; });
+  const sockets = attachWebSocket(server, {
+    path: '/lan',
+    heartbeatMs: 50,
+    onConnection: (conn) => { conn.on('close', () => silentClosed(conn)); },
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+
+  // A raw socket finishes the upgrade handshake and then says nothing, which is
+  // what a phone that went to sleep looks like from the host.
+  const raw = net.connect(port, '127.0.0.1');
+  raw.on('error', () => {});
+  t.after(() => {
+    raw.destroy();
+    sockets.close();
+    server.close();
+    server.closeAllConnections?.();
+  });
+  await once(raw, 'connect');
+  raw.write([
+    'GET /lan HTTP/1.1',
+    `Host: 127.0.0.1:${port}`,
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+    'Sec-WebSocket-Version: 13',
+    '\r\n',
+  ].join('\r\n'));
+
+  const live = new Client(`ws://127.0.0.1:${port}/lan`);
+  t.after(() => live.close());
+  await live.ready();
+
+  const started = Date.now();
+  const conn = await Promise.race([
+    dropped,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('the silent connection was never dropped')), 2_000).unref()),
+  ]);
+  assert.equal(conn.open, false);
+  assert.ok(Date.now() - started < 1_500);
+  assert.equal(live.socket.readyState, 1, 'a browser that answers pings is left alone');
+});
+
+// --- resume/join regressions ---------------------------------------------------
+
+/** startHost, but handing back the hub so a test can inspect rooms and call sweep(). */
+async function startHub(options = {}) {
+  const hub = new RoomHub({ botStepMs: 5, dealGraceMs: 0, ...options });
+  const server = createServer((req, res) => res.end('ok'));
+  const sockets = attachWebSocket(server, { path: '/lan', onConnection: (conn) => hub.attach(conn) });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  return {
+    hub,
+    url: `ws://127.0.0.1:${port}/lan`,
+    stop: () => {
+      hub.close();
+      sockets.close();
+      server.close();
+      server.closeAllConnections?.();
+    },
+  };
+}
+
+async function waitFor(condition, timeoutMs = 4_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('the condition never became true');
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Alice creates a room for two humans and Bob joins it. */
+async function twoPlayerRoom(host, settings = {}) {
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 2, ...settings } });
+  const created = await alice.next(S2C.ROOM);
+  const bob = await connect(host);
+  bob.send({ t: 'join', code: created.room.code, name: 'Bob' });
+  const joined = await bob.next(S2C.ROOM);
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
+  return { alice, bob, created, joined, code: created.room.code, room: host.hub.rooms.get(created.room.code) };
+}
+
+test('the host who dropped first can take the room back when its successor drops too', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, created, joined, code, room } = await twoPlayerRoom(host);
+
+  alice.close();
+  await bob.until(S2C.ROOM, (m) => m.room.hostId === joined.you);
+  bob.close();
+  await waitFor(() => !room.members.get(joined.you).connected);
+  assert.equal(room.hostId, joined.you, 'the host stays on the last member while nobody is connected');
+
+  const back = await connect(host);
+  back.send({ t: 'resume', code, token: created.token });
+  const resumed = await back.next(S2C.ROOM);
+  assert.equal(resumed.room.hostId, created.you, 'the first one back is the host, not the absent successor');
+  back.send({ t: 'start' });
+  assert.equal((await back.next(S2C.VIEW)).view.you.hand.length, 17);
+  back.close();
+});
+
+test('a host seat deleted by an explicit leave passes to the held member, who can then deal', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, joined, code, room } = await twoPlayerRoom(host);
+
+  bob.close();
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].connected === false);
+  alice.send({ t: 'leave' });
+  await waitFor(() => room.members.size === 1);
+  assert.equal(room.hostId, joined.you, 'hostId never names a deleted member');
+
+  const back = await connect(host);
+  back.send({ t: 'resume', code, token: joined.token });
+  assert.equal((await back.next(S2C.ROOM)).room.hostId, joined.you);
+  back.send({ t: 'start' });
+  assert.equal((await back.next(S2C.VIEW)).view.you.hand.length, 17);
+  alice.close();
+  back.close();
+});
+
+test('a held seat expires after the TTL, keeping its chips for a rejoin under the same name', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, joined, code, room } = await twoPlayerRoom(host);
+  room.chips.set(joined.you, 12_345);
+
+  bob.close();
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].connected === false);
+  host.hub.sweep();
+  assert.equal(room.members.size, 2, 'inside the TTL the seat is still held');
+
+  host.hub.options.heldSeatTtlMs = 20;
+  await sleep(50);
+  host.hub.sweep();
+  const gone = await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === null);
+  assert.equal(gone.room.seats[1].id, null);
+  assert.equal(room.members.size, 1);
+
+  const late = await connect(host);
+  late.send({ t: 'resume', code, token: joined.token });
+  assert.equal((await late.next(S2C.ERROR)).code, 'resume_failed', 'an expired seat cannot be resumed');
+
+  late.send({ t: 'join', code, name: 'bob' });
+  const back = await late.next(S2C.ROOM);
+  assert.equal(back.room.seats[1].chips, 12_345, 'the stack comes back, matched on the name without case');
+  alice.close();
+  late.close();
+});
+
+test('leaving between hands and rejoining under the same name returns the same chips', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, created, code, room } = await twoPlayerRoom(host);
+  const start = created.room.settings.startingChips;
+
+  alice.send({ t: 'start' });
+  const stops = [autopilot(alice), autopilot(bob)];
+  const result = await alice.next(S2C.RESULT, 20_000);
+  for (const stop of stops) stop();
+  const kept = result.rows[1].chips;
+  assert.notEqual(kept, start, 'the hand moved Bob\'s stack, so the check below means something');
+
+  bob.send({ t: 'leave' });
+  await waitFor(() => room.members.size === 1);
+  assert.equal(room.departed.get('bob'), kept);
+  bob.drain(S2C.ROOM);
+  bob.send({ t: 'join', code, name: 'Bob' });
+  const back = await bob.next(S2C.ROOM);
+  assert.equal(back.room.seats[1].chips, kept);
+  assert.equal(room.departed.size, 0, 'the stashed stack is used once');
+  assert.equal([...room.chips.values()].reduce((a, b) => a + b, 0), 3 * start, 'no chips minted or wiped');
+  alice.close();
+  bob.close();
+});
+
+test('leaving mid-hand files the settled purse under the leaver\'s name', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, joined, created, code, room } = await twoPlayerRoom(host);
+  const start = created.room.settings.startingChips;
+
+  alice.send({ t: 'start' });
+  await bob.next(S2C.VIEW);
+  bob.send({ t: 'leave' });
+  autopilot(alice);
+  const result = await alice.next(S2C.RESULT, 20_000);
+  const kept = result.rows[1].chips;
+  assert.equal(room.departed.get('bob'), kept);
+  assert.equal(room.chips.has(joined.you), false, 'nothing is left keyed by the old member id');
+  assert.equal([...room.chips.values()].reduce((a, b) => a + b, 0) + kept, 3 * start);
+
+  bob.drain(S2C.ROOM);
+  bob.send({ t: 'join', code, name: 'Bob' });
+  assert.equal((await bob.next(S2C.ROOM)).room.seats[1].chips, kept);
+  alice.close();
+  bob.close();
+});
+
+test('a drop and resume inside the deal grace does not let the bots start early', async (t) => {
+  const host = await startHub({ botStepMs: 20, dealGraceMs: 400 });
+  t.after(() => host.stop());
+  const alice = await connect(host);
+  alice.send({ t: 'create', name: 'Alice', settings: { humanSeats: 1 } });
+  const created = await alice.next(S2C.ROOM);
+  const room = host.hub.rooms.get(created.room.code);
+
+  // The first bidder is random; redeal until a bot is first so the timer under test exists.
+  let dealtAt;
+  do {
+    host.hub.deal(room);
+    dealtAt = Date.now();
+  } while (!room.state.players[room.state.bidding.turn].isBot);
+
+  alice.close();
+  await waitFor(() => !room.members.get(created.you).connected);
+  const back = await connect(host);
+  back.send({ t: 'resume', code: created.room.code, token: created.token });
+  await back.next(S2C.ROOM);
+  assert.ok(Date.now() - dealtAt < 300, 'the resume landed inside the grace, or this test proves nothing');
+
+  await waitFor(() => room.state.bidding.calls.length > 0, 2_000);
+  assert.ok(Date.now() - dealtAt >= 380, `the first bot acted ${Date.now() - dealtAt}ms after the deal`);
+  back.close();
+});
+
+test('a socket closed as replaced is destroyed even if the peer never answers', async (t) => {
+  const server = createServer((req, res) => res.end('ok'));
+  let gotConn;
+  const connected = new Promise((resolve) => { gotConn = resolve; });
+  const sockets = attachWebSocket(server, { path: '/lan', onConnection: (conn) => gotConn(conn) });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+
+  const raw = net.connect(port, '127.0.0.1');
+  raw.on('error', () => {});
+  t.after(() => {
+    raw.destroy();
+    sockets.close();
+    server.close();
+    server.closeAllConnections?.();
+  });
+  await once(raw, 'connect');
+  // Never read from `raw`: its end of the socket then never sends the FIN that
+  // end() on the host side waits for, which is a half-dead peer.
+  raw.pause();
+  raw.write([
+    'GET /lan HTTP/1.1',
+    `Host: 127.0.0.1:${port}`,
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+    'Sec-WebSocket-Version: 13',
+    '\r\n',
+  ].join('\r\n'));
+  const conn = await connected;
+
+  conn.close(4000, 'replaced');
+  assert.equal(conn.open, false);
+  await sleep(1_300);
+  assert.equal(conn.socket.destroyed, true, 'the fd is released without waiting for the peer');
+});
+
+test('a newcomer resuming after a hand does not get the previous holder\'s hand or result', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, created, code } = await twoPlayerRoom(host);
+
+  alice.send({ t: 'start' });
+  const stops = [autopilot(alice), autopilot(bob)];
+  await alice.next(S2C.RESULT, 20_000);
+  for (const stop of stops) stop();
+
+  bob.close();
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].connected === false);
+  const dave = await connect(host);
+  dave.send({ t: 'join', code, name: 'Dave' });
+  const joined = await dave.next(S2C.ROOM);
+  assert.equal(joined.room.seats[1].name, 'Dave', 'Dave took the dropped seat');
+  dave.close();
+  await alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Dave' && m.room.seats[1].connected === false);
+
+  const back = await connect(host);
+  back.send({ t: 'resume', code, token: joined.token });
+  assert.equal((await back.next(S2C.ROOM)).room.phase, 'finished');
+  await sleep(150);
+  assert.equal(back.log.some((m) => m.t === S2C.VIEW), false, 'no view of Bob\'s cards');
+  assert.equal(back.log.some((m) => m.t === S2C.RESULT), false, 'no result row for a hand Dave did not play');
+
+  // Control: someone who did play still gets both.
+  const again = await connect(host);
+  again.send({ t: 'resume', code, token: created.token });
+  await again.next(S2C.VIEW);
+  await again.next(S2C.RESULT);
+  alice.close();
+  back.close();
+  again.close();
+});
+
+test('joining the full room you already sit in swaps your seat instead of being refused', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, code } = await twoPlayerRoom(host);
+
+  bob.drain(S2C.ROOM);
+  bob.send({ t: 'join', code, name: 'Bob' });
+  const again = await bob.next(S2C.ROOM);
+  assert.equal(again.room.seats[1].name, 'Bob');
+  assert.equal(again.room.seats[1].connected, true);
+  assert.equal(bob.log.some((m) => m.t === S2C.ERROR), false);
+  alice.close();
+  bob.close();
 });

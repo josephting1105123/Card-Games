@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SW = join(ROOT, 'sw.js');
@@ -66,4 +66,5 @@ function main() {
   console.log(`sw.js stamped ${have} -> ${want}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+// On Windows argv[1] is a backslash drive path, so a hand-built file:// string never equals import.meta.url.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

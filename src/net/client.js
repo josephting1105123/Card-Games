@@ -2,9 +2,10 @@
  * Browser side of local network play.
  *
  * A thin wrapper over WebSocket: JSON in, JSON out, with named handlers instead
- * of a switch at every call site. No reconnection loop — on a LAN a dropped
- * socket means the host went away or the Wi-Fi did, and quietly retrying would
- * only hide that from the player.
+ * of a switch at every call site. There is deliberately no reconnection here:
+ * one instance is one socket. Reconnecting needs the room code and the resume
+ * token, which the screen layer (src/ui/lan.js) holds, so it builds a fresh
+ * client and calls resume() on it.
  */
 
 import { C2S, decode, encode } from './protocol.js';
@@ -69,9 +70,10 @@ export class LanClient {
         }
         this.emit(message.t, message);
       });
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (event) => {
         clearTimeout(timer);
-        this.emit('close');
+        // The code tells a seat taken over by another tab (4000) from a dropped link.
+        this.emit('close', { code: event.code, reason: event.reason });
       });
       socket.addEventListener('error', () => {
         clearTimeout(timer);
@@ -79,6 +81,10 @@ export class LanClient {
         reject(new Error(`could not reach ${url}`));
       });
     });
+  }
+
+  get connected() {
+    return this.socket?.readyState === WebSocket.OPEN;
   }
 
   send(message) {
@@ -96,6 +102,8 @@ export class LanClient {
   bid(value) { this.send({ t: C2S.BID, value }); }
   play(cards) { this.send({ t: C2S.PLAY, cards: cards.map((c) => c.id) }); }
   pass() { this.send({ t: C2S.PASS }); }
+  resume(code, token) { this.send({ t: C2S.RESUME, code, token }); }
+  leave() { this.send({ t: C2S.LEAVE }); }
 
   close() {
     this.handlers.clear();

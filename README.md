@@ -315,6 +315,19 @@ phone:
 | Tap a card to painted | 260 ms | 20 ms |
 | Building the deck's artwork | — | 33 ms, once |
 
+**The menu loads only the menu.** Each table (`solo.js`, `big2.js`,
+`blackjack.js`) is imported when you open it, and the deck's artwork is built by
+the first table that needs it instead of at boot. Walking the static imports from
+`src/main.js`, the menu went from 31 modules / 380 KB to 14 modules / 116 KB, and
+the 33 ms artwork build no longer sits in front of the first paint. Once the menu
+is up and idle, the Dou Di Zhu table is fetched in the background, since it is the
+most common next tap; Big Two and Blackjack load on demand. (Module and size
+counts are from the import graph, not a timed run.)
+
+The LAN host (`server/server.js`) gzips text files (Blackjack's module goes from
+69.8 KB to 19.2 KB on the wire) and answers `If-None-Match` with a 304, so
+`no-cache` revalidation costs a header, not a download.
+
 ### The cards
 
 Drawn as SVG at run time (`src/ui/cardart.js`): ivory stock with a double gold
