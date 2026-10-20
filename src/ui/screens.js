@@ -12,7 +12,7 @@ import {
 import { ratingTitle } from '../core/elo.js';
 import { cardFromId } from '../core/cards.js';
 import { gameStats } from '../core/profile.js';
-import { GAMES, gameById } from '../games/registry.js';
+import { GAMES, READY_GAMES, gameById } from '../games/registry.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { clear, el } from './dom.js';
 
@@ -53,7 +53,7 @@ const TILE_FANS = {
 export function renderMenu(app, root) {
   clear(root);
   const profile = app.profile;
-  const tiles = el('div.tiles');
+  const tiles = el('div.tiles.tiles--games');
 
   const fans = [];
   for (const game of GAMES) {
@@ -64,19 +64,31 @@ export function renderMenu(app, root) {
     if (spec) fans.push({ fan, spec });
     const tile = el('button.tile.tile--game', { type: 'button', onclick: () => app.go('mode', { gameId: game.id }) },
       fan,
-      el('h2.tile__name', game.name, game.nameZh ? el('span.tile__zh', game.nameZh) : null),
-      el('p.tile__tag', `${game.tagline} · ${game.players} player${game.players > 1 ? 's' : ''}`),
-      el('p.tile__desc', game.description),
-      el('div.tile__foot',
-        game.noElo
-          ? el('span', el('b', `${stats.played}`), ' played')
-          : el('span', 'Elo ', el('b', `${stats.rating}`)),
-        game.noElo
-          ? el('span', `${stats.won} won · net ${formatChips(stats.net ?? 0)}`)
-          : el('span', `${stats.played} played`),
+      el('div.tile__body',
+        tileHead(game),
+        el('div.tile__foot',
+          el('div.tile__stats',
+            game.noElo
+              ? el('span', el('b', `${stats.played}`), ' played')
+              : el('span', 'Elo ', el('b', `${stats.rating}`)),
+            game.noElo
+              ? el('span', `${stats.won} won · net ${formatChips(stats.net ?? 0)}`)
+              : el('span', `${stats.played} played`),
+          ),
+          el('span.tile__cta', 'Play'),
+        ),
       ),
     );
     tiles.append(tile);
+  }
+
+  // A div, not a button: nothing to press yet, and it stays out of the tab order.
+  for (const game of GAMES) {
+    if (game.status !== 'planned') continue;
+    tiles.append(el('div.tile.tile--game.tile--soon',
+      el('span.tile__fan', el('span.tile__soon', 'Coming soon')),
+      el('div.tile__body', tileHead(game)),
+    ));
   }
 
   // The card art is ~25 KB and only decoration, so it loads after the menu is up.
@@ -93,7 +105,7 @@ export function renderMenu(app, root) {
     })
     .catch((error) => console.warn('Menu card art did not load', error));
 
-  const planned = GAMES.filter((game) => game.status === 'planned').map((game) => game.name);
+  const readyCount = READY_GAMES.length;
 
   const doudizhu = gameStats(profile, 'doudizhu');
   const record = el('section.record',
@@ -112,7 +124,10 @@ export function renderMenu(app, root) {
     topbar(app),
     el('main.page',
       el('div.page__head',
-        el('h1.page__title', 'Pick a game'),
+        el('span.eyebrow', 'Card room'),
+        el('h1.page__title.page__title--display', 'Pick a game'),
+        el('p.page__sub',
+          `${NUMBER_WORDS[readyCount] ?? readyCount} game${readyCount === 1 ? '' : 's'} ready to deal, against the house bots or with friends online. No account, and it keeps working offline once installed.`),
       ),
       profile.rescueMode
         ? el('div.notice.notice--warn',
@@ -120,12 +135,22 @@ export function renderMenu(app, root) {
             `Only the 400 pot is open, losses cannot take you below zero, and the normal rooms unlock again at ${formatChips(RESCUE_EXIT)}.`)
         : null,
       tiles,
-      planned.length ? el('p.menu__later', `Coming later: ${planned.join(', ')}.`) : null,
       record,
       el('p.footnote',
         'Chips are local to this device. Add the page to your home screen to play offline.'),
     ),
   );
+}
+
+const NUMBER_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'];
+
+// Name, tagline and blurb are the same on a playable tile and a coming-soon one.
+function tileHead(game) {
+  return [
+    el('h2.tile__name', game.name, game.nameZh ? el('span.tile__zh', game.nameZh) : null),
+    el('p.tile__tag', `${game.tagline} · ${game.players} player${game.players > 1 ? 's' : ''}`),
+    el('p.tile__desc', game.description),
+  ];
 }
 
 function stat(k, v) {

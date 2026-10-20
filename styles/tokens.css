@@ -78,6 +78,10 @@
     var(--felt-table);
   --panel: rgba(0, 0, 0, 0.2);
   --panel-solid: #0a241c;
+  /* Raised menu cards: opaque so the lamp does not show through, and a shade
+     lighter on hover so the pressed target is obvious. */
+  --card-ui-bg: var(--panel-solid);
+  --card-ui-bg-hover: #0d2e24;
   --row-hover: rgba(205, 174, 108, 0.06);
   --selection: rgba(205, 174, 108, 0.35);
   --hud-bg: rgba(0, 0, 0, 0.3);
@@ -120,6 +124,10 @@
   --r-md: 6px;
   --r-lg: 8px;
   --r-pill: 999px;
+  /* Menus and pickers are raised cards, so they take rounder corners than the
+     card stock above; --r-btn is for buttons and pill buttons inside them. */
+  --r-ui: 14px;
+  --r-btn: 12px;
 
   /* ----- Spacing (4px rhythm) ----- */
   --s-2: 2px;
@@ -147,6 +155,7 @@
   --shadow-1: 0 4px 7px rgba(0, 0, 0, 0.42);
   --shadow-3: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
   --shadow-8: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --shadow-btn: 0 6px 16px -8px rgba(0, 0, 0, 0.55);
 
   /* ----- Z-index (semantic; keep ordered) ----- */
   --z-hud: 20;
