@@ -16,10 +16,24 @@ import { GAMES, gameById } from '../games/registry.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
 import { clear, el } from './dom.js';
 
+// Static literal, no user data, so innerHTML is safe; el() only builds HTML-namespace nodes.
+const MARK_SVG = '<svg viewBox="96 118 320 276" width="18" height="16">'
+  + '<rect class="mark-bar" x="106" y="128" width="182.35" height="64" rx="32"/>'
+  + '<rect class="mark-bar mark-bar-lead" x="106" y="224" width="300" height="64" rx="32"/>'
+  + '<rect class="mark-bar" x="106" y="320" width="135.29" height="64" rx="32"/>'
+  + '</svg>';
+
+export function wordmark() {
+  return el('a.wordmark', { href: 'https://entropicsoftwarelabs.com/' },
+    el('span.mark', { 'aria-hidden': 'true', html: MARK_SVG }),
+    el('span.wordmark-text', 'Entropic Software Labs'),
+  );
+}
+
 export function topbar(app) {
   const profile = app.profile;
   return el('header.topbar',
-    el('div.topbar__brand', el('b', 'Card Games')),
+    wordmark(),
     el('div.topbar__spacer'),
     el('div', { class: `chip-purse${profile.rescueMode ? ' is-rescue' : ''}` },
       el('span', formatChips(profile.bankroll)),
