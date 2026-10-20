@@ -20,6 +20,7 @@ import { SETTING_LIMITS, SEATS_BY_GAME, S2C, defaultSettings } from '../net/prot
 import { formatCode, normaliseCode, parseCode, socketUrlFor } from '../net/roomcode.js';
 import { Big2View } from './big2.js';
 import { TableView } from './tableview.js';
+import { wordmark } from './screens.js';
 import { announce, button, clear, el, field, numberInput, select, wait } from './dom.js';
 
 const NAME_KEY = 'card-games.lan-name';
@@ -201,7 +202,7 @@ class LanScreens {
     clear(this.root);
     this.root.append(
       el('header.topbar',
-        el('div.topbar__brand', el('b', this.online ? 'Play online' : 'Local multiplayer')),
+        wordmark(),
       ),
       el('main.page', ...children),
     );
