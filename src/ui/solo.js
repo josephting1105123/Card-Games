@@ -41,6 +41,8 @@ export class SoloGame {
         potLabel: formatChips(this.lobby.pot, true),
         bankroll: this.app.profile.bankroll,
         baseMultiplier: this.lobby.baseMultiplier,
+        pot: this.lobby.pot,
+        capFactor: this.lobby.capFactor,
         currency: SOLO_CURRENCY,
         animations: this.app.profile.settings?.animations !== false,
       },

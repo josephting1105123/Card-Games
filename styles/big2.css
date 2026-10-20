@@ -37,6 +37,8 @@
 .b2-hud__pill--table b { color: var(--text); font-weight: 400; }
 .b2-hud__pill--table small { margin-left: 4px; }
 .b2-hud__pill small { font-size: 0.9em; font-style: italic; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); }
+.b2-hud__pill[hidden] { display: none; }
+@media (max-width: 700px) { .b2-hud__pill--pot small { display: none; } }
 .b2-hud .back-link { font-size: 1.25em; padding: 2px 8px; line-height: 1; }
 
 /* --- felt -------------------------------------------------------------------

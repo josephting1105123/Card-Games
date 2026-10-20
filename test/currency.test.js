@@ -5,6 +5,7 @@ import {
   currencyByCode, currencyLabel, formatAmount, formatMoney, isCurrency, isRoomCurrency,
 } from '../src/core/currency.js';
 import { HAND_CAP_FACTOR, STARTING_STACK_MULTIPLE, formatChips, suggestedStakes } from '../src/core/economy.js';
+import { livePotBig2, livePotDdz } from '../src/core/livepot.js';
 import { DEFAULT_SETTINGS, SETTING_LIMITS, sanitiseSettings } from '../src/net/protocol.js';
 
 test('rooms keep score in coins, not in the single-player purse', () => {
@@ -62,8 +63,49 @@ test('the solo purse cannot be selected as a room currency', () => {
   assert.equal(isRoomCurrency('chips'), false);
   assert.equal(isRoomCurrency('gold'), true);
   assert.equal(sanitiseSettings({ currency: 'chips' }).currency, DEFAULT_ROOM_CURRENCY);
-  assert.equal(sanitiseSettings({ currency: 'GOLD' }).currency, 'gold', 'case is forgiven');
   assert.equal(sanitiseSettings({ currency: 'bananas' }).currency, DEFAULT_ROOM_CURRENCY);
+});
+
+test('a room is always silver, and a Dou Di Zhu room always has the default multiplier and ceiling', () => {
+  for (const currency of ['gold', 'GOLD', 'silver', 'chips', undefined]) {
+    assert.equal(sanitiseSettings({ currency }).currency, DEFAULT_ROOM_CURRENCY);
+  }
+  const forced = sanitiseSettings({ game: 'doudizhu', currency: 'gold', baseMultiplier: 5, capFactor: 7, pot: 20, startingChips: 500 });
+  assert.equal(forced.currency, 'silver');
+  assert.equal(forced.baseMultiplier, 2);
+  assert.equal(forced.capFactor, HAND_CAP_FACTOR);
+  assert.equal(forced.pot, 20, 'the host still sets the pot');
+  assert.equal(forced.startingChips, 500, 'and the starting coins');
+  const big2 = sanitiseSettings({ game: 'big2', currency: 'gold', baseMultiplier: 5, capFactor: 7 });
+  assert.equal('baseMultiplier' in big2, false);
+  assert.equal('capFactor' in big2, false);
+});
+
+test('the live pot is two shares at the current multiplier, held to the per-hand ceiling', () => {
+  assert.equal(livePotDdz(10, 2, 100), 40);
+  assert.equal(livePotDdz(10, 8, 100), 160);
+  assert.equal(livePotDdz(10, 300, 100), 1_000, 'the hand ceiling wins past it, and is not doubled');
+  assert.equal(livePotDdz(10, 2), 40, 'the default ceiling applies when none is given');
+});
+
+test('with the stacks known, the live pot respects what each loser can actually pay', () => {
+  const rich = { landlord: 1_000, farmers: [1_000, 1_000] };
+  // Landlord win: both farmers pay 480 = 960. Farmers win: the landlord is held to 750.
+  assert.equal(livePotDdz(40, 12, 100, rich), 960);
+  const poor = { landlord: 300, farmers: [300, 300] };
+  assert.equal(livePotDdz(40, 12, 100, poor), 450, 'both outcomes are held below the uncapped 960');
+  const poorLandlord = { landlord: 100, farmers: [1_000, 1_000] };
+  assert.equal(livePotDdz(40, 12, 100, poorLandlord), 960, 'the bigger outcome is the one shown');
+  assert.equal(livePotDdz(10, 300, 100, rich), 1_000, 'the hand ceiling still bounds it');
+  assert.equal(livePotDdz(10, 300, 100, { landlord: 400, farmers: [400, 400] }), 600,
+    'small stacks hold it under the ceiling');
+});
+
+test('the Big Two live pot is every card the winner does not hold', () => {
+  assert.equal(livePotBig2(1, [13, 13, 13, 13]), 39);
+  assert.equal(livePotBig2(2, [1, 5, 7, 0]), 26, 'a hand that has gone out collects from the rest');
+  assert.equal(livePotBig2(1, [4, 4]), 4);
+  assert.equal(livePotBig2(1, []), 0);
 });
 
 test('single player still reads as plain chips', () => {

@@ -95,7 +95,20 @@ const doudizhu = {
 
     const pot = losers.reduce((sum, row) => sum + Math.abs(row.delta), 0);
     const totalClaimed = winners.reduce((sum, row) => sum + row.delta, 0);
-    if (totalClaimed > 0) {
+    if (pot > totalClaimed) {
+      // The losers owe more than the winners may claim (the hand ceiling holds
+      // the winning side down): the winners keep their claims and the losers
+      // pay only that, shared out in proportion to what each owed.
+      let taken = 0;
+      losers.forEach((row, index) => {
+        const share = index === losers.length - 1
+          ? totalClaimed - taken
+          : Math.floor((totalClaimed * Math.abs(row.delta)) / pot);
+        taken += share;
+        row.capped = true;
+        row.delta = -share;
+      });
+    } else if (totalClaimed > 0) {
       let handedOut = 0;
       winners.forEach((row, index) => {
         const share = index === winners.length - 1

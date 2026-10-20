@@ -13,7 +13,7 @@
  * stamp by hand.
  */
 
-const CACHE = 'card-games-81532cd9af2d';
+const CACHE = 'card-games-b326a3f120fa';
 
 const PRECACHE = [
   './',
@@ -28,6 +28,7 @@ const PRECACHE = [
   './src/core/cards.js',
   './src/core/currency.js',
   './src/core/economy.js',
+  './src/core/livepot.js',
   './src/core/elo.js',
   './src/core/profile.js',
   './src/core/rng.js',

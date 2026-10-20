@@ -14,6 +14,7 @@
 import { currencyLabel, formatMoney } from '../core/currency.js';
 import { RESCUE_EXIT, formatChips, lobbyAccess, settleBigTwo } from '../core/economy.js';
 import { ratingTitle } from '../core/elo.js';
+import { livePotBig2 } from '../core/livepot.js';
 import { gameStats, recordResult } from '../core/profile.js';
 import { makeRng, randomSeed } from '../core/rng.js';
 import { SEATS, HAND_SIZE, Phase, canPass, createGame, pass, play, seatView, settle } from '../games/big2/engine.js';
@@ -60,6 +61,7 @@ export class BigTwoGame {
       meta: {
         lobbyName: this.lobby.name,
         rateLabel: `Per card ${formatChips(this.rate, true)}`,
+        rate: this.rate,
         bankroll: this.app.profile.bankroll,
         animations: this.app.profile.settings?.animations !== false,
       },
@@ -263,10 +265,14 @@ export class Big2View {
     n.bankPill = el('span.b2-hud__pill',
       el('small', this.meta.currency ? currencyLabel(this.meta.currency) : 'Chips'),
       el('b', this.money(this.meta.bankroll ?? 0)));
+    n.potPill = el('span.b2-hud__pill.b2-hud__pill--pot', { title: 'What the winner collects if the hand ended now', hidden: typeof this.meta.rate !== 'number' },
+      el('small', 'Pot'),
+      el('b', this.money(0, true)));
     const hud = el('div.b2-hud',
       el('button.back-link', { type: 'button', 'aria-label': 'Leave table', title: 'Leave table', onclick: () => this.handlers.onLeave?.() }, '←'),
       el('span.b2-hud__pill.b2-hud__pill--table', el('b', this.meta.lobbyName), el('small', this.meta.rateLabel)),
       el('div.b2-hud__spacer'),
+      n.potPill,
       n.bankPill,
     );
 
@@ -354,9 +360,9 @@ export class Big2View {
   }
 
   renderHud() {
-    // Nothing dynamic beyond the purse today, but kept as its own pass (like
-    // tableview.js's renderHud) so a future addition has somewhere to live
-    // without reshuffling update()'s call order.
+    if (typeof this.meta.rate !== 'number') return;
+    const live = livePotBig2(this.meta.rate, this.view.players.map((p) => p.cards));
+    this.nodes.potPill.querySelector('b').textContent = this.money(live, true);
   }
 
   /** Which seat sits in each of the three opponent slots, from here. */
