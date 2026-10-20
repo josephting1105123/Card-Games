@@ -7,7 +7,7 @@
  * seat only its own hand.
  */
 
-import { DEFAULT_ROOM_CURRENCY, isRoomCurrency } from '../core/currency.js';
+import { DEFAULT_ROOM_CURRENCY } from '../core/currency.js';
 import { stackForPot, suggestedStakes } from '../core/economy.js';
 
 export const C2S = {
@@ -47,7 +47,7 @@ export function defaultSettings(game = 'doudizhu') {
   const base = {
     game: id,
     // A room deals out its own temporary coins rather than touching anybody's
-    // single-player purse. The host picks silver or gold; see core/currency.js.
+    // single-player purse. Always silver; see core/currency.js.
     currency: DEFAULT_ROOM_CURRENCY,
     ...suggestedStakes(DEFAULT_ROOM_CURRENCY),
   };
@@ -70,20 +70,16 @@ export const SETTING_LIMITS = {
   // not 5,000. Amounts are whole units in every currency.
   pot: { min: 1, max: 10_000_000, step: 1 },
   startingChips: { min: 1, max: 1_000_000_000, step: 10 },
-  baseMultiplier: { min: 1, max: 8, step: 1 },
-  // A loss cap high enough to be a backstop rather than a routine clamp: see
-  // the note on caps in core/economy.js.
-  capFactor: { min: 1, max: 200, step: 1 },
 };
 
 /** Clamp whatever a host typed into something the table can actually run. */
 export function sanitiseSettings(input = {}) {
   const game = knownGame(input.game);
   const out = defaultSettings(game);
-  if (isRoomCurrency(input.currency)) out.currency = String(input.currency).toLowerCase();
-  else if (input.currency === undefined && input.pot === undefined) {
-    Object.assign(out, suggestedStakes(out.currency));
-  }
+  // The host no longer picks a coin or tunes the multiplier: the create form
+  // doesn't offer them, and an older client that still sends them is ignored
+  // here so every room plays the same way.
+  out.currency = DEFAULT_ROOM_CURRENCY;
   const clamp = (key, value) => {
     const limit = SETTING_LIMITS[key];
     return Math.min(limit.max, Math.max(limit.min, value));
@@ -94,11 +90,8 @@ export function sanitiseSettings(input = {}) {
   out.pot = Number.isFinite(pot) ? clamp('pot', pot) : suggestedStakes(out.currency).pot;
   const stack = Number(input.startingChips);
   out.startingChips = clamp('startingChips', Number.isFinite(stack) ? stack : stackForPot(out.pot));
-  // Big Two settles by cards left, so it has no multiplier or loss cap to carry.
-  for (const key of game === 'doudizhu' ? ['baseMultiplier', 'capFactor'] : []) {
-    const value = Number(input[key]);
-    if (Number.isFinite(value)) out[key] = clamp(key, value);
-  }
+  // baseMultiplier and capFactor stay at the defaults set above; Big Two
+  // settles by cards left and has neither.
   if (typeof input.botSkill === 'string') out.botSkill = input.botSkill;
   const humans = Number(input.humanSeats);
   if (Number.isFinite(humans)) out.humanSeats = Math.min(SEATS_BY_GAME[game], Math.max(1, Math.round(humans)));

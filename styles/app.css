@@ -223,6 +223,7 @@ button.tile:hover { background: var(--row-hover); }
 
 .form-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 15px; }
+.field[hidden] { display: none; }
 .field__label { font-style: italic; color: var(--text-tertiary); letter-spacing: 0; }
 .field__hint { font-size: var(--t-caption); color: var(--text-faint); }
 .field__hint--block { margin: 14px 0 0; }

@@ -7,16 +7,17 @@
  * A local network room is a different thing entirely. Its money is temporary
  * and belongs to the room — dealt out by the host when the room opens, gone when
  * the room closes, never touching anybody's purse. So a room keeps score in
- * coins, and the host picks which: silver for a quick game, gold for a heavy
- * one. There is deliberately no real currency here and no exchange rate
- * anywhere: nothing in this app represents money, and nothing can be moved off
- * the device.
+ * coins, and since rooms were simplified that is always silver (the host only
+ * says how many each player starts with). There is deliberately no real
+ * currency here and no exchange rate anywhere: nothing in this app represents
+ * money, and nothing can be moved off the device.
  *
- * Gold and silver are the same arithmetic. What differs is the scale a table
- * opens at: silver a pot of 10, gold a pot of 1,000. The stack that goes with
- * either is not stored here — economy.js derives it from the pot, so every
- * table in the app opens at the same number of pots and the game plays
- * identically whichever coin is on the felt. The host can override both.
+ * Gold stays in the table below because the formatting helpers and older
+ * saved data still know it, but no room is created in it. Gold and silver are
+ * the same arithmetic; what differed was the scale a table opened at: silver a
+ * pot of 10, gold a pot of 1,000. The stack that goes with either is not stored
+ * here — economy.js derives it from the pot, so every table in the app opens
+ * at the same number of pots.
  *
  * Amounts are whole units. Card-game stakes are counted, not measured, and
  * integer arithmetic keeps settlement exact — no rounding drift between seats.

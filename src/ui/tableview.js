@@ -10,6 +10,8 @@
 
 import { cardsToString, sortCards } from '../core/cards.js';
 import { SOLO_CURRENCY, currencyLabel, currencyTint, formatAmount, formatMoney } from '../core/currency.js';
+import { HAND_CAP_FACTOR } from '../core/economy.js';
+import { livePotDdz } from '../core/livepot.js';
 import { Phase } from '../games/doudizhu/engine.js';
 import { beats, classify, comboName, describeCombo } from '../games/doudizhu/rules.js';
 import { findHint, legalPlays } from '../games/doudizhu/moves.js';
@@ -74,6 +76,9 @@ export class TableView {
     // and the controls enable, which says it without spending a word. The pot
     // rides along with the table's name instead of taking a pill.
     n.hudMult = el('span.hud__pill.hud__pill--mult', { title: 'Stake multiplier' }, el('b', '×2'));
+    n.hudPot = el('span.hud__pill.hud__pill--pot', { title: 'The most this hand can move at the current multiplier', hidden: typeof this.meta.pot !== 'number' },
+      el('small', 'Pot'),
+      el('b', '0'));
     n.hudPurse = el('span.hud__pill', { style: `--pill-tint:${currencyTint(this.currency)}`, title: currencyLabel(this.currency) },
       el('small', currencyLabel(this.currency)),
       el('b', formatAmount(this.meta.bankroll ?? 0)));
@@ -82,7 +87,7 @@ export class TableView {
       el('button.back-link', { type: 'button', 'aria-label': 'Leave table', title: 'Leave table', onclick: () => this.handlers.onLeave?.() }, '←'),
       el('span.hud__pill.hud__pill--table', el('b', `${this.meta.lobbyName} · ${this.meta.potLabel}`)),
       el('div.hud__spacer'),
-      n.hudMult, n.hudPurse,
+      n.hudMult, n.hudPot, n.hudPurse,
     );
 
     n.leftSeat = this.buildSeat('left');
@@ -451,6 +456,22 @@ export class TableView {
     const shown = Math.max(this.view.multiplier, base);
     this.nodes.hudMult.querySelector('b').textContent = `×${shown}`;
     this.nodes.hudMult.classList.toggle('is-hot', shown > base);
+
+    if (typeof this.meta.pot !== 'number') return;
+    // A room knows its stacks once there is a landlord; solo tables and the
+    // bidding phase just get the uncapped figure.
+    const stacks = this.meta.stacksFor?.(this.view) ?? null;
+    const live = livePotDdz(this.meta.pot, shown, this.meta.capFactor ?? HAND_CAP_FACTOR, stacks);
+    const bold = this.nodes.hudPot.querySelector('b');
+    const grew = this.livePot !== undefined && live > this.livePot;
+    this.livePot = live;
+    bold.textContent = formatAmount(live, true);
+    if (grew && this.animationsOn()) {
+      // Restart the pulse even if the last one is still running.
+      this.nodes.hudPot.classList.remove('is-pulse');
+      void this.nodes.hudPot.offsetWidth;
+      this.nodes.hudPot.classList.add('is-pulse');
+    }
   }
 
   renderSeats() {

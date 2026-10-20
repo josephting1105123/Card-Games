@@ -265,7 +265,35 @@ test('a capped hand still conserves chips in a room', async (t) => {
     'the chips in the room are the same before and after');
 });
 
-test('a room carries the host\'s chosen currency to everyone in it', async (t) => {
+/** A finished Dou Di Zhu room hand, settled straight through the adapter. */
+function settleRoomHand({ pot, multiplier, landlordWon, stacks }) {
+  const players = ['a', 'b', 'c'].map((id) => ({ id, name: id.toUpperCase(), isBot: false }));
+  const room = {
+    settings: { pot, startingChips: 250, baseMultiplier: 2, capFactor: 100 },
+    chips: new Map(players.map((p, i) => [p.id, stacks[i]])),
+    state: { players, result: { landlordWon, landlordSeat: 0, multiplier } },
+  };
+  const { frame } = gameAdapter('doudizhu').settle(room);
+  return frame.rows.map((row) => row.delta);
+}
+
+test('a room settles zero-sum when the hand ceiling holds the winner down', () => {
+  // pot 10 at x64: the landlord may claim 1,000 (the ceiling), the farmers owe 640 each.
+  const landlordWins = settleRoomHand({ pot: 10, multiplier: 64, landlordWon: true, stacks: [5_000, 5_000, 5_000] });
+  assert.deepEqual(landlordWins, [1_000, -500, -500]);
+
+  // A landlord with a small stack can only pay what the loss cap allows (75 of 100).
+  const farmersWin = settleRoomHand({ pot: 10, multiplier: 8, landlordWon: false, stacks: [100, 1_000, 1_000] });
+  assert.equal(farmersWin[0], -75);
+  assert.equal(farmersWin.reduce((sum, d) => sum + d, 0), 0, 'what the landlord pays is what the farmers split');
+
+  // Odd totals still come out exact.
+  const odd = settleRoomHand({ pot: 7, multiplier: 64, landlordWon: true, stacks: [5_000, 5_000, 5_000] });
+  assert.equal(odd.reduce((sum, d) => sum + d, 0), 0);
+  assert.equal(odd[0], 700);
+});
+
+test('a room always counts in silver, whatever the host asks for', async (t) => {
   const host = await startHost();
   t.after(() => host.stop());
 
@@ -274,7 +302,7 @@ test('a room carries the host\'s chosen currency to everyone in it', async (t) =
   await alice.next(S2C.WELCOME);
   alice.send({ t: 'create', name: 'Alice', settings: { currency: 'gold', pot: 5, startingChips: 100, humanSeats: 2 } });
   const created = await alice.next(S2C.ROOM);
-  assert.equal(created.room.settings.currency, 'gold');
+  assert.equal(created.room.settings.currency, 'silver', 'an old client asking for gold still gets silver');
   assert.equal(created.room.settings.pot, 5, 'a host may price a room small');
   assert.notEqual(created.room.settings.currency, SOLO_CURRENCY);
 
@@ -283,12 +311,14 @@ test('a room carries the host\'s chosen currency to everyone in it', async (t) =
   await bob.next(S2C.WELCOME);
   bob.send({ t: 'join', code: created.room.code, name: 'Bob' });
   const joined = await bob.next(S2C.ROOM);
-  assert.equal(joined.room.settings.currency, 'gold', 'a joiner is told which coins the room counts in');
+  assert.equal(joined.room.settings.currency, 'silver', 'a joiner is told which coins the room counts in');
 
   bob.drain(S2C.ROOM);
-  alice.send({ t: 'settings', settings: { currency: 'silver' } });
+  alice.send({ t: 'settings', settings: { currency: 'gold', baseMultiplier: 5, capFactor: 7 } });
   const changed = await bob.next(S2C.ROOM);
-  assert.equal(changed.room.settings.currency, 'silver', 'the host can change it and everyone sees it');
+  assert.equal(changed.room.settings.currency, 'silver', 'a settings update cannot switch the coin');
+  assert.equal(changed.room.settings.baseMultiplier, 2, 'or the multiplier');
+  assert.equal(changed.room.settings.capFactor, 100, 'or the hand ceiling');
 
   bob.drain(S2C.ROOM);
   alice.send({ t: 'settings', settings: { currency: 'chips' } });

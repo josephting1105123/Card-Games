@@ -9,8 +9,8 @@
  * The lan screens say so rather than failing mysteriously.
  */
 
-import { DEFAULT_ROOM_CURRENCY, ROOM_CURRENCIES, currencyLabel, formatMoney } from '../core/currency.js';
-import { STARTING_STACK_MULTIPLE, stackForPot, suggestedStakes } from '../core/economy.js';
+import { DEFAULT_ROOM_CURRENCY, formatMoney } from '../core/currency.js';
+import { STARTING_STACK_MULTIPLE } from '../core/economy.js';
 import { SKILLS as BIG2_SKILLS } from '../games/big2/ai.js';
 import { classify } from '../games/big2/rules.js';
 import { SKILLS as DDZ_SKILLS } from '../games/doudizhu/ai.js';
@@ -242,8 +242,8 @@ class LanScreens {
           el('h2.tile__name', 'Create a room'),
           el('p.tile__tag', 'You are the host'),
           el('p.tile__desc', this.online
-            ? 'Choose the coins, the pot, the starting stack and how many seats the bots fill, then share the invite link.'
-            : 'Choose the coins, the pot, the starting stack, the multiplier and how many seats the bots fill, then hand out the code.'),
+            ? 'Pick the seats and the starting coins, then share the invite link.'
+            : 'Pick the seats and the starting coins, then read out the code.'),
         ),
         el('button.tile', { type: 'button', onclick: () => this.renderJoin() },
           el('h2.tile__name', 'Join a room'),
@@ -338,42 +338,27 @@ class LanScreens {
     const seatCount = SEATS_BY_GAME[game];
     const s = { ...defaultSettings(game) };
     const nameInput = el('input.input', { value: this.name, maxlength: 18, placeholder: 'Your name' });
-    const currency = select('set-currency',
-      ROOM_CURRENCIES.map((c) => ({ value: c.code, label: c.name })), s.currency);
-    const pot = numberInput('set-pot', s.pot, SETTING_LIMITS.pot);
-    const chips = numberInput('set-chips', s.startingChips, SETTING_LIMITS.startingChips);
+    // Big Two pays a tenth of the pot per card, so a smaller stack would round
+    // the rate down to nothing.
+    const limits = { ...SETTING_LIMITS.startingChips, min: isBig2 ? 100 : SETTING_LIMITS.startingChips.min };
+    const chips = numberInput('set-chips', s.startingChips, limits);
     const preview = el('span.field__hint', '');
-    // The stack follows the pot at the house multiple until the host types a
-    // stack of their own; after that it is theirs and nothing overwrites it.
-    let potEdited = false;
-    let stackEdited = false;
-    const syncStack = () => {
-      if (!stackEdited) chips.value = String(stackForPot(Number(pot.value) || 0));
-    };
+    // The pot is not a second thing to get wrong: it is the stack divided by the
+    // house multiple, so typing one number sets both.
+    const startingChips = () => Math.min(limits.max, Math.max(limits.min, Math.round(Number(chips.value) || 0)));
+    // Big Two's rate is the pot over ten and must stay a whole number of coins.
+    const potFor = (stack) => (isBig2
+      ? Math.max(10, Math.round(stack / (STARTING_STACK_MULTIPLE * 10)) * 10)
+      : Math.max(1, Math.round(stack / STARTING_STACK_MULTIPLE)));
     const refreshPreview = () => {
-      const code = currency.value;
-      const potValue = Number(pot.value) || 0;
-      const head = `Pot ${formatMoney(potValue, code)} · stack ${formatMoney(Number(chips.value) || 0, code)}`;
+      const stack = startingChips();
+      const pot = potFor(stack);
+      const head = `Everyone starts with ${formatMoney(stack, DEFAULT_ROOM_CURRENCY)}`;
       preview.textContent = isBig2
-        ? `${head} · a loser left with 13 cards pays ${formatMoney((potValue / 10) * 13, code)}`
-        : `${head} · a landlord win at ×2 settles ${formatMoney(potValue * 2 * 2, code)}`;
+        ? `${head} · each card left in a loser's hand pays ${formatMoney(pot / 10, DEFAULT_ROOM_CURRENCY)}`
+        : `${head} · a landlord win at ×2 moves ${formatMoney(pot * 4, DEFAULT_ROOM_CURRENCY)}`;
     };
-    currency.addEventListener('change', () => {
-      if (!potEdited) pot.value = String(suggestedStakes(currency.value).pot);
-      syncStack();
-      refreshPreview();
-    });
-    pot.addEventListener('input', () => {
-      potEdited = true;
-      syncStack();
-      refreshPreview();
-    });
-    chips.addEventListener('input', () => {
-      stackEdited = true;
-      refreshPreview();
-    });
-    const mult = isBig2 ? null : numberInput('set-mult', s.baseMultiplier, SETTING_LIMITS.baseMultiplier);
-    const cap = isBig2 ? null : numberInput('set-cap', s.capFactor, SETTING_LIMITS.capFactor);
+    chips.addEventListener('input', refreshPreview);
     const seatOptions = [];
     for (let humans = 1; humans <= seatCount; humans += 1) {
       const bots = seatCount - humans;
@@ -384,6 +369,12 @@ class LanScreens {
     }
     const seats = select('set-seats', seatOptions, String(Math.min(s.humanSeats, seatCount)));
     const skill = select('set-skill', Object.entries(skillsFor(game)).map(([id, def]) => ({ value: id, label: def.name })), s.botSkill);
+    const skillField = field('Bot strength', skill, 'For any seat a person does not take');
+    // Only worth asking while a bot will actually sit down.
+    const needsBots = () => Number(seats.value) < seatCount;
+    const syncSkill = () => { skillField.hidden = !needsBots(); };
+    seats.addEventListener('change', syncSkill);
+    syncSkill();
     const status = el('p.footnote', '');
     refreshPreview();
 
@@ -406,19 +397,16 @@ class LanScreens {
           return;
         }
         status.textContent = 'Opening the room…';
-        const settings = {
+        const stack = startingChips();
+        client.createRoom(this.name, {
           game,
-          currency: currency.value,
-          pot: Number(pot.value),
-          startingChips: Number(chips.value),
+          currency: DEFAULT_ROOM_CURRENCY,
+          pot: potFor(stack),
+          startingChips: stack,
           humanSeats: Number(seats.value),
-          botSkill: skill.value,
-        };
-        if (!isBig2) {
-          settings.baseMultiplier = Number(mult.value);
-          settings.capFactor = Number(cap.value);
-        }
-        client.createRoom(this.name, settings);
+          // A hidden select still holds a value; don't send a choice nobody saw.
+          botSkill: needsBots() ? skill.value : defaultSettings(game).botSkill,
+        });
       } catch (error) {
         if (attempt !== this.formRun) return;
         status.textContent = String(error?.message ?? error);
@@ -430,19 +418,15 @@ class LanScreens {
       this.backLink(this.modeName, () => this.renderChoice()),
       el('div.page__head',
         el('h1.page__title', 'Create a room'),
-        el('p.page__sub', 'Your settings apply to everyone at the table. The coins are dealt out when the room opens and are gone when it closes — they are not money, and they never touch your single-player purse.'),
+        el('p.page__sub', 'Set the seats and how many coins everyone starts with, then send the invite link.'),
       ),
       this.reachable() ? null : this.notReachable(),
       el('div.card-panel',
         el('div.form-grid',
           field('Your name', nameInput),
           field('Seats', seats, `Bots fill whatever is left of the ${seatCount === 3 ? 'three' : 'four'}`),
-          field('Coins', currency, 'Silver for a quick game, gold for a heavy one'),
-          field('Pot per person', pot, isBig2 ? 'Each card left in a loser\'s hand pays a tenth of this' : 'What each seat puts up'),
-          field('Starting stack', chips, `Everyone begins with this — ${STARTING_STACK_MULTIPLE} pots unless you say otherwise`),
-          isBig2 ? null : field('Base multiplier', mult, 'The starting factor; the points called, then each bomb, rocket and spring, multiply it further'),
-          isBig2 ? null : field('Hand ceiling (× pot)', cap, 'The most one hand can move, won or lost'),
-          field('Bot strength', skill, 'For any seat a person does not take'),
+          field('Starting coins', chips, 'Room coins only — they never touch your single-player purse'),
+          skillField,
         ),
         el('p.field__hint.field__hint--block', preview),
         el('div.btn-row.btn-row--spaced',
@@ -1062,18 +1046,9 @@ class LanScreens {
       ];
     }
 
-    const tiles = [
-      statTile('Pot per person', this.money(room.settings.pot)),
-      statTile('Starting stack', this.money(room.settings.startingChips)),
-      statTile('Coins', currencyLabel(room.settings.currency)),
-    ];
+    const tiles = [statTile('Starting stack', this.money(room.settings.startingChips))];
     if (game === 'big2') tiles.push(statTile('Per card left', this.money(room.settings.pot / 10)));
-    else {
-      tiles.push(
-        statTile('Base multiplier', `×${room.settings.baseMultiplier}`),
-        statTile('Hand ceiling', `${room.settings.capFactor}× pot`),
-      );
-    }
+    else tiles.push(statTile('Base stake', this.money(room.settings.pot), 'Per seat, before the multiplier'));
 
     this.shell(
       this.backLink('Leave room', () => this.leave()),
@@ -1117,6 +1092,7 @@ class LanScreens {
         meta: {
           lobbyName: `Room ${this.room?.code ?? ''}`,
           rateLabel: `Per card ${formatMoney(settings.pot / 10, settings.currency, true)}`,
+          rate: settings.pot / 10,
           bankroll: mine?.chips ?? settings.startingChips,
           currency: settings.currency,
           animations: true,
@@ -1136,6 +1112,15 @@ class LanScreens {
           potLabel: formatMoney(settings.pot, settings.currency, true),
           bankroll: mine?.chips ?? settings.startingChips,
           baseMultiplier: settings.baseMultiplier,
+          pot: settings.pot,
+          capFactor: settings.capFactor,
+          // The chips change between hands, so the table asks when it draws.
+          stacksFor: (view) => {
+            if (view.landlord < 0) return null;
+            const stackOf = (seat) => this.room?.seats.find((s) => s.seat === seat)?.chips ?? settings.startingChips;
+            const others = [0, 1, 2].filter((seat) => seat !== view.landlord);
+            return { landlord: stackOf(view.landlord), farmers: others.map(stackOf) };
+          },
           currency: settings.currency,
         },
         handlers: {
@@ -1165,8 +1150,8 @@ class LanScreens {
   }
 }
 
-function statTile(k, v) {
-  return el('div.stat', el('div.stat__k', k), el('div.stat__v', v));
+function statTile(k, v, hint) {
+  return el('div.stat', { title: hint }, el('div.stat__k', k), el('div.stat__v', v));
 }
 
 export { wait };
