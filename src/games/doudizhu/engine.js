@@ -321,6 +321,9 @@ export function seatView(state, seat) {
     turn: state.turn,
     trick: state.trick ? { leader: state.trick.leader, combo: summarise(state.trick.combo), cards: state.trick.combo.cards } : null,
     lastPlays: state.plays.slice(-6),
+    // Every play and pass of the deal in order, not just the tail. Public at the
+    // table too; bots read the passes to work out what a seat cannot be holding.
+    history: state.plays.slice(),
     trickPlays: state.trickPlays,
     // Every card anyone has played. Public information at the table, so passing
     // it to a bot is card counting, not cheating.

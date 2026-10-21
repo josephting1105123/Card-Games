@@ -9,7 +9,9 @@ import { findHints, legalPlays, verifyMove } from '../src/games/big2/moves.js';
 import {
   HAND_SIZE, Phase, SEATS, cardsInPlay, canPass, createGame, pass, play, seatView, settle,
 } from '../src/games/big2/engine.js';
-import { SKILLS, bestMove, chooseMove, skillByName } from '../src/games/big2/ai.js';
+import {
+  SKILLS, bestMove, chooseMove, passEvents, sampleWorld, skillByName, unseenCards,
+} from '../src/games/big2/ai.js';
 import { botTurn, runSeries, simulateGame } from '../src/games/big2/match.js';
 
 // --- helpers ------------------------------------------------------------------
@@ -522,5 +524,122 @@ test('botTurn never has to fall back, across many seeds and skill assignments', 
       const acted = botTurn(state, rng);
       assert.notEqual(acted.kind, 'fallback', `botTurn had to fall back: ${JSON.stringify(acted)}`);
     }
+  }
+});
+
+// --- search: world sampling, determinism, legality ---------------------------------
+
+/** A mid-hand game: `steps` expert-played actions in, so history holds plays and passes. */
+function midHand(seed, steps) {
+  const state = createGame({
+    seed,
+    players: ['expert', 'expert', 'expert', 'expert'].map((n, i) => ({ name: `e${i}`, isHuman: false, skill: SKILLS[n] })),
+  });
+  const rng = makeRng(`${seed}:play`);
+  for (let i = 0; i < steps && state.phase === Phase.PLAYING; i++) botTurn(state, rng);
+  return state;
+}
+
+test('sampleWorld deals the unseen pool by the known counts, never a card we hold or that was played', () => {
+  let checked = 0;
+  let withEvents = 0;
+  for (let i = 0; i < 12; i++) {
+    const state = midHand(`world-check:${i}`, 8 + i * 3);
+    if (state.phase !== Phase.PLAYING) continue;
+    const view = seatView(state, state.turn);
+    const unseen = unseenCards(view);
+    const events = passEvents(view);
+    checked += 1;
+    if (events.length) withEvents += 1;
+    const known = new Set(view.you.hand.map((x) => x.id));
+    for (const h of view.history) if (h.action === 'play') for (const x of h.combo.cards) known.add(x.id);
+    const rng = makeRng(`world-check:${i}:rng`);
+    for (let w = 0; w < 5; w++) {
+      const { hands } = sampleWorld(view, unseen, events, rng);
+      assert.equal(hands[view.seat], null, 'our own seat is never dealt');
+      const seen = new Set();
+      for (let seat = 0; seat < SEATS; seat++) {
+        if (seat === view.seat) continue;
+        assert.equal(hands[seat].length, view.players[seat].cards, `seat ${seat} gets exactly its known card count`);
+        for (const x of hands[seat]) {
+          assert.ok(!known.has(x.id), `card ${x.id} is in our hand or already played`);
+          assert.ok(!seen.has(x.id), `card ${x.id} dealt twice`);
+          seen.add(x.id);
+        }
+      }
+      assert.equal(seen.size, unseen.length, 'the three hands use the whole unseen pool');
+    }
+  }
+  assert.ok(checked >= 8, `only ${checked} views were checked`);
+  assert.ok(withEvents > 0, 'no mid-game view had a pass event, so inference never ran');
+});
+
+test('sampleWorld leans away from deals where a passer held a beating single', () => {
+  // Seat 0 led a 7 and seat 1 passed. The history is hand-built, not played.
+  const seven = card(7, 'diamond');
+  const history = [
+    { action: 'play', seat: 0, combo: classify([seven]) },
+    { action: 'pass', seat: 1 },
+  ];
+  const mine = makeHand([[3, 'diamond'], [3, 'club']]);
+  // Seven hidden cards over seats 1..3 (2, 2, 3). The nine is the only one that beats the 7.
+  const nine = card(9, 'club');
+  const four = card(4, 'club');
+  const filler = makeHand([[5, 'heart'], [5, 'spade'], [6, 'heart'], [6, 'spade'], [3, 'heart']]);
+  const unseen = [nine, four, ...filler];
+  const view = {
+    seat: 0,
+    history,
+    you: { hand: mine },
+    players: [{ cards: 2 }, { cards: 2 }, { cards: 2 }, { cards: 3 }],
+  };
+  const events = passEvents(view);
+  assert.equal(events.length, 1, 'the pass on a single is an event');
+  assert.equal(events[0].seat, 1);
+  assert.deepEqual(events[0].later, [], 'seat 1 played nothing after passing');
+
+  const rng = makeRng('pass-lean');
+  let held = 0;
+  const N = 400;
+  for (let i = 0; i < N; i++) {
+    const { hands } = sampleWorld(view, unseen, events, rng);
+    if (hands[1].some((x) => x.id === nine.id)) held += 1;
+  }
+  // Uniformly seat 1 holds 2 of 7 unseen cards, so the nine 29% of the time.
+  assert.ok(held / N < 0.2, `the passer held the beating nine in ${held} of ${N} sampled worlds`);
+});
+
+test('grandmaster chooseMove is deterministic for a fixed rng seed', () => {
+  for (let i = 0; i < 6; i++) {
+    const state = midHand(`gm-determinism:${i}`, 6 + i * 4);
+    if (state.phase !== Phase.PLAYING) continue;
+    const view = seatView(state, state.turn);
+    const a = chooseMove(view, SKILLS.grandmaster, makeRng(`gm-determinism:${i}:rng`));
+    const b = chooseMove(view, SKILLS.grandmaster, makeRng(`gm-determinism:${i}:rng`));
+    assert.deepEqual(a, b);
+    assert.deepEqual(bestMove(view, SKILLS.grandmaster), bestMove(view, SKILLS.grandmaster));
+  }
+});
+
+test('grandmaster honours leadMustInclude on the opening play', () => {
+  for (let i = 0; i < 10; i++) {
+    const state = createGame({
+      seed: `gm-opening:${i}`,
+      players: Array.from({ length: SEATS }, (_, s) => ({ name: `g${s}`, isHuman: false, skill: SKILLS.grandmaster })),
+    });
+    const view = seatView(state, state.turn);
+    assert.notEqual(view.leadMustInclude, null, 'the opening lead has a required card');
+    const move = chooseMove(view, SKILLS.grandmaster, makeRng(`gm-opening:${i}:rng`));
+    assert.equal(move.action, 'play');
+    assert.ok(move.cards.some((x) => x.id === view.leadMustInclude), 'the opening play contains the required card');
+    assert.equal(play(state, state.turn, move.cards).ok, true, 'and the engine accepts it');
+  }
+});
+
+test('no illegal move across 30 full all-grandmaster hands', () => {
+  for (let i = 0; i < 30; i++) {
+    const { actions } = simulateGame({ seed: `gm-full:${i}`, skills: Array(SEATS).fill('grandmaster') });
+    const bad = actions.filter((a) => a.kind === 'fallback');
+    assert.equal(bad.length, 0, `seed gm-full:${i}: ${bad.length} illegal decision(s)`);
   }
 });
