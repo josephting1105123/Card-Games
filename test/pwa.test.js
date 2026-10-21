@@ -204,6 +204,9 @@ test('the table view only reads fields a seat view actually sends', () => {
   // [:,] so shorthand properties such as `seat,` are counted as sent too.
   const sent = new Set([...viewBlock.matchAll(/^\s{4}(\w+)[:,]/gm)].map((m) => m[1]));
   for (const extra of ['you', 'players', 'trick', 'bidding', 'result']) sent.add(extra);
+  // Added to the view by the server adapter and solo.js once the deal has ended,
+  // not by engine.seatView.
+  sent.add('revealedHands');
   const tableview = read('src/ui/tableview.js');
   const readFields = [...tableview.matchAll(/\bview\.(\w+)/g)].map((m) => m[1]);
   for (const field of new Set(readFields)) {

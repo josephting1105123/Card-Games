@@ -587,7 +587,8 @@ class LanScreens {
     // The old host left: the card still says "Waiting for the host", so rebuild
     // it now that the button is ours.
     if (previousHost !== room.hostId && room.hostId === this.you && this.lastResult && this.resultOverlay?.isConnected) {
-      this.resultOverlay.remove();
+      // onResult swaps the sheet itself; removing it here would hide that it
+      // was already on screen.
       this.onResult(this.lastResult);
     }
   }
@@ -664,7 +665,10 @@ class LanScreens {
     const rows = message.rows.map(cleanRow);
     const mine = rows.find((row) => row.seat === this.view?.seat);
     if (!mine || !this.table) return;
-    // A resume replays the last result; never stack two cards.
+    // A resume replays the last result; never stack two cards. A sheet already
+    // on screen being rebuilt (resume replay, host handover) shouldn't vanish
+    // for the reveal delay.
+    const replacing = !!this.resultOverlay?.isConnected;
     this.resultOverlay?.remove();
     // Lines go through innerHTML, so every server value is coerced or escaped here.
     const lines = rows.map((row) =>
@@ -679,6 +683,7 @@ class LanScreens {
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
       onLeave: () => this.leave(),
+      immediate: replacing,
     });
   }
 
@@ -687,6 +692,7 @@ class LanScreens {
     const clean = message.rows.map(cleanRow);
     const mine = clean.find((row) => row.seat === this.view?.seat);
     if (!mine || !this.table || this.tableGame !== 'big2') return;
+    const replacing = !!this.resultOverlay?.isConnected;
     this.resultOverlay?.remove();
     const rows = clean.map((row) => ({
       name: row.seat === mine.seat ? `${row.name} (you)` : row.name,
@@ -713,6 +719,7 @@ class LanScreens {
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
       onLeave: () => this.leave(),
+      immediate: replacing,
     });
   }
 

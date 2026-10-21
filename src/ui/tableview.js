@@ -23,6 +23,9 @@ import { enableTableFullscreen } from './fullscreen.js';
 // style: 'bold' })) — Dou Di Zhu is the only table built on it so far.
 const BOLD = { style: 'bold' };
 
+// The reveal gets a second on its own before the result sheet covers it.
+const RESULT_DELAY_MS = 1000;
+
 /**
  * Run one leg of a deal flyer's flight: write the ten "from"/"to" custom
  * properties the shared cg-fly keyframe (table.css) reads, then restart the
@@ -488,6 +491,23 @@ export class TableView {
       const onTurn = view.phase === Phase.BIDDING ? view.bidding.turn : view.turn;
       node.plate.classList.toggle('is-turn', seat === onTurn && view.phase !== Phase.FINISHED);
 
+      if (view.phase === Phase.FINISHED && view.revealedHands) {
+        const signature = `reveal:${view.revealedHands[seat].map((c) => c.id).join(',')}`;
+        if (node.backs.dataset.key !== signature) {
+          node.backs.dataset.key = signature;
+          clear(node.backs);
+          // The winner's empty hand would otherwise leave a hollow box.
+          node.backs.classList.toggle('is-revealed', view.revealedHands[seat].length > 0);
+          for (const card of sortCards(view.revealedHands[seat])) node.backs.append(cardElement(card, { ...BOLD }));
+        }
+        continue;
+      }
+      if (node.backs.classList.contains('is-revealed') || node.backs.dataset.key?.startsWith('reveal:')) {
+        clear(node.backs);
+        node.backs.classList.remove('is-revealed');
+        delete node.backs.dataset.key;
+      }
+
       // The backs are identical, so add or remove the difference rather than
       // tearing down a dozen of them on every update.
       const shown = Math.min(player.cards, 12);
@@ -698,6 +718,7 @@ export class TableView {
     // nothing to do yet, and floating both over a short felt is how they
     // ended up overlapping.
     n.controls.classList.toggle('is-hidden', view.phase === Phase.BIDDING);
+    n.controls.classList.toggle('is-ended', view.phase === Phase.FINISHED);
     if (view.phase === Phase.BIDDING) return;
     const yours = this.isYourPlayTurn();
     const cards = this.selectionCards();
@@ -738,7 +759,7 @@ export class TableView {
   }
 
   /** Full-screen result card. `onAgain` and `onLeave` are buttons on it. */
-  showResult({ title, win, deltaText, lines, onAgain, onLeave, againLabel = 'Deal again' }) {
+  showResult({ title, win, deltaText, lines, onAgain, onLeave, againLabel = 'Deal again', immediate = false }) {
     const overlay = el('div.overlay',
       el('div.result',
         el('h2', { class: `result__title ${win ? 'is-win' : 'is-loss'}` }, title),
@@ -751,10 +772,16 @@ export class TableView {
       ),
     );
     this.root.append(overlay);
+    clearTimeout(this.resultTimer);
+    if (!immediate) {
+      overlay.classList.add('is-pending');
+      this.resultTimer = setTimeout(() => overlay.classList.remove('is-pending'), RESULT_DELAY_MS);
+    }
     return overlay;
   }
 
   destroy() {
+    clearTimeout(this.resultTimer);
     this.dealSkip?.cancel();
     this.dealer?.remove();
     this.dealer = null;
