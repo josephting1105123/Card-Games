@@ -27,6 +27,8 @@ import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 
 const CAPTION_MS = 2600;
+// The reveal gets a second on its own before the result sheet covers it.
+const RESULT_DELAY_MS = 1000;
 const BOT_NAMES = ['Mei', 'Chen', 'Lin', 'Bao', 'Fang', 'Hui', 'Qiao', 'Rong'];
 
 function sortHand(hand, mode) {
@@ -566,6 +568,7 @@ export class Big2View {
     const combo = cards.length ? classify(cards) : null;
     const { legal, needsThreeDiamond } = this.legalityOf(combo);
 
+    n.controls.classList.toggle('is-ended', view.phase === Phase.FINISHED);
     n.sortBtn.textContent = `Sort: ${this.sortMode === 'rank' ? 'Rank' : 'Suit'}`;
     n.playBtn.disabled = !yours || !legal;
     n.passBtn.disabled = !yours || !view.trick;
@@ -770,7 +773,7 @@ export class Big2View {
   }
 
   /** Full-screen result card: every seat's cards left and chip change, bankroll after. */
-  showResult({ title, win, deltaText, rows, lines, onAgain, onLeave, againLabel }) {
+  showResult({ title, win, deltaText, rows, lines, onAgain, onLeave, againLabel, immediate = false }) {
     const rowsEl = el('div.b2-result__rows',
       ...rows.map((r) => el('div', { class: `b2-result__row${r.isWinner ? ' is-winner' : ''}` },
         el('span.b2-result__name', String(r.name ?? '')),
@@ -815,10 +818,16 @@ export class Big2View {
     // the next hand instead of re-expanding first.
     card.addEventListener('click', () => { if (overlay.classList.contains('is-collapsed')) setCollapsed(false); });
     this.root.append(overlay);
+    clearTimeout(this.resultTimer);
+    if (!immediate) {
+      overlay.classList.add('is-pending');
+      this.resultTimer = setTimeout(() => overlay.classList.remove('is-pending'), RESULT_DELAY_MS);
+    }
     return overlay;
   }
 
   destroy() {
+    clearTimeout(this.resultTimer);
     clearTimeout(this.captionTimer);
     this.teardownFullscreen?.();
     clear(this.root);

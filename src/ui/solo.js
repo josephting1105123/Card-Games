@@ -85,7 +85,10 @@ export class SoloGame {
   }
 
   refresh() {
-    this.view.update(seatView(this.state, 0));
+    const view = seatView(this.state, 0);
+    // Every hand is public once the deal has ended.
+    if (this.state.phase === Phase.FINISHED) view.revealedHands = this.state.players.map((p) => p.hand);
+    this.view.update(view);
   }
 
   /** Let the bots act until it is the human's turn or the deal is over. */
@@ -160,6 +163,8 @@ export class SoloGame {
   settle() {
     if (this.settled) return;
     this.settled = true;
+    // The reveal has to be on screen before the sheet's delay clock starts.
+    this.refresh();
     const profile = this.app.profile;
     const result = this.state.result;
     const rescueMode = profile.rescueMode;

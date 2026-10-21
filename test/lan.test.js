@@ -950,6 +950,27 @@ function big2Autopilot(client) {
   return () => { stopped = true; };
 }
 
+test('a Dou Di Zhu hand reveals all three hands in the last view, and not before', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob } = await twoPlayerRoom(host);
+
+  autopilot(alice);
+  autopilot(bob);
+  alice.send({ t: 'start' });
+  await alice.next(S2C.RESULT, 30_000);
+
+  const views = alice.log.filter((m) => m.t === S2C.VIEW).map((m) => m.view);
+  const firstFinished = views.findIndex((v) => v.phase === 'finished');
+  assert.ok(firstFinished >= 0, 'a finished view arrives before the result');
+  assert.equal(views[firstFinished].revealedHands.length, 3, 'every hand is public once the deal ends');
+  for (const v of views.slice(0, firstFinished)) {
+    assert.equal('revealedHands' in v, false, 'no hand is revealed mid-deal');
+  }
+  alice.close();
+  bob.close();
+});
+
 test('a Big Two room seats four, plays a hand with two bots, and conserves chips', async (t) => {
   const host = await startHub();
   t.after(() => host.stop());

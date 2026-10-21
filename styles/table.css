@@ -109,6 +109,26 @@
   box-shadow: -3px 2px 6px rgba(0, 0, 0, 0.4);
 }
 .seat__backs .card:first-child { margin-left: 0; }
+/* Hand end: a leftover can be 20 cards, so the face-up hand wraps at ten a row.
+   Every card carries the same negative left margin (so each row starts flush),
+   and the container's padding takes it back; likewise the top margin and
+   padding for the second row's overlap. Widths are multiples of --rev-w, not
+   percentages, so the fan stays proportional to the card. */
+.seat__backs.is-revealed {
+  --rev-w: clamp(24px, 5.6vh, 36px);
+  flex-wrap: wrap; justify-content: center; row-gap: 0;
+  box-sizing: content-box; max-width: none;
+  /* The extra pixel keeps sub-pixel rounding from bumping the tenth card to
+     the next row. */
+  width: calc(var(--rev-w) * 4.2 + 1px);
+  padding: calc(var(--rev-w) * 0.7) 0 0 calc(var(--rev-w) * 0.58);
+}
+.seat__backs.is-revealed .card,
+.seat__backs.is-revealed .card:first-child {
+  --card-w: var(--rev-w);
+  margin: calc(var(--rev-w) * -0.7) 0 0 calc(var(--rev-w) * -0.58);
+  box-shadow: -2px 2px 5px rgba(0, 0, 0, 0.35);
+}
 
 /* Pinned to the very top, centred, directly under the HUD — small enough
    that it costs the felt almost nothing, which is what leaves the middle
@@ -366,13 +386,20 @@
 /* Bidding has its own panel (Pass/1/2/3); Hint/Pass/Play do nothing until
    play starts, and floating both over a short felt is how they overlapped. */
 .controls.is-hidden { display: none; }
+/* Hand over: the result sheet now waits a second, so the bar must go at once.
+   visibility, not display, keeps the layout (and the hand) where it is. */
+.controls.is-ended { visibility: hidden; }
 
 /* --- overlays ------------------------------------------------------------- */
 
 .overlay {
   position: fixed; inset: 0; z-index: var(--z-overlay); display: grid; place-items: center; padding: 18px;
   background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
+  /* visibility flips at once on show so the fade is visible, and while pending
+     it keeps the buttons out of reach of taps and Tab. */
+  transition: opacity var(--dur-slow) var(--ease-std), visibility 0s;
 }
+.overlay.is-pending { opacity: 0; visibility: hidden; pointer-events: none; }
 .result {
   width: min(92vw, 520px); text-align: center; padding: 26px 26px 22px; border-radius: var(--r-lg);
   border: 1px solid var(--hairline-strong); background: var(--panel-solid);
