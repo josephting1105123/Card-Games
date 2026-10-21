@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHand } from '../src/core/cards.js';
 import { makeRng } from '../src/core/rng.js';
-import { SKILLS, bestMove, chooseBid, chooseMove, skillByName } from '../src/games/doudizhu/ai.js';
+import { SKILLS, bestMove, chooseBid, chooseMove, dealContext, drawWorlds, skillByName, unseenCards, worldWeight } from '../src/games/doudizhu/ai.js';
 import { Phase, bid, createGame, pass, play, seatView } from '../src/games/doudizhu/engine.js';
 import { Combo, classify } from '../src/games/doudizhu/rules.js';
 
@@ -236,5 +236,132 @@ test('replay does not depend on the clock: a slow machine plays the same moves',
       Date.now = realDateNow;
     }
     assert.deepEqual(stubbed, baseline, `seed ${seed}: a stubbed, crawling clock must not change a single decision`);
+  }
+});
+
+// --- seat view, sampler, search determinism ------------------------------------
+
+/** Bids with a cheap bot until the table is playing, then plays `plays` more moves. */
+function playingState(seed, plays) {
+  const skill = SKILLS.steady;
+  const players = [0, 1, 2].map((i) => ({ id: `p${i}`, name: `p${i}`, isBot: true, skill }));
+  const state = createGame({ seed, players, baseMultiplier: 2 });
+  const rng = makeRng(`${seed}:drive`);
+  let steps = 0;
+  while (state.phase !== Phase.FINISHED && (state.phase === Phase.BIDDING || plays > 0)) {
+    if (++steps > 4000) throw new Error('playingState: table did not settle');
+    if (state.phase === Phase.BIDDING) {
+      bid(state, state.bidding.turn, chooseBid(seatView(state, state.bidding.turn), skill, rng));
+      continue;
+    }
+    const seat = state.turn;
+    const move = chooseMove(seatView(state, seat), skill, rng);
+    if (!move || move.pass) pass(state, seat);
+    else play(state, seat, move.cards);
+    plays -= 1;
+  }
+  return state;
+}
+
+test('seatView carries the whole play history, passes included', () => {
+  const state = playingState('history-view', 12);
+  assert.equal(state.phase, Phase.PLAYING);
+  const view = seatView(state, state.turn);
+  assert.ok(Array.isArray(view.history), 'history must be an array');
+  assert.equal(view.history.length, state.plays.length);
+  assert.ok(view.history.length >= 12, 'plays made so far are all there, not just the last few');
+  assert.ok(view.history.every((ev) => ev.pass === true || Array.isArray(ev.cards)));
+});
+
+test('the sampler deals the unseen cards to the card counts on the table and never a card already known', () => {
+  let checked = 0;
+  let withTests = 0;
+  for (const [seed, plays] of [['sampler:a', 0], ['sampler:b', 0], ['sampler:c', 9], ['sampler:d', 21], ['sampler:e', 30], ['sampler:f', 40], ['sampler:g', 50]]) {
+    const state = playingState(seed, plays);
+    if (state.phase !== Phase.PLAYING) continue;
+    for (let seat = 0; seat < 3; seat++) {
+      const view = seatView(state, seat);
+      const ctx = dealContext(view, unseenCards(view));
+      assert.ok(ctx, `${seed} seat ${seat}: a real view must be dealable`);
+      checked += 1;
+      if (ctx.tests.length) withTests += 1;
+      const known = new Set([...view.you.hand, ...view.playedCards].map((c) => c.id));
+      const landlord = view.players.find((p) => p.role === 'landlord');
+      const owed = landlord.seat === seat ? [] : view.bottom.filter((c) => c && !view.playedCards.some((p) => p.id === c.id));
+      const worlds = drawWorlds(ctx, makeRng(`${seed}:${seat}`), 24);
+      assert.equal(worlds.length, 24);
+      for (const world of worlds) {
+        const seen = new Set();
+        for (const p of view.players) {
+          if (p.seat === seat) {
+            assert.equal(world.hands[seat], null, 'my own seat is never dealt');
+            continue;
+          }
+          const hand = world.hands[p.seat];
+          assert.equal(hand.length, p.cards, `${seed}: seat ${p.seat} must hold exactly its shown card count`);
+          for (const card of hand) {
+            assert.ok(!known.has(card.id), `${seed}: dealt card ${card.id} is already in my hand or played`);
+            assert.ok(!seen.has(card.id), `${seed}: card ${card.id} dealt to both opponents`);
+            seen.add(card.id);
+          }
+          if (p.seat === landlord.seat) {
+            const ids = new Set(hand.map((c) => c.id));
+            for (const card of owed) assert.ok(ids.has(card.id), `${seed}: unplayed bottom card ${card.id} must stay with the landlord`);
+          }
+        }
+      }
+    }
+  }
+  // Guards against the loop going vacuous: skipped games and an inference path
+  // that never fires would both leave every assertion above untouched.
+  assert.ok(checked >= 12, `only ${checked} views were checked`);
+  assert.ok(withTests > 0, 'no mid-game view produced a pass test, so inference never ran');
+});
+
+test('a world where the passer held a cheap answer weighs less than one where it did not', () => {
+  // Seat 1 passed on a single 5 (type code 1) and has played nothing since.
+  const none = new Int8Array(18);
+  const ctx = { tests: [{ seat: 1, type: 1, rank: 5, len: 1, after: none }] };
+  const holdsAnswer = [null, new Int8Array(18), new Int8Array(18)];
+  holdsAnswer[1][9] = 1; // a 9 beats the 5
+  holdsAnswer[1][3] = 2;
+  const noAnswer = [null, new Int8Array(18), new Int8Array(18)];
+  noAnswer[1][3] = 3; // nothing above the 5
+  assert.equal(worldWeight(ctx, noAnswer), 1, 'a world that explains the pass keeps full weight');
+  assert.ok(worldWeight(ctx, holdsAnswer) < worldWeight(ctx, noAnswer), 'a world that needs the pass to be a mistake is down-weighted');
+  // A card the seat played after passing counts as part of its hand at the time.
+  const later = new Int8Array(18);
+  later[9] = 1;
+  const ctxLater = { tests: [{ seat: 1, type: 1, rank: 5, len: 1, after: later }] };
+  assert.ok(worldWeight(ctxLater, noAnswer) < 1, 'a 9 played after the pass was in hand during it');
+});
+
+test('grandmaster chooseMove and chooseBid replay exactly from a fixed rng seed', () => {
+  const skill = SKILLS.grandmaster;
+  const ids = (move) => (move.pass ? 'pass' : move.cards.map((c) => c.id).sort((a, b) => a - b).join(','));
+  for (const seed of ['det:0', 'det:1', 'det:2', 'det:3']) {
+    // chooseBid: the very first view of a fresh deal
+    const fresh = createGame({ seed, players: [0, 1, 2].map((i) => ({ id: `p${i}`, name: `p${i}`, isBot: true, skill })), baseMultiplier: 2 });
+    const bidView = seatView(fresh, fresh.bidding.turn);
+    assert.equal(chooseBid(bidView, skill, makeRng(`${seed}:bid`)), chooseBid(bidView, skill, makeRng(`${seed}:bid`)));
+    // chooseMove: early, middle and late in the deal
+    for (const plays of [0, 10, 25]) {
+      const state = playingState(seed, plays);
+      if (state.phase !== Phase.PLAYING) continue;
+      const view = seatView(state, state.turn);
+      const a = ids(chooseMove(view, skill, makeRng(`${seed}:move`)));
+      const b = ids(chooseMove(view, skill, makeRng(`${seed}:move`)));
+      assert.equal(a, b, `${seed} after ${plays} plays: same view and rng seed must pick the same move`);
+    }
+  }
+});
+
+test('twenty full grandmaster games finish without one illegal bid, play or pass', () => {
+  // playSeededGame asserts res.ok on every action it applies, so an illegal
+  // choice from the search fails here rather than being papered over.
+  for (let i = 0; i < 20; i++) {
+    const actions = playSeededGame(`legal-check:${i}`, GRANDMASTER_TABLE);
+    assert.ok(actions.some((a) => a.kind === 'bid'), `game ${i}: bidding happened`);
+    assert.ok(actions.some((a) => a.kind === 'play'), `game ${i}: someone played a card`);
   }
 });

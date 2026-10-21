@@ -162,6 +162,8 @@
   max-width: 96%; padding: 5px clamp(8px, 1.4vw, 14px); border-radius: var(--r-md);
   background: var(--controls-bg); border: 1px solid var(--hairline-strong); box-shadow: var(--shadow-3);
 }
+/* Hand over: hidden during the reveal, but in flow so nothing shifts. */
+.b2-controls.is-ended { visibility: hidden; }
 .b2-controls .btn { padding: clamp(5px, 0.9vh, 8px) clamp(8px, 1.6vw, 16px); font-size: clamp(12px, 1.5vw, 15px); }
 .b2-controls__label { font-size: clamp(11px, 1.4vw, 13.5px); color: var(--text-tertiary); white-space: nowrap; max-width: 30vw; overflow: hidden; text-overflow: ellipsis; }
 
@@ -261,7 +263,11 @@
      not headroom — see .is-collapsed there). */
   padding: var(--b2-result-pad-y) 18px 18px;
   background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
+  /* visibility flips at once on show so the fade is visible, and while pending
+     it keeps the buttons out of reach of taps and Tab. */
+  transition: opacity var(--dur-slow) var(--ease-std), visibility 0s;
 }
+.b2-overlay.is-pending { opacity: 0; visibility: hidden; pointer-events: none; }
 .b2-result {
   width: min(92vw, 540px);
   /* Capped to the space the overlay's own padding actually leaves, not a flat

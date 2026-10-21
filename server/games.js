@@ -30,7 +30,12 @@ const doudizhu = {
   },
   isFinished: (state) => state.phase === dou.Phase.FINISHED,
   botTurn: (state, rng) => douBotTurn(state, rng),
-  seatView: (state, seat) => dou.seatView(state, seat),
+  seatView(state, seat) {
+    const view = dou.seatView(state, seat);
+    // Every hand is public once the deal has ended.
+    if (state.phase === dou.Phase.FINISHED) view.revealedHands = state.players.map((p) => p.hand);
+    return view;
+  },
   isBot: (player) => !!player.isBot,
   toBot(player, skill, name) {
     player.isBot = true;
