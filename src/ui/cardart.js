@@ -2,15 +2,18 @@
  * Card faces and backs, drawn as SVG at run time. No image files, so the whole
  * deck installs offline and stays crisp at any size.
  *
- * House style: glossy black stock, a thin gold (or rose-gold, on the red
- * suits) inner frame, small serif indices top-left/bottom-right, ornate
- * flourished suit shapes centred on the spot cards and blown large on the
- * courts and ace, and an original gold art-deco back. Dou Di Zhu's "bold"
- * style below takes the same black-and-gold palette but keeps its own
- * oversized, high-contrast layout — colours only, nothing else changes.
- * Suit shapes and the ornaments live in one hidden <svg> of <symbol>
- * definitions that every card references with <use>, which keeps a
- * twenty-card fan cheap to build and repaint.
+ * House style: white card stock with flat red and black ink (the open-house
+ * table's deck), a hairline inner frame in the suit's own ink, small rank
+ * indices top-left/bottom-right set in the display face, curled suit shapes
+ * centred on the spot cards and blown large on the courts and ace, and a red
+ * back with a white lattice inside a white border. Dou Di Zhu's "bold" style
+ * below takes the same palette but keeps its own oversized, high-contrast
+ * layout — colours only, nothing else changes.
+ * Every colour comes from a token in tokens.css, read through `style=` rather
+ * than a presentation attribute so the custom property resolves inside the
+ * <use> shadow tree. Suit shapes and the ornaments live in one hidden <svg>
+ * of <symbol> definitions that every card references with <use>, which keeps
+ * a twenty-card fan cheap to build and repaint.
  */
 
 import { JOKER_COLOUR, RANK_MIN, RANK_JOKER_BIG, RANK_TWO, SUIT_COLOUR, SUIT_SYMBOL, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
@@ -70,106 +73,77 @@ const LAYOUTS = {
 };
 
 /* ==========================================================================
- * Shared black-and-gold palette. One copy of these gradients and shapes,
- * defined in the default sheet (installCardDefs, below) and cross-referenced
- * by the bold sheet exactly the way the bold style already cross-references
- * the plain PIPS symbols — installBoldCardDefs() guarantees the default
- * sheet exists first, so the id="cg-..." references below always resolve
- * regardless of which style a table asks for first.
+ * Shared symbols and the back's lattice. One copy of these, defined in the
+ * default sheet (installCardDefs, below) and cross-referenced by the bold
+ * sheet exactly the way the bold style already cross-references the plain
+ * PIPS symbols — installBoldCardDefs() guarantees the default sheet exists
+ * first, so the id="cg-..." references below always resolve regardless of
+ * which style a table asks for first.
  * ========================================================================== */
 
-function sharedGoldDefs() {
+function sharedCardDefs() {
   return `
-    <linearGradient id="cg-face-black" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" style="stop-color:var(--face-top)"/>
-      <stop offset="1" style="stop-color:var(--face-bottom)"/>
-    </linearGradient>
-    <clipPath id="cg-face-clip"><rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7"/></clipPath>
-    <!-- userSpaceOnUse, not the objectBoundingBox default: a stroked straight
-         line (the frame) has a zero-width or zero-height geometric bounding
-         box, and a gradient keyed to a degenerate bounding box paints
-         nothing at all in every browser — the frame line was invisible for
-         exactly this reason. userSpaceOnUse instead resolves against the
-         *current* user-unit space, which for every caller here (the card's
-         own 100x140 symbol, and every nested 100x100 pip/suit symbol it
-         <use>s) starts at (0,0) — so one 0,0-to-100,100 diagonal reads
-         correctly as "top-left to bottom-right" everywhere it is applied,
-         never divides by a zero-area box, and needs no per-caller variant. -->
-    <linearGradient id="cg-gold-index" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-      <stop offset="0" style="stop-color:var(--gold-ink-1)"/>
-      <stop offset="1" style="stop-color:var(--gold-ink-2)"/>
-    </linearGradient>
-    <linearGradient id="cg-rose-index" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-      <stop offset="0" style="stop-color:var(--rose-ink-1)"/>
-      <stop offset="1" style="stop-color:var(--rose-ink-2)"/>
-    </linearGradient>
-    <linearGradient id="cg-gold-ink" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-      <stop offset="0" style="stop-color:var(--gold-ink-1)"/>
-      <stop offset="0.55" style="stop-color:var(--gold-ink-2)"/>
-      <stop offset="1" style="stop-color:var(--gold-ink-3)"/>
-    </linearGradient>
-    <linearGradient id="cg-rose-ink" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-      <stop offset="0" style="stop-color:var(--rose-ink-1)"/>
-      <stop offset="0.55" style="stop-color:var(--rose-ink-2)"/>
-      <stop offset="1" style="stop-color:var(--rose-ink-3)"/>
-    </linearGradient>
-    <linearGradient id="cg-silver-ink" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-      <stop offset="0" style="stop-color:var(--joker-silver-1)"/>
-      <stop offset="1" style="stop-color:var(--joker-silver-2)"/>
-    </linearGradient>
     <symbol id="cg-curl" viewBox="0 0 20 20"><path d="${CURL}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
     <symbol id="cg-crown" viewBox="0 0 100 60">
       <path d="M8 52 14 14 30 34 50 8 70 34 86 14 92 52z" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linejoin="round"/>
       <circle cx="14" cy="11" r="4" fill="currentColor"/><circle cx="50" cy="5" r="4.5" fill="currentColor"/><circle cx="86" cy="11" r="4" fill="currentColor"/>
       <path d="M8 52h84" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
     </symbol>
-    <!-- Back design: a gold border, a repeating scallop/fan band (not the
-         reference's lattice — the brief calls for an original pattern), and
-         a centred medallion. Self-contained here so both styles' backs
-         (cardBackBody, cardBackBoldBody) share one definition. -->
-    <radialGradient id="cg-back-medallion" cx="0.5" cy="0.42" r="0.75">
-      <stop offset="0" style="stop-color:var(--gold-ink-1)"/>
-      <stop offset="1" style="stop-color:var(--gold-ink-3)"/>
-    </radialGradient>
-    <symbol id="cg-scallop" viewBox="0 0 20 20">
-      <path d="M0 20C0 9 9 0 20 0" fill="none" stroke="currentColor" stroke-width="1.1" opacity="0.7"/>
-      <path d="M4 20C4 12 12 4 20 4" fill="none" stroke="currentColor" stroke-width="0.8" opacity="0.5"/>
-    </symbol>`;
+    <!-- The back's lattice: 1-unit lines at 45 and -45 degrees, 6 units
+         apart. It is one L of two bars on a square 6-unit tile, with the tile
+         turned 45 degrees, so the second set of lines is the first rotated a
+         quarter turn and the crossings are painted once rather than twice
+         (the line colour is translucent). A userSpaceOnUse pattern lives in
+         the card's own 100x140 units, so the lattice scales with the card.
+         The tile origin is put at the card centre, which makes the back look
+         the same turned 180 degrees. -->
+    <pattern id="cg-back-lattice" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="translate(${VB_W / 2} ${VB_H / 2}) rotate(45) translate(-0.5 -0.5)">
+      <path d="M0 0h6v1H1v5H0z" style="fill:var(--back-line)"/>
+    </pattern>`;
 }
 
-/** The black face rect plus a faint diagonal sheen across the upper third —
- * one clipped, low-opacity white band, not a filter (transform/opacity only
- * on anything animated elsewhere in this app; this is static, but the same
- * discipline keeps every card cheap to paint). */
+/** The white card stock. Flat: a card's drop shadow belongs to the .card box,
+ * not to the artwork. */
 function faceBody() {
-  return `<rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-face-black)" style="stroke:var(--face-edge)" stroke-width="1"/>
-    <g clip-path="url(#cg-face-clip)"><polygon points="-10,0 60,0 15,50 -10,50" fill="#ffffff" opacity="0.06"/></g>`;
+  return `<rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" style="fill:var(--face);stroke:var(--face-edge)" stroke-width="1"/>`;
 }
 
-/** Which gradient a card's ink should use. `variant` "index" is the
- * restricted light two-stop gradient (guaranteed >=4.5:1 on the near-black
- * face at any point along it — the full three-stop gradient's darkest stop
- * does not clear 4.5:1, so small text never uses it); "ink" is the full
- * decorative gradient, used only on shapes big enough that a darker patch
- * within them is not a legibility problem. */
-function inkUrl(card, variant) {
-  if (isJoker(card)) {
-    const big = card.rank === RANK_JOKER_BIG;
-    // The big joker reads as the deck's red suits (JOKER_COLOUR marks it
-    // 'red'), not gold — same rose-gold gradients hearts/diamonds use. The
-    // small joker stays the neutral silver/grey it always was.
-    return big ? `url(#cg-rose-${variant})` : 'url(#cg-silver-ink)';
-  }
-  const family = SUIT_COLOUR[card.suit] === 'black' ? 'gold' : 'rose';
-  return `url(#cg-${family}-${variant})`;
+/** 'red' or 'black': jokers carry their colour on the rank, every other card on its suit. */
+function cardColour(card) {
+  return isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
 }
+
+/** A card's ink: the red suits (and the big joker) take --suit-red, the black
+ * suits (and the small joker) --suit-black. One flat colour per card, so the
+ * indices, pips, frame and court details all agree. */
+function inkColour(card) {
+  const colour = cardColour(card);
+  return colour === 'red' ? 'var(--suit-red)' : 'var(--suit-black)';
+}
+
+/** `fill` for glyphs and solid shapes. */
+function fillInk(card) {
+  return `style="fill:${inkColour(card)}"`;
+}
+
+/** `fill` plus `color` for anything that draws curls: the finials stroke with
+ * currentColor, which would otherwise fall back to the .card text colour and
+ * stop matching the suit. */
+function fillAndStrokeInk(card) {
+  const ink = inkColour(card);
+  return `style="fill:${ink};color:${ink}"`;
+}
+
+/** Rank glyphs are set in the display face at 700, the same as the site's
+ * headings and HUD numbers. */
+const RANK_FONT = 'font-family:var(--font-display);font-weight:700';
 
 /** The thin inner frame, inset ~7%, broken at the top-left and bottom-right
  * corners where the indices sit — drawn as three open sides plus two short
  * stubs rather than a closed rounded rect, so there is no seam to hide. */
 function brokenFrame(ink, gapTLx, gapTLy, gapBRx, gapBRy) {
   const x0 = 7, y0 = 9.8, x1 = VB_W - 7, y1 = VB_H - 9.8;
-  return `<g fill="none" stroke="${ink}" stroke-width="0.8" opacity="0.9" stroke-linecap="round">
+  return `<g fill="none" style="stroke:${ink}" stroke-width="0.8" opacity="0.9" stroke-linecap="round">
     <path d="M ${(x0 + gapTLx).toFixed(1)} ${y0} L ${x1} ${y0}"/>
     <path d="M ${x1} ${y0} L ${x1} ${(y1 - gapBRy).toFixed(1)}"/>
     <path d="M ${(x1 - gapBRx).toFixed(1)} ${y1} L ${x0} ${y1}"/>
@@ -177,17 +151,17 @@ function brokenFrame(ink, gapTLx, gapTLy, gapBRx, gapBRy) {
   </g>`;
 }
 
-/** Small serif corner index: rank above suit, ~15% of card height, mirrored
- * at the opposite corner by rotating the same markup 180deg about the card's
- * centre — the letters and figures both stay in the deck's own EB Garamond
- * (only the bold style's 2-10 get custom digit paths; see below). */
+/** Small corner index: rank above suit, ~15% of card height, mirrored at the
+ * opposite corner by rotating the same markup 180deg about the card's centre.
+ * The rank is set in the display face (only the bold style's 2-10 get custom
+ * digit paths; see below); the suit glyph keeps the card's own text face. */
 function cornerIndexDefault(card, flipped) {
   const label = rankIndex(card.rank);
   const symbol = SUIT_SYMBOL[card.suit];
   const rot = flipped ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : '';
   const fontSize = label.length > 1 ? 15.5 : 19;
-  return `<g${rot} fill="${inkUrl(card, 'index')}">
-    <text x="12" y="23" font-size="${fontSize}" text-anchor="middle">${label}</text>
+  return `<g${rot} ${fillInk(card)}>
+    <text x="12" y="23" font-size="${fontSize}" text-anchor="middle" style="${RANK_FONT}">${label}</text>
     <text x="12" y="34.5" font-size="12" text-anchor="middle">${symbol}</text>
   </g>`;
 }
@@ -195,39 +169,36 @@ function cornerIndexDefault(card, flipped) {
 function jokerIndexDefault(card, flipped) {
   const rot = flipped ? ` transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"` : '';
   const letters = 'JOKER'.split('');
-  const lines = letters.map((ch, i) => `<text x="9" y="${16 + i * 14.5}" font-size="12.5" text-anchor="middle" font-weight="700">${ch}</text>`).join('');
-  return `<g${rot} fill="${inkUrl(card, 'index')}">${lines}</g>`;
+  const lines = letters.map((ch, i) => `<text x="9" y="${16 + i * 14.5}" font-size="12.5" text-anchor="middle" style="${RANK_FONT}">${ch}</text>`).join('');
+  return `<g${rot} ${fillInk(card)}>${lines}</g>`;
 }
 
-/** A/J/Q/K: one large ornate suit symbol, ~45% of card width, centred. */
+/** A/J/Q/K: one large curled suit symbol, ~45% of card width, centred. */
 function bigOrnateSuit(card) {
   const size = 45;
   const x = (VB_W - size) / 2;
   const y = (VB_H - size) / 2 + 4;
-  return `<use href="#cg-pip-ornate-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}" fill="${inkUrl(card, 'ink')}"/>`;
+  return `<use href="#cg-pip-ornate-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}" ${fillAndStrokeInk(card)}/>`;
 }
 
 /** 2-10: the traditional pip positions, drawn in the ornate suit shape. */
 function ornatePipLayout(card) {
   const layout = LAYOUTS[card.rank === RANK_TWO ? 2 : card.rank] ?? LAYOUTS[1];
-  const ink = inkUrl(card, 'ink');
   const uses = layout.map(([x, y, s = 1, flip = false]) => {
     const size = 17 * s;
     const cx = x * VB_W, cy = y * VB_H;
     const transform = flip ? ` transform="rotate(180 ${cx} ${cy})"` : '';
     return `<use href="#cg-pip-ornate-${card.suit}" x="${(cx - size / 2).toFixed(2)}" y="${(cy - size / 2).toFixed(2)}" width="${size.toFixed(2)}" height="${size.toFixed(2)}"${transform}/>`;
   }).join('');
-  return `<g fill="${ink}">${uses}</g>`;
+  return `<g ${fillAndStrokeInk(card)}>${uses}</g>`;
 }
 
-/** Jokers: an ornate crown (big) or star (small) centrepiece, flat-coloured
- * via currentColor — a decorative accent, not a legibility-critical glyph,
- * so it does not need the gradient machinery the indices and suits use. */
+/** Jokers: a crown (big, red) or star (small, black) centrepiece in the
+ * card's own ink. The crown draws with currentColor, so it takes `color`. */
 function jokerCentreDefault(card) {
-  const big = card.rank === RANK_JOKER_BIG;
-  const tone = big ? 'var(--rose-ink-2)' : 'var(--joker-silver-2)';
-  if (big) return `<g style="color:${tone}"><use href="#cg-crown" x="26" y="52" width="48" height="29"/></g>`;
-  return `<text x="50" y="82" font-size="50" text-anchor="middle" style="color:${tone}" fill="currentColor">★</text>`;
+  const ink = inkColour(card);
+  if (card.rank === RANK_JOKER_BIG) return `<g style="color:${ink}"><use href="#cg-crown" x="26" y="52" width="48" height="29"/></g>`;
+  return `<text x="50" y="82" font-size="50" text-anchor="middle" style="fill:${ink}">★</text>`;
 }
 
 /**
@@ -243,7 +214,7 @@ export function installCardDefs(doc = globalThis.document) {
   <defs>
     ${Object.entries(PIPS).map(([suit, path]) => `<symbol id="cg-pip-${suit}" viewBox="0 0 100 100"><path d="${path}"/></symbol>`).join('\n    ')}
     ${Object.keys(PIPS).map((suit) => `<symbol id="cg-pip-ornate-${suit}" viewBox="0 0 100 100">${ornatePipBody(suit)}</symbol>`).join('\n    ')}
-    ${sharedGoldDefs()}
+    ${sharedCardDefs()}
   </defs>
 </svg>`;
   // Every card in the deck, and the back, defined once. A card element is then
@@ -277,14 +248,14 @@ function cardProto(key, symbolId, extraClass) {
 
 /** The inner markup of a card face (without the <svg> wrapper). */
 export function cardFaceBody(card) {
-  const colour = isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
+  const colour = cardColour(card);
   const jk = isJoker(card);
   const bigCentre = !jk && card.rank >= 11; // J, Q, K, A
   // The index runs roughly x:[3,21] y:[8,42] card units (rank ~15% of card
   // height plus the suit glyph beneath it) — the frame's gap is sized to
   // clear that box, not the other way around.
-  const gap = jk ? [18, 44] : [21, 38];
-  const frameLine = brokenFrame(inkUrl(card, 'index'), gap[0], gap[1], gap[0], gap[1]);
+  const gap = jk ? [18, 70] : [21, 38];
+  const frameLine = brokenFrame(inkColour(card), gap[0], gap[1], gap[0], gap[1]);
   const corner = jk ? jokerIndexDefault(card, false) : cornerIndexDefault(card, false);
   const cornerFlip = jk ? jokerIndexDefault(card, true) : cornerIndexDefault(card, true);
   let centre;
@@ -304,30 +275,24 @@ export function cardBackSVG() {
   return `<svg class="cg-card-svg" viewBox="0 0 ${VB_W} ${VB_H}" role="img" aria-label="Face-down card">${cardBackBody()}</svg>`;
 }
 
-/** The back's contents, without the <svg> wrapper: a black field, a gold
- * border inset ~6%, a repeating scallop/fan band around it (original —
- * nothing like the reference's interlocking lattice) and a centred gold
- * medallion. Shared by both styles: cardBackBoldBody() below calls this
- * same function, so opponents' backs, the deck and the landlord's three
- * all read as one deck no matter which table drew them. */
+/** The back's contents, without the <svg> wrapper: the same white stock
+ * outline as a face, a red field inset 3 units inside it, and the white
+ * lattice (see sharedCardDefs) over the field. Shared by both styles:
+ * cardBackBoldBody() below calls this same function, so opponents' backs, the
+ * deck and the landlord's three all read as one deck no matter which table
+ * drew them. */
 export function cardBackBody() {
-  const inset = VB_W * 0.06;
-  const insetY = VB_H * 0.06;
-  const bx = inset, by = insetY, bw = VB_W - inset * 2, bh = VB_H - insetY * 2;
-  const step = bw / 7;
-  const scallops = [];
-  for (let i = 0; i < 7; i++) {
-    const x = bx + i * step;
-    scallops.push(`<use href="#cg-scallop" x="${x.toFixed(1)}" y="${by.toFixed(1)}" width="${step.toFixed(1)}" height="${step.toFixed(1)}"/>`);
-    scallops.push(`<use href="#cg-scallop" x="${(x + step).toFixed(1)}" y="${(by + bh - step).toFixed(1)}" width="${step.toFixed(1)}" height="${step.toFixed(1)}" transform="rotate(180 ${(x + step / 2).toFixed(1)} ${(by + bh - step / 2).toFixed(1)})"/>`);
-  }
+  // The outline's 1-unit stroke is centred on 0.75 (rx 7), so its inner edge
+  // is at 1.25 (radius 6.5) and the white border is the 3 units inside that.
+  // The field's radius shrinks by the same 3, which keeps the border an even
+  // width round the corners.
+  const border = 3;
+  const f = 1.25 + border;
+  const field = `x="${f}" y="${f}" width="${VB_W - 2 * f}" height="${VB_H - 2 * f}" rx="${6.5 - border}"`;
   return `
-    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" fill="url(#cg-face-black)" style="stroke:var(--face-edge)" stroke-width="1"/>
-    <rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="none" style="stroke:var(--gold-ink-2)" stroke-width="1.4"/>
-    <g style="color:var(--gold-ink-2)" opacity="0.8">${scallops.join('')}</g>
-    <circle cx="${VB_W / 2}" cy="${VB_H / 2}" r="17" fill="url(#cg-back-medallion)" opacity="0.92"/>
-    <circle cx="${VB_W / 2}" cy="${VB_H / 2}" r="17" fill="none" style="stroke:var(--gold-ink-3)" stroke-width="0.8"/>
-    <use href="#cg-pip-ornate-diamond" x="${VB_W / 2 - 10}" y="${VB_H / 2 - 10}" width="20" height="20" style="color:var(--face-bottom)" fill="currentColor" opacity="0.85"/>`;
+    <rect x="0.75" y="0.75" width="${VB_W - 1.5}" height="${VB_H - 1.5}" rx="7" style="fill:var(--back-border);stroke:var(--face-edge)" stroke-width="1"/>
+    <rect ${field} style="fill:var(--back)"/>
+    <rect ${field} fill="url(#cg-back-lattice)"/>`;
 }
 
 export function cardAria(card) {
@@ -338,7 +303,7 @@ export function cardAria(card) {
 /* ==========================================================================
  * The "bold" style — opt-in, Dou Di Zhu table only.
  *
- * Same black-and-gold palette as the default style, but its own layout:
+ * Same white-and-red-and-black palette as the default style, but its own layout:
  * one oversized rank+suit index pinned to the top-left 34% of the card so it
  * still reads when the fan shows only a sliver, and one big suit glyph
  * bottom-right. No centre pips, no court art — the complaint this answers is
@@ -352,10 +317,11 @@ export function cardAria(card) {
 const BOLD_DEFS_ID = 'cg-card-bold-defs';
 
 /** Numeral ranks (2-10) are drawn as filled, condensed, heavy paths with
- * real curves — not a font (EB Garamond's oldstyle figures wobbled next to
- * each other), and not the seven-segment rects this replaced (those read as
- * hollow wireframe boxes: an "8" with every segment lit IS a hollow
- * rectangle with a bar through it). Every digit is built from a small set of
+ * real curves — not a font (set as text, neighbouring figures differed in
+ * weight and height, which looked uneven down a fanned run), and not the
+ * seven-segment rects this replaced (those read as hollow wireframe boxes: an
+ * "8" with every segment lit IS a hollow rectangle with a bar through it).
+ * Every digit is built from a small set of
  * primitives — straight, round-capped "bars" and hand-placed curved
  * "strokes", both offset to a filled outline at a constant stem width — so
  * the whole set shares one weight and one construction technique. J/Q/K/A
@@ -415,7 +381,10 @@ function ringPath(cx, cy, rx, ry, stemX, stemY) {
 // DSTEM0 calibrated against the letters' own stem (measured empirically off
 // the rendered "K": ~5.5 card units at the index size) rather than picked by
 // eye — the first cut (16) rendered noticeably heavier than the letters, ~27%
-// over the spec's 15% tolerance.
+// over the spec's 15% tolerance. Re-measured against Bricolage Grotesque 700
+// (stem ~7.2 units at LETTER_FONT_SIZE, x0.72 condense = ~5.2) the digits sit
+// ~10% heavier than the letters, still inside that tolerance, so the digit
+// shapes were left alone.
 // DIGIT_Y/DIGIT_H are pinned to the *letters'* own measured cap line, not
 // picked by eye: J/Q/K/A (boldCornerIndex, font-size 50, baseline y=46) put
 // their cap-top at y=~12.7 and their baseline at y=~46.2 on the rendered
@@ -550,47 +519,44 @@ function boldDigitCorner(card) {
   // (boldCornerIndex, below) rather than derived from DIGIT_Y/DIGIT_H — the
   // two corners must land the suit glyph in the same spot however tall the
   // rank glyph is.
-  return `<g fill="${inkUrl(card, 'index')}">${uses}<use href="#cg-pip-${card.suit}" x="2" y="${PIP_Y}" width="28" height="28"/></g>`;
+  return `<g ${fillInk(card)}>${uses}<use href="#cg-pip-${card.suit}" x="2" y="${PIP_Y}" width="28" height="28"/></g>`;
 }
 
 // Letter ranks (J, Q, K, A — "10" is a numeral rank, see isNumeralRank, and
-// never reaches this branch) are set in the site's own EB Garamond at 800.
+// never reaches this branch) are set in the display face (--font-display,
+// Bricolage Grotesque) at 700.
 // SVG getBBox() does not return true per-glyph ink extents in every browser
 // (it fell back to the font's flat ascent/descent box here, identical for
-// every letter), so cap height and descent below come from rendering the
-// real glyph and reading back ink pixels instead. K and J's flat serif top
-// (no overshoot) is the unambiguous cap-height reference — A's pointed apex
-// and Q's round shoulder both overshoot it slightly, by design, same as most
-// type. Q's tail is the deepest natural descender of the four (12.68 units
-// below the baseline at LETTER_FONT_SIZE), J's next (10.17); A and K barely
-// dip past the baseline — see PIP_Y below, which is sized to clear Q's.
-const LETTER_CAP_RATIO = 0.655; // K/J's cap-top, in em, above the baseline
+// every letter), so cap height and descent below come from measuring the
+// real glyph (canvas measureText at 1000px, actualBoundingBox*) instead. K, J
+// and A sit exactly on the cap line; Q's round shoulder overshoots it a
+// touch, by design, same as most type. Q's tail is the deepest descender of
+// the four (0.172 em, ~8.6 units below the baseline at LETTER_FONT_SIZE), J's
+// next (0.016 em, under a unit); A and K do not dip past the baseline — see
+// PIP_Y below, which clears Q's.
+const LETTER_CAP_RATIO = 0.672; // K/J/A cap-top, in em, above the baseline
 // One font-size for every letter rank, chosen so that shared cap height
 // equals the digits' own (DIGIT_H) — the same cap line and baseline as
 // 2-10, derived from a measurement rather than picked by eye.
-const LETTER_FONT_SIZE = DIGIT_H / LETTER_CAP_RATIO; // ~51.15 card units
+const LETTER_FONT_SIZE = DIGIT_H / LETTER_CAP_RATIO; // ~49.85 card units
 const LETTER_BASELINE = 46;
 // All four letters take this one shared horizontal scale (never stretched,
-// only narrowed) so their rendered width matches the condensed digits'
+// only narrowed) so their rendered width sits near the condensed digits'
 // instead of each letter's own, much wider, natural width — chosen by eye
 // off a side-by-side sheet of candidate factors, the same anchored-transform
 // mechanism as below. A per-glyph textLength/lengthAdjust compromise was
-// tried first and rejected: it rendered Q's overshooting swash tail WIDER
-// under a mild requested compression (52.6) than with no compression at all
-// (47.2 natural) — a genuine rendering bug for that glyph in this engine.
+// tried first and rejected: it rendered the swash on Q wider under a mild
+// requested compression than with none, a rendering bug in this engine.
 const LETTER_CONDENSE_SX = 0.72;
 // The suit glyph below the rank sits low enough to clear a letter's full,
-// unclipped natural descender — moved down (from the digits' original 52)
-// by the same amount for every rank alike, digits included, so the pip row
-// still lines up across the fan. Q's tail is the deepest natural descender
-// among the ranks (12.68 units below the baseline at LETTER_FONT_SIZE, J's
-// is 10.21): baseline 46 + 12.68 + a measured 1.5-unit clearance = 60.18
-// required ink-top; the pip's own ink starts 1.68 units below its y
-// attribute (measured off the rendered symbol), so y = 60.18 - 1.68 rounds
-// up to 59 for a touch more margin (~2.0 units clear at render). At y=59 the
-// pip's ink still ends around y=86, well inside both the visible strip of a
-// hand card at the tightest fan (only the top ~114.8 of 140 units survive
-// the 844x330 viewport) and clear of the bottom-right big suit (top at 94).
+// unclipped natural descender — the same y for every rank, digits included,
+// so the pip row still lines up across the fan. Q's tail ends ~54.6 units
+// down (baseline 46 + ~8.6); the pip's own ink starts 1.68 units below its y
+// attribute (measured off the rendered symbol), so at y=59 the pip's ink
+// begins at ~60.7, about 6 units clear. At y=59 the pip's ink still ends
+// around y=86, well inside both the visible strip of a hand card at the
+// tightest fan (only the top ~114.8 of 140 units survive the 844x330
+// viewport) and clear of the bottom-right big suit (top at 94).
 const PIP_Y = 59;
 
 /** Left-edge index strip: rank glyph, then suit glyph beneath it. The rank
@@ -605,8 +571,8 @@ function boldCornerIndex(card) {
   // where it already starts — the cap-line top and baseline are untouched,
   // only the width changes.
   const transformAttr = ` transform="translate(2 0) scale(${LETTER_CONDENSE_SX} 1) translate(-2 0)"`;
-  return `<g fill="${inkUrl(card, 'index')}">
-    <text class="cg-bold-index" x="2" y="${LETTER_BASELINE}" font-size="${LETTER_FONT_SIZE.toFixed(2)}"${transformAttr} font-weight="800" text-anchor="start">${label}</text>
+  return `<g ${fillInk(card)}>
+    <text class="cg-bold-index" x="2" y="${LETTER_BASELINE}" font-size="${LETTER_FONT_SIZE.toFixed(2)}"${transformAttr} style="${RANK_FONT}" text-anchor="start">${label}</text>
     <use href="#cg-pip-${card.suit}" x="2" y="${PIP_Y}" width="28" height="28"/>
   </g>`;
 }
@@ -616,39 +582,40 @@ function boldCornerSuit(card) {
   const size = 42;
   const x = VB_W - size - 4;
   const y = VB_H - size - 4;
-  return `<use href="#cg-pip-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}" fill="${inkUrl(card, 'ink')}"/>`;
+  return `<use href="#cg-pip-${card.suit}" x="${x}" y="${y}" width="${size}" height="${size}" ${fillInk(card)}/>`;
 }
 
 /** JOKER, one letter per line, stacked down the same top-left strip. */
 function boldJokerIndex(card) {
   const letters = 'JOKER'.split('');
-  const lines = letters.map((ch, i) => `<text class="cg-bold-index" x="4" y="${22 + i * 20}" font-size="19" font-weight="800" text-anchor="start">${ch}</text>`).join('');
-  return `<g fill="${inkUrl(card, 'index')}">${lines}</g>`;
+  const lines = letters.map((ch, i) => `<text class="cg-bold-index" x="4" y="${22 + i * 20}" font-size="19" style="${RANK_FONT}" text-anchor="start">${ch}</text>`).join('');
+  return `<g ${fillInk(card)}>${lines}</g>`;
 }
 
 /** A big star (small joker) or crown (big joker), bottom-right. */
 function boldJokerBottom(card) {
   const big = card.rank === 17;
+  const ink = inkColour(card);
   const size = 42;
   const x = VB_W - size - 4;
   if (big) {
     const h = size * 0.6;
-    return `<g style="color:var(--rose-ink-2)"><use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/></g>`;
+    return `<g style="color:${ink}"><use href="#cg-crown" x="${x}" y="${VB_H - h - 6}" width="${size}" height="${h}"/></g>`;
   }
-  return `<text x="${x + size / 2}" y="${VB_H - 8}" font-size="${size * 0.85}" text-anchor="middle" style="color:var(--joker-silver-2)" fill="currentColor">★</text>`;
+  return `<text x="${x + size / 2}" y="${VB_H - 8}" font-size="${size * 0.85}" text-anchor="middle" style="fill:${ink}">★</text>`;
 }
 
-/** The bold face's inner markup (without the <svg> wrapper). Same black
- * face and gold/rose-gold ink as the default style; the layout — one
+/** The bold face's inner markup (without the <svg> wrapper). Same white
+ * stock and red/black ink as the default style; the layout — one
  * oversized top-left index, one big bottom-right suit glyph — is untouched. */
 export function cardFaceBoldBody(card) {
-  const colour = isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
+  const colour = cardColour(card);
   const corner = isJoker(card) ? boldJokerIndex(card) : boldCornerIndex(card);
   const bottom = isJoker(card) ? boldJokerBottom(card) : boldCornerSuit(card);
   // The index runs the top-left ~34% wide, ~72% tall strip; the suit glyph
   // is a 42%-wide box bottom-right — the frame's gaps clear both, leaving
   // only a sliver bottom-left/top-right for the line itself to occupy.
-  const frameLine = brokenFrame(inkUrl(card, 'index'), 36, 102, 48, 48);
+  const frameLine = brokenFrame(inkColour(card), 36, 102, 48, 48);
   return `<g data-colour="${colour}">${faceBody()}${frameLine}${corner}${bottom}</g>`;
 }
 
@@ -659,9 +626,9 @@ export function cardBackBoldBody() {
 }
 
 function installBoldCardDefs(doc = globalThis.document) {
-  // The bold sheet cross-references the default sheet's shared gradients,
-  // the plain pip symbols and the crown/curl symbols by plain "cg-..." id
-  // (see sharedGoldDefs) rather than duplicating them — this guarantees
+  // The bold sheet cross-references the default sheet's shared symbols (the
+  // plain pips, the crown and curl) and the back's lattice pattern by plain
+  // "cg-..." id (see sharedCardDefs) rather than duplicating them — this guarantees
   // that cross-reference resolves regardless of which style a caller reaches
   // for first.
   installCardDefs(doc);
@@ -693,7 +660,7 @@ export function cardElement(card, opts = {}) {
   const down = !card || opts.faceDown;
   const bold = opts.style === 'bold';
   if (bold) installBoldCardDefs();
-  const colour = down ? '' : isJoker(card) ? JOKER_COLOUR[card.rank] : SUIT_COLOUR[card.suit];
+  const colour = down ? '' : cardColour(card);
   const key = (down ? 'back' : `${card.id}:${colour}`) + (bold ? ':bold' : '');
   const symbolId = bold
     ? (down ? 'cg-card-bold-back' : `cg-card-bold-${card.id}`)

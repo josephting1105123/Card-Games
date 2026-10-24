@@ -2,7 +2,7 @@
    big2.css — the Big Two table. Four seats (you at the bottom, opponents
    left/top/right), a played-card zone per seat, and a hand that must stay
    entirely on screen (no edge-clipping — see .b2-hand below). A separate
-   implementation from table.css's three-seat Dou Di Zhu felt: nothing here
+   implementation from table.css's three-seat Dou Di Zhu table: nothing here
    is shared with .table/.felt/.seat/.play, only the tokens both read and the
    bare .card box table.css defines (width/aspect-ratio/colour), which every
    table in the app reuses. Sizes below are tuned and measured at 844x390,
@@ -15,33 +15,45 @@
   position: fixed; inset: 0; display: grid; overflow: hidden;
   grid-template-rows: auto 1fr auto;
   --card-w: clamp(36px, 6vw, 70px);
-  background: var(--felt-surface);
+  /* The cloth, veiled so cards read over the print (same recipe as table.css). */
+  background: var(--table-surface);
+  box-shadow: var(--table-vignette);
 }
 
-/* --- head-up display ------------------------------------------------------- */
+/* --- head-up display -------------------------------------------------------
+   Card-stock tags laid straight on the cloth; the bar has no fill of its own,
+   since bare text on the print would lose contrast behind a peony. */
 
 .b2-hud {
   display: flex; align-items: center; gap: clamp(8px, 1.6vw, 18px);
   padding: 6px clamp(10px, 2vw, 22px);
-  background: var(--hud-bg);
-  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+  border-bottom: 1px solid transparent;
   font-size: clamp(11px, 1.5vw, 14px);
 }
 .b2-hud__spacer { flex: 1; }
 .b2-hud__pill {
   display: flex; align-items: baseline; gap: 6px; white-space: nowrap;
-  padding: 4px 10px; border-radius: var(--r-sm);
+  padding: 4px 10px; border-radius: var(--r-pill);
   border: 1px solid var(--hairline); background: var(--pill-bg);
+  box-shadow: var(--shadow-1);
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
 }
-.b2-hud__pill b { font-size: 1.2em; font-weight: 600; color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
-.b2-hud__pill--table b { color: var(--text); font-weight: 400; }
+.b2-hud__pill b { font-size: 1.2em; font-weight: 700; color: var(--red-deep); font-variant-numeric: lining-nums tabular-nums; }
+.b2-hud__pill--table b { color: var(--text); }
 .b2-hud__pill--table small { margin-left: 4px; }
-.b2-hud__pill small { font-size: 0.9em; font-style: italic; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); }
+.b2-hud__pill small { font-size: 0.9em; font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); }
 .b2-hud__pill[hidden] { display: none; }
 @media (max-width: 700px) { .b2-hud__pill--pot small { display: none; } }
-.b2-hud .back-link { font-size: 1.25em; padding: 2px 8px; line-height: 1; }
+.b2-hud .back-link {
+  font-size: 1.25em; padding: 2px 8px; line-height: 1;
+  color: var(--text); background: var(--stock); border-radius: var(--r-pill);
+  /* An inset ring, not a border: .back-link has none, and adding one would grow the box. */
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
+}
+.b2-hud .back-link:hover { color: var(--red-hover); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--red); }
 
-/* --- felt -------------------------------------------------------------------
+/* --- the cloth ---------------------------------------------------------------
    seatTop, playTop, a flexible spacer, playSelf and controls are real flow
    children of this column now, not four independent top:NN% guesses: a
    fixed percentage for playTop and playSelf, tuned only against their own
@@ -70,30 +82,35 @@
 
 .b2-seat__plate {
   display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px;
-  border-radius: var(--r-sm); border: 1px solid var(--hairline-strong);
-  background: var(--plate-bg); font-size: clamp(11px, 1.4vw, 13.5px); max-width: 100%;
+  border-radius: var(--r-pill); border: 1px solid var(--hairline);
+  background: var(--plate-bg); box-shadow: var(--shadow-1);
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
+  font-size: clamp(11px, 1.4vw, 13.5px); max-width: 100%;
 }
-.b2-seat__plate.is-turn { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
+/* The ring's second pixel is a shadow, so the plate keeps its 1px border and
+   its box. */
+.b2-seat__plate.is-turn { border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
 .b2-seat__avatar {
   width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none;
-  font-size: 12px; font-weight: 600; color: var(--ink);
-  background: var(--gold);
+  font-size: 12px; font-weight: 700; color: var(--text);
+  background: var(--hairline);
 }
 .b2-seat__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12ch; }
-.b2-seat__count { color: var(--gold); white-space: nowrap; font-variant-numeric: lining-nums tabular-nums; }
-/* Rose-gold, tokens only (F4): the one hand a follower most needs to notice. */
-.b2-seat__count.is-last-card { color: var(--rose-ink-1); font-weight: 600; }
+.b2-seat__count { color: var(--red-deep); white-space: nowrap; font-variant-numeric: lining-nums tabular-nums; }
+/* Stool red against the deep red of every other count: the one hand a follower
+   most needs to notice (F4). */
+.b2-seat__count.is-last-card { color: var(--red); font-weight: 800; }
 
 .b2-seat__backs { display: flex; justify-content: center; max-width: 100%; }
 .b2-seat__backs .card {
   --card-w: clamp(20px, 4.6vh, 32px);
   margin-left: calc(var(--card-w) * -0.62);
-  box-shadow: -2px 2px 5px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--card-shadow);
 }
 .b2-seat__backs .card:first-child { margin-left: 0; }
 /* Hand end: the stack becomes the real, face-up hand, revealed in place — a
    touch bigger than the backs it replaces, since it is now meant to be read. */
-.b2-seat__backs.is-revealed .card { --card-w: clamp(24px, 5.4vh, 40px); margin-left: calc(var(--card-w) * -0.42); box-shadow: -2px 2px 5px rgba(0, 0, 0, 0.35); }
+.b2-seat__backs.is-revealed .card { --card-w: clamp(24px, 5.4vh, 40px); margin-left: calc(var(--card-w) * -0.42); box-shadow: var(--card-shadow); }
 
 /* --- the trick, one landing zone per seat ---------------------------------- */
 
@@ -123,8 +140,10 @@
 .b2-caption {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
   z-index: 3; max-width: 44%; text-align: center; pointer-events: none;
-  padding: 4px 12px; border-radius: var(--r-sm);
-  background: rgba(0, 0, 0, 0.6); color: var(--ivory);
+  padding: 4px 12px; border-radius: var(--r-pill);
+  background: var(--stock); color: var(--text);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
+  font-family: var(--font-display); font-weight: 700;
   font-size: var(--t-caption); line-height: 1.3;
   opacity: 0; transition: opacity 240ms var(--ease-std);
 }
@@ -135,9 +154,13 @@
 
 .b2-play__name {
   white-space: nowrap; font-size: var(--t-caption); letter-spacing: 0.04em; line-height: 1.1;
-  color: var(--gold); opacity: 0; transition: opacity 200ms var(--ease-std);
+  /* Bare text on the cloth, so a cloth-coloured halo stands in for a fill, and
+     full opacity once shown: .9 on the print would dip under 4.5:1. */
+  color: var(--red-deep); font-family: var(--font-display); font-weight: 700;
+  text-shadow: 0 0 3px var(--cloth), 0 0 6px var(--cloth);
+  opacity: 0; transition: opacity 200ms var(--ease-std);
 }
-.b2-play:not(.is-empty):not(.is-fading) .b2-play__name { opacity: 0.9; }
+.b2-play:not(.is-empty):not(.is-fading) .b2-play__name { opacity: 1; }
 
 .b2-play.is-entering .b2-play__cards > * {
   animation: b2-play-in 220ms var(--ease) backwards;
@@ -148,24 +171,24 @@
   to { opacity: 1; transform: none; }
 }
 
-/* --- controls: last item in the felt's north/south flow, just above the
+/* --- controls: last item in the cloth's north/south flow, just above the
    hand -------------------------------------------------------------------
    F4's "Your lead — include 3♦" line (first play of the hand only) shares
    .b2-controls__label with the ordinary selection feedback rather than
    taking a spot of its own — see big2.js's renderControls(): the two never
-   apply at once, and the felt has no free band left for a fifth floating
+   apply at once, and the cloth has no free band left for a fifth floating
    element at 844x330. */
 
 .b2-controls {
   margin-bottom: 2px; z-index: 4; flex-shrink: 0; /* see .b2-seat--top's comment */
   display: flex; align-items: center; justify-content: center; gap: clamp(5px, 1vw, 12px); flex-wrap: nowrap;
-  max-width: 96%; padding: 5px clamp(8px, 1.4vw, 14px); border-radius: var(--r-md);
-  background: var(--controls-bg); border: 1px solid var(--hairline-strong); box-shadow: var(--shadow-3);
+  max-width: 96%; padding: 5px clamp(8px, 1.4vw, 14px); border-radius: var(--r-ui);
+  background: var(--controls-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-paper);
 }
 /* Hand over: hidden during the reveal, but in flow so nothing shifts. */
 .b2-controls.is-ended { visibility: hidden; }
 .b2-controls .btn { padding: clamp(5px, 0.9vh, 8px) clamp(8px, 1.6vw, 16px); font-size: clamp(12px, 1.5vw, 15px); }
-.b2-controls__label { font-size: clamp(11px, 1.4vw, 13.5px); color: var(--text-tertiary); white-space: nowrap; max-width: 30vw; overflow: hidden; text-overflow: ellipsis; }
+.b2-controls__label { font-size: clamp(11px, 1.4vw, 13.5px); color: var(--text-secondary); font-family: var(--font-display); font-weight: 700; white-space: nowrap; max-width: 30vw; overflow: hidden; text-overflow: ellipsis; }
 
 /* --- your hand --------------------------------------------------------------
    Unlike Dou Di Zhu's fan, the whole card — including its bottom edge — must
@@ -176,7 +199,7 @@
 .b2-dock {
   display: flex; flex-direction: column; align-items: center;
   padding: 2px clamp(10px, 2vw, 22px) 4px;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent);
+  background: var(--scrim-light);
 }
 
 .b2-hand {
@@ -202,8 +225,8 @@
   cursor: pointer; border-radius: var(--card-radius);
 }
 .b2-hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
-.b2-hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 10px 12px rgba(0, 0, 0, 0.5); }
-.b2-hand .card:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+.b2-hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 0 0 2px var(--red), var(--shadow-paper); }
+.b2-hand .card:focus-visible { outline: var(--focus-outline); outline-offset: 3px; }
 
 /* --- shuffle and deal -------------------------------------------------------
    Transform and opacity only. One flight leg (b2-fly) is reused for every
@@ -262,7 +285,9 @@
      table is a different shape (phones use the collapse toggle for this,
      not headroom — see .is-collapsed there). */
   padding: var(--b2-result-pad-y) 18px 18px;
-  background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
+  /* A veil of card stock rather than a dark scrim: the sheet is stock too, so
+     it is its border and paper shadow that lift it off the pale table. */
+  background: var(--panel); backdrop-filter: blur(3px);
   /* visibility flips at once on show so the fade is visible, and while pending
      it keeps the buttons out of reach of taps and Tab. */
   transition: opacity var(--dur-slow) var(--ease-std), visibility 0s;
@@ -278,21 +303,21 @@
      the box via overflow-y instead of pushing past the viewport's own edge. */
   max-height: min(90vh, calc(100vh - var(--b2-result-pad-y) - 18px));
   overflow-y: auto; text-align: center;
-  padding: 24px 26px 20px; border-radius: var(--r-lg);
-  border: 1px solid var(--hairline-strong); background: var(--panel-solid);
-  box-shadow: var(--shadow-8);
+  padding: 24px 26px 20px; border-radius: var(--r-ui);
+  border: 1px solid var(--hairline); background: var(--panel-solid);
+  box-shadow: var(--shadow-paper);
 }
 .b2-result__head { margin: 0 0 14px; }
-.b2-result__title { font-size: clamp(24px, 5vw, 36px); font-weight: 500; margin: 0 0 4px; }
-.b2-result__title.is-win { color: var(--gold-bright); }
-.b2-result__title.is-loss { color: #f0a58f; }
-.b2-result__big-delta { font-size: clamp(20px, 4vw, 28px); margin: 0; font-variant-numeric: lining-nums tabular-nums; }
+.b2-result__title { font-size: clamp(24px, 5vw, 36px); font-weight: 800; margin: 0 0 4px; }
+.b2-result__title.is-win { color: var(--red-deep); }
+.b2-result__title.is-loss { color: var(--text-secondary); }
+.b2-result__big-delta { font-size: clamp(20px, 4vw, 28px); font-family: var(--font-display); font-weight: 700; margin: 0; font-variant-numeric: lining-nums tabular-nums; }
 .b2-result__big-delta.is-win { color: var(--ok); }
 .b2-result__big-delta.is-loss { color: var(--danger); }
 
-.b2-result__rows { display: grid; gap: 4px; margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r-md); background: rgba(0, 0, 0, 0.22); }
+.b2-result__rows { display: grid; gap: 4px; margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r-md); background: var(--cloth); box-shadow: inset 0 0 0 1px var(--hairline); }
 .b2-result__row { display: flex; align-items: baseline; gap: 10px; font-size: 14.5px; padding: 3px 0; }
-.b2-result__row.is-winner .b2-result__name { color: var(--gold-bright); font-weight: 600; }
+.b2-result__row.is-winner .b2-result__name { color: var(--red-deep); font-weight: 700; }
 .b2-result__name { flex: 1; text-align: left; color: var(--text-secondary); }
 .b2-result__cards { color: var(--text-tertiary); font-variant-numeric: lining-nums tabular-nums; }
 .b2-result__delta { min-width: 6ch; text-align: right; font-variant-numeric: lining-nums tabular-nums; }
@@ -300,7 +325,7 @@
 .b2-result__delta.is-loss { color: var(--danger); }
 
 .b2-result__lines { list-style: none; margin: 0 0 18px; padding: 0; font-size: 14.5px; line-height: 1.5; color: var(--text-secondary); display: grid; gap: 6px; }
-.b2-result__lines span { color: var(--gold); }
+.b2-result__lines span { color: var(--red-deep); font-weight: 700; }
 
 /* Small, unobtrusive: this is a secondary escape hatch (Leave/Next hand are
    the primary actions), not another button competing with them. */
@@ -309,11 +334,11 @@
   font-family: var(--font); font-size: 12.5px; color: var(--text-tertiary); text-decoration: underline;
   cursor: pointer;
 }
-.b2-result__toggle:hover { color: var(--gold); }
+.b2-result__toggle:hover { color: var(--red-hover); }
 
 /* --- "Show table": collapses the sheet to a slim bar so F4's face-up reveal
    is actually visible, not just technically present under a dimmed modal.
-   Docked over the HUD rather than the felt itself: the HUD is the one band
+   Docked over the HUD rather than the cloth itself: the HUD is the one band
    on this table with no seat plate or card in it at any viewport, so a bar
    confined to that band can never cover a revealed hand by construction,
    without having to chase seat positions across three screen sizes. */
@@ -381,14 +406,14 @@
     position: fixed; inset: 0; z-index: var(--z-rotate-gate); display: grid; place-items: center; text-align: center;
     padding: 30px; background: var(--panel-solid); color: var(--text);
   }
-  .b2-rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--gold); }
-  .b2-rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 500; color: var(--ivory); }
+  .b2-rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--red); }
+  .b2-rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 800; color: var(--red-deep); }
   .b2-rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
 }
 
 /* Short landscape (phone browser bar): every size below is already vh-driven
    (seat backs, play cards, the hand), so it shrinks on its own — only the HUD
-   padding needs trimming to give that shrunk felt a little more of the height back. */
+   padding needs trimming to give that shrunk table a little more of the height back. */
 @media (orientation: landscape) and (max-height: 460px) {
   .b2-hud { padding-top: 3px; padding-bottom: 3px; }
 }
