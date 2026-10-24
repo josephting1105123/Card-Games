@@ -1,11 +1,11 @@
 /* ==========================================================================
    blackjack.css — betting and the Blackjack table.
-   A separate implementation from table.css's Dou Di Zhu felt (one player,
+   A separate implementation from table.css's Dou Di Zhu table (one player,
    one or more hands, no seats), so every class here is its own; nothing is
    shared with .table/.hand/.seat/.play. Reads only the variables in
    tokens.css, and reuses app.css's generic .page/.tile/.btn/.card-panel
    scaffolding for the mode and table-picker screens the same way every other
-   screen in the app does. Betting itself lives on the felt (below), not a
+   screen in the app does. Betting itself lives on the table (below), not a
    separate page — the action row holds the bet controls when there is no
    round in progress, the same slot Hit/Stand/Double live in once there is.
    ========================================================================== */
@@ -14,24 +14,30 @@
    again in the action row once a round settles --------------------------- */
 
 .bj-chip-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+/* Chips are choices, not commands, so they take the choice-pill look (hairline
+   edge, ink text) and leave the red outline to Clear / Repeat / Deal. */
 .bj-chip {
   border-radius: var(--r-pill); min-width: 64px; text-align: center;
-  border-color: rgba(205, 174, 108, 0.5);
+  border-color: var(--hairline); color: var(--text);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
 }
+.bj-chip:hover:not(:disabled) { border-color: var(--red); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--red); }
 
 /* --- the rules panel: an overlay, since it is opened from both betting and
    mid-round and does not need to reserve layout space either way --------- */
 
 .bj-overlay {
   position: fixed; inset: 0; z-index: var(--z-overlay); display: grid; place-items: center; padding: 18px;
-  background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
+  /* A veil of card stock rather than a dark scrim: the sheet is stock too, so
+     it is its border and paper shadow that lift it off the pale table. */
+  background: var(--panel); backdrop-filter: blur(3px);
 }
 .bj-rules {
   width: min(92vw, 560px); max-height: 84vh; overflow-y: auto; padding: 24px 26px;
-  border-radius: var(--r-lg); border: 1px solid var(--hairline-strong);
-  background: var(--panel-solid); box-shadow: var(--shadow-8);
+  border-radius: var(--r-ui); border: 1px solid var(--hairline);
+  background: var(--panel-solid); box-shadow: var(--shadow-paper);
 }
-.bj-rules h2 { margin: 0 0 12px; font-size: clamp(20px, 3.4vw, 26px); font-weight: 500; color: var(--ivory); }
+.bj-rules h2 { margin: 0 0 12px; font-size: clamp(20px, 3.4vw, 26px); font-weight: 800; color: var(--red-deep); }
 .bj-rules ul { margin: 0 0 18px; padding-left: 20px; line-height: 1.7; color: var(--text-secondary); font-size: 15px; }
 .bj-rules li { margin-bottom: 8px; }
 
@@ -47,31 +53,52 @@
 .bj-table {
   position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden;
   --card-w: 20vh;
-  background: var(--felt-surface);
+  /* The cloth, veiled so cards read over the print (same recipe as table.css). */
+  background: var(--table-surface);
+  box-shadow: var(--table-vignette);
 }
 
+/* Bare text on the print (dealer label, hand totals, hints) gets a cloth-coloured
+   halo instead of a fill: those lines have no padding to hold one, and a peony
+   behind them would otherwise pull the contrast under 4.5:1. */
+.bj-hud .back-link, .bj-hud__title, .bj-hint, .bj-dealer__name, .bj-dealer__total, .bj-hand__foot, .bj-hand__result,
+.bj-swap__label, .bj-swap__note {
+  text-shadow: 0 0 3px var(--cloth), 0 0 6px var(--cloth);
+}
+
+/* Card-stock tags laid on the cloth; the bar itself has no fill. */
 .bj-hud {
   flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: clamp(6px, 1.4vw, 14px);
   padding: 7px clamp(10px, 2vw, 22px);
-  background: var(--hud-bg);
-  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+  border-bottom: 1px solid transparent;
   font-size: clamp(12px, 1.6vw, 15px);
 }
-.bj-hud__title { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bj-hud__title {
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* A bare arrow beside the title here, not a pill, so it takes full ink to hold
+   contrast on the print. */
+.bj-hud .back-link { color: var(--text); }
+.bj-hud .back-link:hover { color: var(--red-hover); }
 .bj-hud__spacer { flex: 1; }
 .bj-hud__pill {
   display: flex; align-items: baseline; gap: 6px; white-space: nowrap;
-  padding: 5px 11px; border-radius: var(--r-sm);
+  padding: 5px 11px; border-radius: var(--r-pill);
   border: 1px solid var(--hairline); background: var(--pill-bg);
+  box-shadow: var(--shadow-1);
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
 }
-.bj-hud__pill small { font-size: 0.9em; font-style: italic; letter-spacing: 0; text-transform: lowercase; color: var(--text-tertiary); }
+.bj-hud__pill small { font-size: 0.9em; font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); }
 /* The Rules button is a plain .btn in the HUD; it matches the pills beside it
-   (including the tighter phone paddings in the queries below). */
+   (including the tighter phone paddings in the queries below). It keeps the
+   red outline: it is the one pressable thing up here. */
 .bj-hud .btn {
   padding: 5px 11px; font-size: inherit; line-height: inherit; min-height: 0;
-  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  border: 1px solid var(--red); border-radius: var(--r-pill);
 }
-.bj-hud__pill b { font-size: 1.15em; color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
+.bj-hud__pill b { font-size: 1.15em; font-weight: 700; color: var(--red-deep); font-variant-numeric: lining-nums tabular-nums; }
 
 .bj-felt {
   flex: 1; min-height: 0; position: relative;
@@ -81,16 +108,19 @@
 
 .bj-shoe { position: absolute; top: 6px; right: clamp(8px, 2vw, 20px); --card-w: clamp(26px, 3.6vw, 38px); opacity: 0.92; }
 
-.bj-hint { color: var(--text-tertiary); font-size: clamp(13px, 1.8vw, 16px); text-align: center; padding: 8px; }
+.bj-hint { color: var(--text-secondary); font-size: clamp(13px, 1.8vw, 16px); text-align: center; padding: 8px; }
 
 .bj-dealer { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .bj-dealer__row { display: flex; align-items: baseline; gap: 10px; }
-.bj-dealer__name { font-size: var(--t-label); font-style: italic; letter-spacing: 0; text-transform: lowercase; color: var(--text-tertiary); }
-.bj-dealer__total { font-size: clamp(14px, 2.2vw, 19px); color: var(--gold-bright); min-height: 1.2em; }
+.bj-dealer__name {
+  font-size: var(--t-label); font-family: var(--font-display); font-weight: 700;
+  font-style: normal; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary);
+}
+.bj-dealer__total { font-size: clamp(14px, 2.2vw, 19px); font-family: var(--font-display); font-weight: 700; color: var(--red-deep); min-height: 1.2em; }
 .bj-dealer__cards { display: flex; justify-content: center; min-height: calc(var(--card-w) * 1.4); }
 /* The cards' own shadow (the base .card rule, table.css) is enough — no
-   extra box-shadow here, which used to draw a second, harder-edged rectangle
-   behind the fan on the felt's dark background. */
+   extra box-shadow here, which would draw a second, harder-edged rectangle
+   behind the fan on the cloth. */
 .bj-dealer__cards .card { margin-left: calc(var(--card-w) * -0.42); }
 .bj-dealer__cards .card:first-child { margin-left: 0; }
 
@@ -100,15 +130,15 @@
   padding: 6px 10px; border-radius: var(--r-md); border: 1px solid transparent;
   transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std);
 }
-/* Only ever applied with more than one hand on the felt (see paintHands) —
+/* Only ever applied with more than one hand on the cloth (see paintHands) —
    with a single hand there is nothing for a ring to distinguish it from. */
-.bj-hand.is-active { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
+.bj-hand.is-active { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .bj-hand__cards { display: flex; min-height: calc(var(--card-w) * 1.4); }
 .bj-hand__cards .card { margin-left: calc(var(--card-w) * -0.38); }
 .bj-hand__cards .card:first-child { margin-left: 0; }
 .bj-hand__foot { display: flex; gap: 10px; font-size: clamp(12px, 1.6vw, 14.5px); }
-.bj-hand__total { color: var(--gold); font-variant-numeric: lining-nums tabular-nums; }
-.bj-hand__bet { color: var(--text-tertiary); }
+.bj-hand__total { color: var(--red-deep); font-family: var(--font-display); font-weight: 700; font-variant-numeric: lining-nums tabular-nums; }
+.bj-hand__bet { color: var(--text-secondary); font-family: var(--font-display); font-weight: 700; }
 .bj-hand__result { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); }
 
 /* --- the merged Malaysian table: one banker box (top) and four seats (a row
@@ -120,7 +150,7 @@
    11vh size below is otherwise always safe for the row's width budget. ---- */
 
 /* flex:1 (not .bj-felt's own justify-content:space-between) claims the
-   felt's spare vertical space and centres the banker box, the swap button
+   cloth's spare vertical space and centres the banker box, the swap button
    and the seat row as one group in it — same technique the old
    .bj-dealerseat-rows used, just generalised to a third child (the swap
    button) between the other two. */
@@ -140,8 +170,8 @@
 .bj-box {
   flex: 0 1 auto; min-width: 0;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 5px 6px; border-radius: var(--r-sm); border: 1px solid var(--hairline-strong);
-  background: var(--plate-bg); font: inherit; color: inherit;
+  padding: 5px 6px; border-radius: var(--r-lg); border: 1px solid var(--hairline);
+  background: var(--plate-bg); box-shadow: var(--shadow-1); font: inherit; color: var(--text);
   /* A real touchstart on a seat must never be swallowed by Chromium's
      default double-tap-to-zoom delay. */
   touch-action: manipulation;
@@ -149,20 +179,21 @@
 }
 .bj-box:disabled { cursor: default; }
 button.bj-box:not(:disabled) { cursor: pointer; }
-/* The human's own box, wherever it is — gold ring, same affordance weight as
-   .bj-box.is-openable/.is-active below use for their own moments. */
-.bj-box--you { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
+/* The human's own box, wherever it is — stool-red ring, same affordance weight as
+   .bj-box.is-openable/.is-active below use for their own moments. The ring's
+   second pixel is a shadow, so the box keeps its 1px border. */
+.bj-box--you { border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
 /* Tappable only once the banker is at 16+ and this seat is still pending
    (see enableOpenableMSeats in ui/blackjack.js). */
-.bj-box.is-openable { cursor: pointer; border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
-/* Whose turn it is, seat or banker — a softer ring than "you"/"openable" so
-   the two never fight for attention when the active seat is also yours. */
-.bj-box.is-active { border-color: #7fd1a8; box-shadow: 0 0 0 1px #7fd1a8; }
+.bj-box.is-openable { cursor: pointer; border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
+/* Whose turn it is, seat or banker — ink instead of red, so it never reads as
+   "you"/"openable" when the active seat is also yours. */
+.bj-box.is-active { border-color: var(--text-secondary); box-shadow: 0 0 0 1px var(--text-secondary), var(--shadow-1); }
 
 .bj-box__row { display: flex; align-items: baseline; gap: 6px; max-width: 100%; }
-.bj-box__name { font-size: clamp(11px, 1.4vw, 13px); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.bj-box--you .bj-box__name { color: var(--gold-bright); }
-.bj-box__bet { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
+.bj-box__name { font-size: clamp(11px, 1.4vw, 13px); font-family: var(--font-display); font-weight: 700; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.bj-box--you .bj-box__name { color: var(--red-deep); }
+.bj-box__bet { font-size: clamp(11px, 1.4vw, 13px); font-family: var(--font-display); font-weight: 700; color: var(--red-deep); font-variant-numeric: lining-nums tabular-nums; }
 
 /* 11vh everywhere, phone sizes included, capped so an unusually tall window
    never lets a 5-card fan outgrow the row's width budget. The cap has to
@@ -180,7 +211,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
    (see the measured table in the PR description). */
 .bj-box--you .bj-box__cards { --card-w: clamp(56px, 20vh, 110px); }
 
-.bj-box__total { font-size: clamp(11px, 1.4vw, 13px); color: var(--gold-bright); min-height: 1.2em; font-variant-numeric: lining-nums tabular-nums; }
+.bj-box__total { font-size: clamp(11px, 1.4vw, 13px); font-family: var(--font-display); font-weight: 700; color: var(--red-deep); min-height: 1.2em; font-variant-numeric: lining-nums tabular-nums; }
 .bj-box__result { font-size: clamp(10.5px, 1.3vw, 12.5px); min-height: 1.2em; text-align: center; }
 .bj-box__result.is-win { color: var(--ok); }
 .bj-box__result.is-lose { color: var(--danger); }
@@ -200,7 +231,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
    font. ----------------------------------------------------------------- */
 .bj-swap {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  background: none; border: 0; padding: 2px; font: inherit; color: var(--text-tertiary);
+  background: none; border: 0; padding: 2px; font: inherit; color: var(--text-secondary);
   touch-action: manipulation;
 }
 .bj-swap:not(:disabled) { cursor: pointer; }
@@ -208,25 +239,33 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 .bj-swap__icon {
   width: clamp(32px, 5vh, 42px); height: clamp(32px, 5vh, 42px); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--hairline-strong); background: rgba(0, 0, 0, 0.32); color: var(--gold-bright);
+  border: 1px solid var(--red); background: var(--white); color: var(--red-hover);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--red);
   transition: border-color var(--dur-fast) var(--ease-std), transform var(--dur-fast) var(--ease-std);
 }
 .bj-swap__icon svg { width: 55%; height: 55%; }
-.bj-swap:not(:disabled):hover .bj-swap__icon { border-color: var(--gold-bright); }
+.bj-swap:not(:disabled):hover .bj-swap__icon { background: var(--red-tint); }
 .bj-swap:not(:disabled):active .bj-swap__icon { transform: scale(0.92); }
-.bj-swap__label { font-size: clamp(10px, 1.3vw, 12px); font-style: italic; letter-spacing: 0; text-transform: lowercase; }
+.bj-swap__label { font-size: clamp(10px, 1.3vw, 12px); font-family: var(--font-display); font-weight: 700; font-style: normal; letter-spacing: 0; text-transform: none; }
 /* A blocked reason (bankroll, mid-round) has to be readable on a touch
    screen that gets no hover/title tooltip at all — a flat 12px floor, not
    the same vw-clamp the caption uses, which resolves under 12px at every
    width this table is tested at. Shown/hidden from JS (paintMSwap), not
    CSS, so it costs no space at all the rest of the time, the common case. */
-.bj-swap__note { font-size: 12px; line-height: 1.15; color: var(--text-tertiary); max-width: 22ch; text-align: center; }
+.bj-swap__note { font-size: 12px; line-height: 1.15; color: var(--text-secondary); max-width: 22ch; text-align: center; }
 
 /* position + z-index: .bj-felt is itself position:relative (it anchors the
    banner), which alone would let its content paint above this non-positioned
-   sibling if the felt's rows ever ran taller than its box — the buttons here
+   sibling if the cloth's rows ever ran taller than its box — the buttons here
    must never be a hit-testing casualty of that. */
-.bj-actions { position: relative; z-index: 1; flex: 0 0 auto; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: clamp(8px, 1.6vw, 14px); padding: 6px 10px clamp(8px, 1.4vh, 14px); min-height: 40px; }
+.bj-actions {
+  position: relative; z-index: 1; flex: 0 0 auto; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: clamp(8px, 1.6vw, 14px); padding: 6px 10px clamp(8px, 1.4vh, 14px); min-height: 40px;
+  /* A card-stock tray along the bottom edge. It spans the viewport, so only the
+     top corners round, and its edge is an inset hairline: a border would add a
+     pixel to the bar's height. */
+  background: var(--controls-bg); border-radius: var(--r-ui) var(--r-ui) 0 0;
+  box-shadow: inset 0 1px 0 var(--hairline), var(--shadow-paper);
+}
 .bj-actions .btn { padding: 9px 16px; font-size: clamp(14px, 1.8vw, 16px); }
 
 /* --- betting controls: bet readout, chips, Clear, Repeat bet and Deal, all
@@ -235,38 +274,38 @@ button.bj-box:not(:disabled) { cursor: pointer; }
    see the comment on .bj-actions and paintBettingControls for why that
    matters to the result banner. --------------------------------------------- */
 
-.bj-bet-live { display: flex; align-items: baseline; gap: 6px; font-size: clamp(13px, 1.6vw, 15px); color: var(--text-secondary); }
-.bj-bet-live b { font-size: 1.2em; color: var(--gold-bright); font-variant-numeric: lining-nums tabular-nums; }
+.bj-bet-live { display: flex; align-items: baseline; gap: 6px; font-size: clamp(13px, 1.6vw, 15px); color: var(--text-secondary); font-family: var(--font-display); font-weight: 700; }
+.bj-bet-live b { font-size: 1.2em; color: var(--red-deep); font-variant-numeric: lining-nums tabular-nums; }
 
 .bj-insurance {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
-  padding: 12px 18px; border-radius: var(--r-lg); border: 1px solid var(--hairline-strong);
-  background: var(--panel-solid); text-align: center; font-size: 14.5px; color: var(--text-secondary);
+  padding: 12px 18px; border-radius: var(--r-ui); border: 1px solid var(--hairline);
+  background: var(--panel-solid); box-shadow: var(--shadow-paper); text-align: center; font-size: 14.5px; color: var(--text-secondary);
 }
 
-/* --- the result banner: over the felt, not a modal. Both hands stay fully
+/* --- the result banner: over the cloth, not a modal. Both hands stay fully
    visible underneath it, and it never intercepts a click — the betting
    controls for the next round are already live below it. `top` is set in JS
    (showBanner) to the measured midpoint between the dealer's cards and the
-   player's, not centered in the felt as a whole: with two rows of cards each
-   a quarter of the screen tall, the felt's own centre often lands inside one
+   player's, not centered in the cloth as a whole: with two rows of cards each
+   a quarter of the screen tall, the cloth's own centre often lands inside one
    of them rather than the gap between. */
 
 .bj-banner-host { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
 .bj-banner {
   position: absolute; left: 50%; top: 50%; pointer-events: none; text-align: center; padding: 6px 20px 8px;
-  border-radius: var(--r-lg); border: 1px solid rgba(205, 174, 108, 0.5);
-  background: rgba(5, 18, 13, 0.86); box-shadow: var(--shadow-8);
+  border-radius: var(--r-ui); border: 1px solid var(--hairline);
+  background: var(--panel-solid); box-shadow: var(--shadow-paper);
   opacity: 0; transform: translate(-50%, -50%) scale(0.92);
   transition: opacity var(--dur-med) var(--ease-std), transform var(--dur-med) var(--ease-std);
 }
 .bj-banner.is-on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 .bj-banner__main { display: flex; align-items: baseline; justify-content: center; gap: 10px; white-space: nowrap; }
-.bj-banner__title { font-size: clamp(16px, 2.4vw, 24px); }
-.bj-banner.is-win .bj-banner__title { color: var(--gold-bright); }
-.bj-banner.is-loss .bj-banner__title { color: #f0a58f; }
+.bj-banner__title { font-size: clamp(16px, 2.4vw, 24px); font-family: var(--font-display); font-weight: 800; }
+.bj-banner.is-win .bj-banner__title { color: var(--red-deep); }
+.bj-banner.is-loss .bj-banner__title { color: var(--text-secondary); }
 .bj-banner.is-push .bj-banner__title { color: var(--text-secondary); }
-.bj-banner__delta { font-size: clamp(13px, 1.8vw, 18px); font-variant-numeric: lining-nums tabular-nums; }
+.bj-banner__delta { font-size: clamp(13px, 1.8vw, 18px); font-family: var(--font-display); font-weight: 700; font-variant-numeric: lining-nums tabular-nums; }
 .bj-banner.is-win .bj-banner__delta { color: var(--ok); }
 .bj-banner.is-loss .bj-banner__delta { color: var(--danger); }
 .bj-banner.is-push .bj-banner__delta { color: var(--text-secondary); }
@@ -281,7 +320,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
    ambient gap alone is as little as 3-4px at the tight phone breakpoints
    (sized for a swap icon, not an >=8px requirement), so an explicit 6px
    margin on top of it clears >=8px at every tested size (measured 9-26px)
-   without eating so much of the felt's own budget that the settled state's
+   without eating so much of the cloth's own budget that the settled state's
    slimmer margins (a single Deal button, not the in-round worst case) turn
    negative. */
 .bj-banner--inline { position: static; left: auto; top: auto; margin: 6px 0; transform: scale(0.92); }
@@ -289,8 +328,9 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 
 .bj-toast {
   position: fixed; top: 14px; left: 50%; z-index: var(--z-overlay);
-  padding: 8px 18px; border-radius: var(--r-md);
-  border: 1px solid var(--hairline-strong); background: rgba(0, 0, 0, 0.72); color: var(--ivory);
+  padding: 8px 18px; border-radius: var(--r-pill);
+  border: 1px solid var(--hairline); background: var(--stock); color: var(--text);
+  box-shadow: var(--shadow-paper); font-family: var(--font-display); font-weight: 700;
   opacity: 0; transform: translate(-50%, -8px);
   transition: opacity var(--dur-med) var(--ease-std), transform var(--dur-med) var(--ease-std);
 }
@@ -302,8 +342,8 @@ button.bj-box:not(:disabled) { cursor: pointer; }
     position: fixed; inset: 0; z-index: var(--z-rotate-gate); display: grid; place-items: center; text-align: center;
     padding: 30px; background: var(--panel-solid); color: var(--text);
   }
-  .bj-rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--gold); }
-  .bj-rotate-gate h2 { margin: 0 0 8px; font-size: 25px; color: var(--ivory); }
+  .bj-rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--red); }
+  .bj-rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 800; color: var(--red-deep); }
   .bj-rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
 }
 
@@ -323,7 +363,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
   .bj-dealer__total { font-size: 12px; }
   .bj-felt { padding: 1px 8px; gap: 1px; }
   /* mtable's own three-child stack (banker box, swap, seat row) has to fit
-     the felt's real budget here (hud+actions leave less room than the base
+     the cloth's real budget here (hud+actions leave less room than the base
      rule's 26vh math assumed) — the gap, the swap caption and the box
      padding are what give up space below, not the card floors. */
   .bj-mtable { gap: clamp(4px, 1vh, 10px); }
@@ -337,7 +377,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
   /* Still clears the >=20%-of-viewport-height floor at 844x390 (15.5vh*1.4
      = 21.7% of 390) with room for the row to actually fit under the hud and
      the action bar — 19vh (the un-scoped preferred value) was sized before
-     the felt's real hud/action budget at this height was measured. */
+     the cloth's real hud/action budget at this height was measured. */
   .bj-box--you .bj-box__cards { --card-w: clamp(52px, 15.5vh, 100px); }
   /* Icon only: the "Swap" caption is the first thing to give way at this
      height, same as the banner's reason line below — the circular badge
@@ -382,7 +422,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
   .bj-seatrow { gap: 3px; }
   /* 0, not 1px: at this exact height the seat row (the your-seat card size
      below) and the banker's own 5-card fan (both fixed-height regardless of
-     card count) already claim the felt's full budget — every px of box
+     card count) already claim the cloth's full budget — every px of box
      padding is spent keeping the row inside the hud/actions bar rather than
      spent on breathing room. */
   .bj-box { padding: 0 3px; gap: 0; }

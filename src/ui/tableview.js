@@ -9,7 +9,7 @@
  */
 
 import { cardsToString, sortCards } from '../core/cards.js';
-import { SOLO_CURRENCY, currencyLabel, currencyTint, formatAmount, formatMoney } from '../core/currency.js';
+import { SOLO_CURRENCY, currencyLabel, formatAmount, formatMoney } from '../core/currency.js';
 import { HAND_CAP_FACTOR } from '../core/economy.js';
 import { livePotDdz } from '../core/livepot.js';
 import { Phase } from '../games/doudizhu/engine.js';
@@ -82,7 +82,7 @@ export class TableView {
     n.hudPot = el('span.hud__pill.hud__pill--pot', { title: 'The most this hand can move at the current multiplier', hidden: typeof this.meta.pot !== 'number' },
       el('small', 'Pot'),
       el('b', '0'));
-    n.hudPurse = el('span.hud__pill', { style: `--pill-tint:${currencyTint(this.currency)}`, title: currencyLabel(this.currency) },
+    n.hudPurse = el('span.hud__pill', { title: currencyLabel(this.currency) },
       el('small', currencyLabel(this.currency)),
       el('b', formatAmount(this.meta.bankroll ?? 0)));
 

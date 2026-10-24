@@ -35,9 +35,9 @@ test('every shipped source file is precached, so the app runs offline', () => {
 
 test('the font files are real woff2 and are precached', () => {
   const fonts = walk('assets/fonts').filter((file) => file.endsWith('.woff2'));
-  assert.ok(fonts.length >= 2, 'the app self-hosts its font rather than linking a CDN');
+  assert.ok(fonts.length >= 1, 'the app self-hosts its font rather than linking a CDN');
   for (const file of fonts) {
-    assert.ok(precache.includes(file), `${file} is not precached, so an offline install loses Garamond`);
+    assert.ok(precache.includes(file), `${file} is not precached, so an offline install loses Bricolage Grotesque`);
     const buf = readFileSync(join(ROOT, file));
     assert.equal(buf.subarray(0, 4).toString('ascii'), 'wOF2', `${file} is not a woff2`);
   }
@@ -50,10 +50,11 @@ test('the font files are real woff2 and are precached', () => {
   assert.doesNotThrow(() => statSync(join(ROOT, 'assets/fonts/OFL.txt')), 'the font licence must ship with the font');
 });
 
-test('nothing is set in a sans face', () => {
-  for (const file of ['styles/tokens.css', 'styles/app.css', 'styles/table.css']) {
-    const css = read(file);
-    assert.equal(/sans-serif/.test(css), false, `${file} still falls back to a sans face`);
+test('headings are set in Bricolage Grotesque and nothing still names Garamond', () => {
+  assert.ok(/--font-display:\s*"Bricolage Grotesque"/.test(read('styles/tokens.css')),
+    '--font-display must lead with Bricolage Grotesque');
+  for (const file of ['styles/tokens.css', 'styles/app.css', 'styles/table.css', 'index.html', 'sw.js']) {
+    assert.equal(/garamond/i.test(read(file)), false, `${file} still names EB Garamond`);
   }
 });
 
@@ -124,7 +125,7 @@ test('the stylesheets read tokens rather than hard-coded values', () => {
   // or a duration that drifts into a component sheet is how a design system
   // stops being one.
   const tokens = read('styles/tokens.css');
-  for (const name of ['--font', '--t-body', '--dur-med', '--ease', '--r-lg', '--shadow-8', '--gold']) {
+  for (const name of ['--font', '--t-body', '--dur-med', '--ease', '--r-lg', '--shadow-8', '--red']) {
     assert.ok(tokens.includes(`${name}:`), `tokens.css does not define ${name}`);
   }
   for (const file of ['styles/app.css', 'styles/table.css']) {

@@ -311,7 +311,8 @@ src/games/doudizhu/     rules, move generation, engine, bot, match runner
 src/ui/                 card art, table view, screens, solo controller
 src/net/                room codes, wire protocol, LAN client
 server/                 static + WebSocket host, rooms, LAN addresses
-assets/fonts/           EB Garamond, self-hosted (OFL)
+assets/fonts/           Bricolage Grotesque, self-hosted (OFL)
+assets/textures/        the tablecloth print
 tools/                  icon generator, bot simulator
 test/                   64 tests, node:test, no runner to install
 ```
@@ -382,38 +383,39 @@ The LAN host (`server/server.js`) gzips text files (Blackjack's module goes from
 
 ### The cards
 
-Drawn as SVG at run time (`src/ui/cardart.js`): ivory stock with a double gold
-rule, engraved indices, traditional pip layouts for the spot cards, quatrefoil
-cartouches on the courts and aces, and a guilloche back in burgundy and gold. Suit
+Drawn as SVG at run time (`src/ui/cardart.js`): white stock with flat red and
+black ink, indices in Bricolage Grotesque, traditional pip layouts for the spot
+cards, a red joker and a black one, and a red back with a white lattice. Suit
 shapes live in one hidden symbol sheet that every card references, so a
 twenty-card fan is cheap to build. The icons are drawn pixel by pixel and written
 as PNG by `tools/make-icons.mjs` with nothing but `node:zlib`.
 
 ### The type and the tokens
 
-Everything is set in **EB Garamond** — menus, table, buttons and the card indices
-alike. Nothing in the app uses a sans face, and a test enforces that.
+The look is the open-house card table from the
+[Entropic Software Labs card games page](https://entropicsoftwarelabs.com/card-games/):
+a cream vinyl tablecloth printed with red peonies and green leaves, a red banner
+across the top, card-stock panels and red stool-coloured buttons. The OffBridge
+site and the rest of entropicsoftwarelabs.com share a dark look with a green
+accent, and this app keeps its own look, separate from both. Light is the only theme, as on that page. At
+the table the print is laid under a cream wash so the cards read over it.
 
-The CSS follows the structure of the OffBridge site: `styles/tokens.css` owns the
-palette, the fluid type scale, the motion curves, the radius and spacing steps and
-the z-index order, and it is the only sheet with a `:root` block or an
-`@font-face`. `app.css` and `table.css` read those variables and nothing else,
-which a test also checks. The palette is this app's own — green baize, gold rule,
-claret — and there is no light theme: a card table lit from above does not have
-one.
+Headings, buttons, labels and the card indices are set in **Bricolage Grotesque**;
+body text is the system sans face. A test checks that headings lead with
+Bricolage and that nothing still names the old Garamond.
+
+`styles/tokens.css` owns the palette, the fluid type scale, the motion curves, the
+radius and spacing steps and the z-index order, and it is the only sheet with a
+`:root` block or an `@font-face`. `app.css` and `table.css` read those variables
+and nothing else, which a test also checks.
 
 The font is committed to the repository rather than linked from a font CDN
 (`assets/fonts/`, SIL Open Font License, see the README there). A `<link>` to
-Google Fonts would mean the installed app fell back to Times with no network, and
-would tell a third party every time somebody opened a table. The Latin subsets
-come to about 200 KB and are precached with everything else.
-
-Two consequences worth knowing. Garamond has a small x-height, so the interface
-runs a size or two larger than it would in a sans face and the small uppercase
-labels are tracked out rather than shrunk. And anything outside the Latin subsets
-— the suit pips ♠♥♣♦, the arrows, the Chinese titles — falls through to the next
-serif in the stack, which is why `--font` lists a serif CJK face before the
-generic fallbacks.
+Google Fonts would mean the installed app fell back to a system face with no
+network, and would tell a third party every time somebody opened a table. The
+Latin subset is about 130 KB and is precached with the tablecloth texture and
+everything else. Characters outside it, such as the suit glyphs and the Chinese
+titles, fall through to the sans CJK faces listed in `--font-display`.
 
 ## Tests
 
