@@ -238,3 +238,19 @@ test('the stamp actually moves when a precached file moves', () => {
   }
   assert.equal(precacheHash(read('sw.js')), before, 'and restoring it must put the stamp back');
 });
+
+test('the worker fills its cache from the network, not the HTTP cache', () => {
+  const source = read('sw.js');
+  const install = source.slice(source.indexOf("addEventListener('install'"), source.indexOf("addEventListener('activate'"));
+  assert.match(install, /cache:\s*'reload'/, 'install must bypass the HTTP cache or it can store the old build under the new stamp');
+});
+
+test('an update reloads only off the table', () => {
+  const source = read('src/main.js');
+  assert.match(source, /controllerchange/);
+  const safe = source.match(/RELOAD_SAFE_ROUTES\s*=\s*new Set\(\[([^\]]*)\]\)/);
+  assert.ok(safe, 'the reload must be gated on a route set');
+  const names = [...safe[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(names, ['lobby', 'menu', 'mode']);
+  assert.equal([...source.matchAll(/location\.reload\(\)/g)].length, 1, 'one guarded reload helper, not scattered reloads');
+});

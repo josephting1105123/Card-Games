@@ -13,7 +13,7 @@
  * stamp by hand.
  */
 
-const CACHE = 'card-games-09d5fadf2ab3';
+const CACHE = 'card-games-34d203091b05';
 
 const PRECACHE = [
   './',
@@ -75,7 +75,10 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(CACHE);
     // addAll fails the whole install if one file 404s, which is the point: a
     // half-cached app that breaks offline is worse than no offline at all.
-    await cache.addAll(PRECACHE);
+    // Fetching with cache: 'reload' skips the HTTP cache: Pages sends
+    // max-age=600, so a new worker could otherwise be handed files from the old
+    // build and keep them under the new stamp.
+    await cache.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' })));
     await self.skipWaiting();
   })());
 });
