@@ -14,6 +14,19 @@ import { renderLobby, renderMenu, renderMode } from './ui/screens.js';
 
 const root = document.getElementById('app');
 
+// A new worker has taken over and the page is still running the old build.
+// Reloading is only safe on screens with no hand in progress, so on the others
+// it waits until the player navigates back to one of these.
+const RELOAD_SAFE_ROUTES = new Set(['menu', 'mode', 'lobby']);
+let updateReady = false;
+let reloading = false;
+
+function reloadForUpdate() {
+  if (reloading) return;
+  reloading = true;
+  location.reload();
+}
+
 const app = {
   profile: reconcileRescue(loadProfile()),
   route: 'menu',
@@ -47,6 +60,11 @@ const app = {
     saveProfile(this.profile);
   },
   render() {
+    // The hash is already updated by now, so the reload lands on this same screen.
+    if (updateReady && RELOAD_SAFE_ROUTES.has(this.route)) {
+      reloadForUpdate();
+      return;
+    }
     clear(root);
     switch (this.route) {
       case 'mode':
@@ -169,8 +187,22 @@ if (app.route === 'menu' || app.route === 'mode' || app.route === 'lobby') {
 }
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  // A first-time visitor has no controller, and the worker's clients.claim()
+  // fires controllerchange for them too. That is not an update, so don't reload.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    updateReady = true;
+    if (RELOAD_SAFE_ROUTES.has(app.route)) reloadForUpdate();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(new URL('../sw.js', import.meta.url)).catch(() => {});
+    navigator.serviceWorker.register(new URL('../sw.js', import.meta.url)).then((registration) => {
+      // An installed app that is only ever resumed never re-navigates, so the
+      // browser's own update check never runs. Ask whenever it comes back.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registration.update().catch(() => {});
+      });
+    }).catch(() => {});
   });
 }
 
