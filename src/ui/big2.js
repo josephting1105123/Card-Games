@@ -26,6 +26,10 @@ import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 
+// Shedding-game fans show only the left third of each card, so Big Two uses the
+// enlarged-index style, like Dou Di Zhu.
+const BOLD = { style: 'bold' };
+
 const CAPTION_MS = 2600;
 // The reveal gets a second on its own before the result sheet covers it.
 const RESULT_DELAY_MS = 1000;
@@ -395,7 +399,7 @@ export class Big2View {
           node.backs.dataset.key = signature;
           clear(node.backs);
           node.backs.classList.add('is-revealed');
-          for (const card of sortHand(view.revealedHands[seat], 'rank')) node.backs.append(cardElement(card));
+          for (const card of sortHand(view.revealedHands[seat], 'rank')) node.backs.append(cardElement(card, BOLD));
         }
         continue;
       }
@@ -405,7 +409,7 @@ export class Big2View {
       if (node.backs.dataset.key !== signature) {
         node.backs.dataset.key = signature;
         clear(node.backs);
-        for (let i = 0; i < shown; i++) node.backs.append(cardElement(null, { faceDown: true }));
+        for (let i = 0; i < shown; i++) node.backs.append(cardElement(null, { faceDown: true, style: 'bold' }));
       }
     }
   }
@@ -472,7 +476,7 @@ export class Big2View {
     zone.classList.remove('is-entering');
     if (!entry || entry.pass) return;
     sortHand(entry.combo.cards, 'rank').forEach((card, index) => {
-      const node = cardElement(card);
+      const node = cardElement(card, BOLD);
       node.style.setProperty('--i', String(index));
       cards.append(node);
     });
@@ -510,7 +514,7 @@ export class Big2View {
     inner.style.setProperty('--step', `${step}px`);
 
     hand.forEach((card, index) => {
-      const node = cardElement(card, { selectable: true });
+      const node = cardElement(card, { selectable: true, style: 'bold' });
       node.style.setProperty('--i', String(index));
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.setAttribute('aria-pressed', this.selected.has(card.id) ? 'true' : 'false');
@@ -674,7 +678,7 @@ export class Big2View {
     const dealer = el('div.b2-dealer');
     felt.append(dealer);
     const stack = el('div.b2-dealer__card');
-    stack.append(cardElement(null, { faceDown: true }));
+    stack.append(cardElement(null, { faceDown: true, style: 'bold' }));
     dealer.append(stack);
 
     const finish = () => {
@@ -717,7 +721,7 @@ export class Big2View {
     const launchOpponent = (idx) => {
       const seat = seatOrder[idx];
       const slot = Math.min(opponentCounts[idx], seat.rects.length - 1);
-      const flyer = cardElement(null, { faceDown: true });
+      const flyer = cardElement(null, { faceDown: true, style: 'bold' });
       flyer.classList.add('b2-dealer__flyer');
       dealer.append(flyer);
       const { tx, ty } = offsetOf(seat.rects[slot]);
@@ -739,7 +743,7 @@ export class Big2View {
       const seat = order[i];
       if (seat === 'self') {
         const slot = selfCount; selfCount++;
-        const flyer = cardElement(view.you.hand[slot % view.you.hand.length], {});
+        const flyer = cardElement(view.you.hand[slot % view.you.hand.length], BOLD);
         flyer.classList.add('b2-dealer__flyer');
         dealer.append(flyer);
         gatherFlyers.push(flyer);
