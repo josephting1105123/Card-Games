@@ -30,11 +30,15 @@ const CAPTION_MS = 2600;
 // The reveal gets a second on its own before the result sheet covers it.
 const RESULT_DELAY_MS = 1000;
 const BOT_NAMES = ['Mei', 'Chen', 'Lin', 'Bao', 'Fang', 'Hui', 'Qiao', 'Rong'];
+// Same card art as Dou Di Zhu's table (tableview.js) so the two read alike.
+const BOLD = { style: 'bold' };
 
+// Highest card on the left, lowest on the right, the way Dou Di Zhu fans a
+// hand. SUIT_ORDER is an array, so a suit's strength is its index.
 function sortHand(hand, mode) {
   return mode === 'suit'
-    ? [...hand].sort((a, b) => SUIT_ORDER[a.suit] - SUIT_ORDER[b.suit] || a.rank - b.rank)
-    : [...hand].sort((a, b) => cardValue(a) - cardValue(b));
+    ? [...hand].sort((a, b) => SUIT_ORDER.indexOf(b.suit) - SUIT_ORDER.indexOf(a.suit) || cardValue(b) - cardValue(a))
+    : [...hand].sort((a, b) => cardValue(b) - cardValue(a));
 }
 
 /** "Pair" — short enough to sit under a play without shouting; see describeCombo for the long form. */
@@ -395,7 +399,7 @@ export class Big2View {
           node.backs.dataset.key = signature;
           clear(node.backs);
           node.backs.classList.add('is-revealed');
-          for (const card of sortHand(view.revealedHands[seat], 'rank')) node.backs.append(cardElement(card));
+          for (const card of sortHand(view.revealedHands[seat], 'rank')) node.backs.append(cardElement(card, BOLD));
         }
         continue;
       }
@@ -405,7 +409,7 @@ export class Big2View {
       if (node.backs.dataset.key !== signature) {
         node.backs.dataset.key = signature;
         clear(node.backs);
-        for (let i = 0; i < shown; i++) node.backs.append(cardElement(null, { faceDown: true }));
+        for (let i = 0; i < shown; i++) node.backs.append(cardElement(null, { faceDown: true, ...BOLD }));
       }
     }
   }
@@ -472,7 +476,7 @@ export class Big2View {
     zone.classList.remove('is-entering');
     if (!entry || entry.pass) return;
     sortHand(entry.combo.cards, 'rank').forEach((card, index) => {
-      const node = cardElement(card);
+      const node = cardElement(card, BOLD);
       node.style.setProperty('--i', String(index));
       cards.append(node);
     });
@@ -510,7 +514,7 @@ export class Big2View {
     inner.style.setProperty('--step', `${step}px`);
 
     hand.forEach((card, index) => {
-      const node = cardElement(card, { selectable: true });
+      const node = cardElement(card, { selectable: true, ...BOLD });
       node.style.setProperty('--i', String(index));
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.setAttribute('aria-pressed', this.selected.has(card.id) ? 'true' : 'false');
@@ -674,7 +678,7 @@ export class Big2View {
     const dealer = el('div.b2-dealer');
     felt.append(dealer);
     const stack = el('div.b2-dealer__card');
-    stack.append(cardElement(null, { faceDown: true }));
+    stack.append(cardElement(null, { faceDown: true, ...BOLD }));
     dealer.append(stack);
 
     const finish = () => {
@@ -717,7 +721,7 @@ export class Big2View {
     const launchOpponent = (idx) => {
       const seat = seatOrder[idx];
       const slot = Math.min(opponentCounts[idx], seat.rects.length - 1);
-      const flyer = cardElement(null, { faceDown: true });
+      const flyer = cardElement(null, { faceDown: true, ...BOLD });
       flyer.classList.add('b2-dealer__flyer');
       dealer.append(flyer);
       const { tx, ty } = offsetOf(seat.rects[slot]);
@@ -739,7 +743,7 @@ export class Big2View {
       const seat = order[i];
       if (seat === 'self') {
         const slot = selfCount; selfCount++;
-        const flyer = cardElement(view.you.hand[slot % view.you.hand.length], {});
+        const flyer = cardElement(view.you.hand[slot % view.you.hand.length], BOLD);
         flyer.classList.add('b2-dealer__flyer');
         dealer.append(flyer);
         gatherFlyers.push(flyer);
