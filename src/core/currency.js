@@ -29,7 +29,6 @@
  * @property {string} name      as it appears in the picker
  * @property {string} label     the short word for a HUD pill or column heading
  * @property {string} unit      appended to a standalone amount ('' for chips)
- * @property {string} tint      CSS custom property holding its colour
  * @property {number} [suggestedPot] the pot a room of this coin opens at
  * @property {boolean} [room]   offered to a room host
  */
@@ -41,14 +40,12 @@ export const CURRENCIES = [
     name: 'Chips',
     label: 'Chips',
     unit: '',
-    tint: 'var(--gold)',
   },
   {
     code: 'silver',
     name: 'Silver coins',
     label: 'Silver',
     unit: 'silver',
-    tint: 'var(--silver)',
     suggestedPot: 10,
     room: true,
   },
@@ -57,7 +54,6 @@ export const CURRENCIES = [
     name: 'Gold coins',
     label: 'Gold',
     unit: 'gold',
-    tint: 'var(--gold-bright)',
     suggestedPot: 1_000,
     room: true,
   },
@@ -115,11 +111,6 @@ export function formatMoney(value, code = SOLO_CURRENCY, compact = false) {
 /** The short word to put on a HUD pill or a column heading. */
 export function currencyLabel(code) {
   return currencyByCode(code).label;
-}
-
-/** The colour a table paints its money in. */
-export function currencyTint(code) {
-  return currencyByCode(code).tint;
 }
 
 /** The pot a room of this coin opens at. economy.js turns it into a stack. */

@@ -27,7 +27,7 @@ test('currency codes are unique and carry what the interface needs', () => {
   const codes = CURRENCIES.map((c) => c.code);
   assert.equal(new Set(codes).size, codes.length, 'duplicate currency code');
   for (const currency of CURRENCIES) {
-    assert.ok(currency.name && currency.label && currency.tint, `${currency.code} is missing a field`);
+    assert.ok(currency.name && currency.label, `${currency.code} is missing a field`);
   }
 });
 

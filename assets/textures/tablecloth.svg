@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <defs>
+    <pattern id="weave" width="6" height="6" patternUnits="userSpaceOnUse">
+      <path d="M0 .5H6M.5 0V6" fill="none" stroke="#E8E0D2" stroke-width="1"/>
+    </pattern>
+    <path id="pt" d="M0 0C-15-12-14-38 0-46C14-38 15-12 0 0Z"/>
+    <g id="r8">
+      <use href="#pt"/><use href="#pt" transform="rotate(45)"/><use href="#pt" transform="rotate(90)"/><use href="#pt" transform="rotate(135)"/>
+      <use href="#pt" transform="rotate(180)"/><use href="#pt" transform="rotate(225)"/><use href="#pt" transform="rotate(270)"/><use href="#pt" transform="rotate(315)"/>
+    </g>
+    <g id="r6">
+      <use href="#pt"/><use href="#pt" transform="rotate(60)"/><use href="#pt" transform="rotate(120)"/>
+      <use href="#pt" transform="rotate(180)"/><use href="#pt" transform="rotate(240)"/><use href="#pt" transform="rotate(300)"/>
+    </g>
+    <g id="peony">
+      <g fill="#D9283C" stroke="#B51D32" stroke-width=".8"><use href="#r8"/></g>
+      <g fill="#E8576A" stroke="#C93A4E" stroke-width="1" transform="rotate(22) scale(.74)"><use href="#r8"/></g>
+      <g fill="#F4A3AE" stroke="#E27A89" stroke-width="1.4" transform="rotate(10) scale(.5)"><use href="#r6"/></g>
+      <circle r="7" fill="#9E1328"/>
+      <circle r="3" fill="#D9283C"/>
+    </g>
+    <g id="la">
+      <path d="M0 0C13-10 17-34 0-56C-17-34-13-10 0 0Z" fill="#2E8B57"/>
+      <path d="M0-4L0-48" fill="none" stroke="#8FD3A8" stroke-width="1.4" stroke-linecap="round"/>
+    </g>
+    <g id="lb">
+      <path d="M0 0C13-10 17-34 0-56C-17-34-13-10 0 0Z" fill="#3FA36B"/>
+      <path d="M0-4L0-48" fill="none" stroke="#A8E0BC" stroke-width="1.4" stroke-linecap="round"/>
+    </g>
+    <g id="bud">
+      <path d="M0 0C-7-4-8-12 0-16C8-12 7-4 0 0Z" fill="#E8576A"/>
+      <path d="M0 0C-3-4-3-9 0-12C3-9 3-4 0 0Z" fill="#F4A3AE"/>
+      <path d="M-5 2C-2-1 2-1 5 2C2 5-2 5-5 2Z" fill="#2E8B57"/>
+    </g>
+    <g id="motif">
+      <use href="#la" transform="translate(130 150) rotate(125) scale(1.3)"/>
+      <use href="#lb" transform="translate(45 55) rotate(-55) scale(1.2)"/>
+      <use href="#la" transform="translate(245 80) rotate(35) scale(1.3)"/>
+      <use href="#lb" transform="translate(335 300) rotate(75) scale(1.2)"/>
+      <use href="#la" transform="translate(255 205) rotate(-105) scale(1.2)"/>
+      <use href="#lb" transform="translate(160 285) rotate(175) scale(1.3)"/>
+      <use href="#la" transform="translate(150 20) rotate(-15) scale(1.1)"/>
+      <use href="#lb" transform="translate(25 250) rotate(-125) scale(1.2)"/>
+      <use href="#la" transform="translate(340 160) rotate(20) scale(1.1)"/>
+      <use href="#lb" transform="translate(60 160) rotate(200)"/>
+      <use href="#peony" transform="translate(90 100)"/>
+      <use href="#peony" transform="translate(300 330) scale(.78)"/>
+      <use href="#peony" transform="translate(205 235) scale(.65)"/>
+      <use href="#bud" transform="translate(150 75) rotate(20)"/>
+      <use href="#bud" transform="translate(35 175) rotate(-40)"/>
+      <use href="#bud" transform="translate(330 120) rotate(30)"/>
+      <use href="#bud" transform="translate(225 330) rotate(10)"/>
+      <use href="#bud" transform="translate(115 300) rotate(-20)"/>
+      <use href="#bud" transform="translate(275 255) rotate(60)"/>
+    </g>
+  </defs>
+  <rect width="360" height="360" fill="#F6F3EC"/>
+  <rect width="360" height="360" fill="url(#weave)" opacity=".6"/>
+  <use href="#motif" x="-360" y="-360"/><use href="#motif" x="0" y="-360"/><use href="#motif" x="360" y="-360"/>
+  <use href="#motif" x="-360" y="0"/><use href="#motif" x="0" y="0"/><use href="#motif" x="360" y="0"/>
+  <use href="#motif" x="-360" y="360"/><use href="#motif" x="0" y="360"/><use href="#motif" x="360" y="360"/>
+</svg>

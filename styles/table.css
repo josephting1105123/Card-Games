@@ -12,42 +12,61 @@
      would never reach an ancestor: the fan would then overflow upward and cover
      the trick. Each landing area overrides it on its own cards. */
   --card-w: clamp(44px, 7.4vw, 82px);
-  background: var(--felt-surface);
+  /* The cloth, veiled so cards read over the print; the vignette is an inset
+     shadow so it costs no extra layer. */
+  background: var(--table-surface);
+  box-shadow: var(--table-vignette);
 }
 
-/* --- head-up display ------------------------------------------------------- */
+/* --- head-up display -------------------------------------------------------
+   Every readable thing up here is a card-stock tag laid on the cloth, so the
+   bar itself carries no fill: text straight on the print would lose contrast
+   wherever a peony sits behind it. */
 
 .hud {
   display: flex; align-items: center; gap: clamp(8px, 1.6vw, 18px);
   padding: 8px clamp(10px, 2vw, 22px);
-  background: var(--hud-bg);
-  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+  border-bottom: 1px solid transparent;
   font-size: clamp(12px, 1.6vw, 15px);
 }
 .hud__spacer { flex: 1; }
 .hud__pill {
   display: flex; align-items: baseline; gap: 6px; white-space: nowrap;
-  padding: 5px 11px; border-radius: var(--r-sm);
+  padding: 5px 11px; border-radius: var(--r-pill);
   border: 1px solid var(--hairline); background: var(--pill-bg);
+  box-shadow: var(--shadow-1);
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
 }
 .hud__pill b {
-  font-size: 1.25em; font-weight: 600;
-  /* Tinted to whatever the table is counting in: gold, silver or chips. */
-  color: var(--pill-tint, var(--gold-bright));
+  font-size: 1.25em; font-weight: 700;
+  /* One colour for every purse: gold and silver do not hold 4.5:1 on card
+     stock, and the label beside the number already says which coin it is. */
+  color: var(--red-deep);
   font-variant-numeric: lining-nums tabular-nums;
 }
-.hud__pill--table b { color: var(--text); font-weight: 400; }
+.hud__pill--table b { color: var(--text); }
 .hud__pill--mult b { font-size: 1.35em; }
-.hud .back-link { font-size: 1.3em; padding: 2px 8px; line-height: 1; }
+.hud .back-link {
+  font-size: 1.3em; padding: 2px 8px; line-height: 1;
+  color: var(--text); background: var(--stock); border-radius: var(--r-pill);
+  /* An inset ring, not a border: .back-link has none, and adding one would grow the box. */
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
+}
+.hud .back-link:hover { color: var(--red-hover); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--red); }
 .fullscreen-toggle {
-  font: inherit; font-size: 1.1em; line-height: 1; color: var(--text-tertiary);
-  background: var(--pill-bg); border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  font: inherit; font-size: 1.1em; line-height: 1; color: var(--text-secondary);
+  background: var(--pill-bg); border: 1px solid var(--hairline); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-1);
   padding: 5px 9px; cursor: pointer;
 }
-.fullscreen-toggle:hover { color: var(--gold); border-color: var(--gold); }
-.fullscreen-toggle.is-on { color: var(--gold-bright); }
-.hud__pill small { font-size: 0.9em; font-style: italic; letter-spacing: 0; text-transform: lowercase; color: var(--text-tertiary); }
-.hud__pill.is-hot b { color: #ffb37a; }
+.fullscreen-toggle:hover { color: var(--red-hover); border-color: var(--red); }
+.fullscreen-toggle.is-on { color: var(--red); }
+.hud__pill small { font-size: 0.9em; font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); }
+/* The multiplier went up (a bomb or a rocket): the tag turns stool red, the
+   same fill the landlord badge uses, so it reads as an event rather than a number. */
+.hud__pill.is-hot { background: var(--red); border-color: var(--red); color: var(--on-red); }
+.hud__pill.is-hot b { color: var(--on-red); }
 /* display:flex above beats the UA [hidden] rule, so a pill that has nothing to
    show (no stake given) needs its own. */
 .hud__pill[hidden] { display: none; }
@@ -59,7 +78,7 @@
 }
 @media (max-width: 700px) { .hud__pill--pot small { display: none; } }
 
-/* --- felt ----------------------------------------------------------------- */
+/* --- the cloth ------------------------------------------------------------ */
 
 .felt { position: relative; min-height: 0; }
 
@@ -73,19 +92,29 @@
 
 .seat__plate {
   display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 7px;
-  border-radius: var(--r-sm); border: 1px solid var(--hairline-strong);
-  background: var(--plate-bg); font-size: clamp(12px, 1.5vw, 14.5px); max-width: 100%;
+  border-radius: var(--r-pill); border: 1px solid var(--hairline);
+  background: var(--plate-bg); box-shadow: var(--shadow-1);
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
+  font-size: clamp(12px, 1.5vw, 14.5px); max-width: 100%;
 }
-.seat__plate.is-turn { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright); }
+/* The ring's second pixel is a shadow, so the plate keeps its 1px border and
+   its box. */
+.seat__plate.is-turn { border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
 .seat__avatar {
   width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none;
-  font-size: 14px; font-weight: 600; color: var(--ink);
-  background: var(--gold);
+  font-size: 14px; font-weight: 700; color: var(--text);
+  background: var(--hairline);
 }
-.seat__avatar.is-landlord { background: var(--claret); color: var(--ivory); }
+.seat__avatar.is-landlord { background: var(--red); color: var(--on-red); }
 .seat__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.seat__count { color: var(--gold); white-space: nowrap; font-variant-numeric: lining-nums tabular-nums; }
-.seat__role { font-size: var(--t-label); font-style: italic; letter-spacing: 0; text-transform: lowercase; color: var(--text-tertiary); }
+.seat__count { color: var(--red-deep); white-space: nowrap; font-variant-numeric: lining-nums tabular-nums; }
+/* Sits on the cloth, not on a plate, and has no padding to hold a fill, so the
+   cloth-coloured halo keeps it readable over a peony. */
+.seat__role {
+  font-size: var(--t-label); font-family: var(--font-display); font-weight: 700;
+  font-style: normal; letter-spacing: 0.08em; text-transform: uppercase; color: var(--red-deep);
+  text-shadow: 0 0 3px var(--cloth), 0 0 6px var(--cloth);
+}
 /* Bidding is the only turn with nothing to show for itself, so it is the only
    thing that still speaks. Reserving its height permanently (the old
    min-height) pushed the seat tall enough to overlap the play zone once the
@@ -93,8 +122,10 @@
    only opacity animates (house rule), the height/padding just snap. */
 .seat__say {
   max-height: 0; overflow: hidden; font-size: clamp(13px, 1.7vw, 16px);
-  color: var(--ivory); text-align: center; padding: 0 10px; border-radius: 8px;
-  background: rgba(0, 0, 0, 0.32); opacity: 0; transition: opacity var(--dur-med) var(--ease-std);
+  font-family: var(--font-display); font-weight: 700;
+  color: var(--text); text-align: center; padding: 0 10px; border-radius: var(--r-pill);
+  background: var(--stock); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
+  opacity: 0; transition: opacity var(--dur-med) var(--ease-std);
 }
 .seat__say.is-on { opacity: 1; max-height: 2.4em; padding: 3px 10px; }
 
@@ -104,9 +135,9 @@
      browser-bar height (844x330) shrinks every card on the table together. */
   --card-w: clamp(26px, 6.5vh, 40px);
   /* A percentage margin would resolve against the row, not the card, and the fan
-     would collapse across the felt. Keep it proportional to the card instead. */
+     would collapse across the cloth. Keep it proportional to the card instead. */
   margin-left: calc(var(--card-w) * -0.58);
-  box-shadow: -3px 2px 6px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--card-shadow);
 }
 .seat__backs .card:first-child { margin-left: 0; }
 /* Hand end: a leftover can be 20 cards, so the face-up hand wraps at ten a row.
@@ -127,11 +158,11 @@
 .seat__backs.is-revealed .card:first-child {
   --card-w: var(--rev-w);
   margin: calc(var(--rev-w) * -0.7) 0 0 calc(var(--rev-w) * -0.58);
-  box-shadow: -2px 2px 5px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--card-shadow);
 }
 
 /* Pinned to the very top, centred, directly under the HUD — small enough
-   that it costs the felt almost nothing, which is what leaves the middle
+   that it costs the cloth almost nothing, which is what leaves the middle
    band free for the play zones below. The caption is gone (an aria-label on
    the container says it instead): at this height a text line was a third of
    the block's own size. */
@@ -147,7 +178,7 @@
 
 /* --- the trick, one landing area per seat ---------------------------------
    Cards sit in front of whoever played them, so position answers "who" and the
-   felt needs no captions. The play still standing is the bright one; a finished
+   cloth needs no captions. The play still standing is the bright one; a finished
    trick greys out instead of vanishing. */
 
 .play {
@@ -159,7 +190,7 @@
 .play--right { left: 76%; top: 44%; transform: translate(-50%, -50%); }
 /* Landlord's three moved to a thin strip under the HUD (see .bottom-cards)
    specifically to free this band: self's own play now sits in the middle of
-   the felt, clear of both it and the floating controls pill below, instead
+   the cloth, clear of both it and the floating controls pill below, instead
    of fighting either for the same few rows. */
 .play--self { left: 50%; top: 54%; transform: translate(-50%, -50%); }
 
@@ -179,7 +210,7 @@
 /* The trick is over: readable, but plainly in the past. */
 .play.is-stale { opacity: 0.4; filter: saturate(0.6); }
 /* The play everyone is trying to beat. */
-.play.is-standing .play__cards .card { box-shadow: 0 0 0 2px rgba(239, 219, 166, 0.55), var(--shadow-1); }
+.play.is-standing .play__cards .card { box-shadow: 0 0 0 2px var(--red), var(--card-shadow); }
 
 .play__name {
   position: absolute; left: 50%; transform: translateX(-50%);
@@ -197,17 +228,22 @@
      glyphs need, which is exactly the margin the short-landscape query
      below is short on. */
   line-height: 1.1;
-  color: var(--gold); opacity: 0; transition: opacity var(--dur-med) var(--ease-std);
+  /* Bare text on the cloth, like .seat__role: halo instead of a fill. Full
+     opacity once shown, since .9 on the print would dip under 4.5:1. */
+  color: var(--red-deep); font-family: var(--font-display); font-weight: 700;
+  text-shadow: 0 0 3px var(--cloth), 0 0 6px var(--cloth);
+  opacity: 0; transition: opacity var(--dur-med) var(--ease-std);
 }
-.play.is-standing .play__name { opacity: 0.9; }
+.play.is-standing .play__name { opacity: 1; }
 /* Your own play sits just above the fan, so its caption goes above the cards
    rather than under them, where the hand would swallow it. */
 .play--self .play__name { bottom: auto; top: -2em; }
 
 .play__pass {
-  font-size: clamp(13px, 1.7vw, 17px); color: var(--text-tertiary);
-  padding: 5px 16px; border-radius: var(--r-sm);
-  background: rgba(0, 0, 0, 0.36); border: 1px solid var(--hairline);
+  font-size: clamp(13px, 1.7vw, 17px); color: var(--text-secondary);
+  font-family: var(--font-display); font-weight: 700;
+  padding: 5px 16px; border-radius: var(--r-pill);
+  background: var(--stock); border: 1px solid var(--hairline); box-shadow: var(--shadow-1);
 }
 
 /* Cards travel in from the seat that played them — the other half of saying
@@ -229,7 +265,7 @@
   from { opacity: 0; transform: translate(40%, -60%) scale(0.86) rotate(6deg); }
   to { opacity: 1; transform: none; }
 }
-/* 15%, not the 70% this started at: self's play zone now shares the felt's
+/* 15%, not the 70% this started at: self's play zone now shares the cloth's
    middle band with the floating controls pill below it, and a card sliding
    in from most of its own height further down swept straight through that
    pill's space on the way — the entrance still reads as "from the hand",
@@ -289,11 +325,11 @@
 
 .bid-panel {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  text-align: center; padding: 18px 26px; border-radius: var(--r-lg);
-  border: 1px solid var(--hairline-strong); background: var(--panel-solid);
-  box-shadow: var(--shadow-8); max-width: min(92vw, 460px);
+  text-align: center; padding: 18px 26px; border-radius: var(--r-ui);
+  border: 1px solid var(--hairline); background: var(--panel-solid);
+  box-shadow: var(--shadow-paper); max-width: min(92vw, 460px);
 }
-.bid-panel h2 { margin: 0 0 4px; font-size: clamp(19px, 2.8vw, 26px); font-weight: 500; color: var(--ivory); }
+.bid-panel h2 { margin: 0 0 4px; font-size: clamp(19px, 2.8vw, 26px); font-weight: 800; color: var(--red-deep); }
 .bid-panel p { margin: 0 0 14px; font-size: 15px; color: var(--text-tertiary); }
 .bid-panel .btn-row { justify-content: center; }
 
@@ -305,7 +341,7 @@
 .dock {
   display: flex; flex-direction: column;
   padding: 4px clamp(10px, 2vw, 22px) 0;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent);
+  background: var(--scrim-light);
 }
 
 .hand {
@@ -339,22 +375,21 @@
   /* A box-shadow on the element beats a drop-shadow on the artwork: the filter
      is evaluated per pixel of a forty-card table, the shadow is not. */
   border-radius: var(--card-radius);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--card-shadow);
   /* Everything below is inherited into the <use> shadow tree, which outer
      selectors cannot reach. It is how the artwork gets its suit colour and its
      typeface. */
-  font-family: var(--font);
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-weight: 700;
   font-variant-numeric: lining-nums;
   font-feature-settings: 'lnum' 1;
 }
-.card--red { color: #b4232c; }
-.card--black { color: #1d1b17; }
-.card--down { color: #d8b86a; }
-/* The "bold" style (Dou Di Zhu only): exact reds/blacks from the spec, not the
-   engraved deck's softer ink — the whole point of this style is contrast. */
-.card--bold-red { color: #d3122a; }
-.card--bold-black { color: #121212; }
+/* Both card styles print in the same two inks now; the bold style differs in
+   its layout, not its colour. A back's currentColor is the white of its
+   lattice border. */
+.card--red, .card--bold-red { color: var(--suit-red); }
+.card--black, .card--bold-black { color: var(--suit-black); }
+.card--down { color: var(--back-border); }
 .card-svg, .cg-card-svg { width: 100%; height: 100%; display: block; }
 
 .hand .card {
@@ -364,27 +399,30 @@
 }
 .hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
 /* ~22% of card height, per spec. */
-.hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 10px 12px rgba(0, 0, 0, 0.5); }
-.hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--gold-bright); outline-offset: -2px; border-radius: var(--card-radius); }
-.hand .card:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+.hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 0 0 2px var(--red), var(--shadow-paper); }
+.hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--red); outline-offset: -2px; border-radius: var(--card-radius); }
+.hand .card:focus-visible { outline: var(--focus-outline); outline-offset: 3px; }
 
 /* No legal answer: the whole fan greys and stops responding, so Pass is plainly
    the only move left. Said without a sentence. */
 .hand.is-stuck .card { filter: grayscale(1) brightness(0.62); cursor: default; }
 .hand.is-stuck .card:hover { transform: none; }
 
-/* Floats over the felt, just above the hand, instead of costing the dock a
+/* Floats over the cloth, just above the hand, instead of costing the dock a
    row of its own — the reference does the same with its Fight/Skip buttons. */
 .controls {
   position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); z-index: 4;
   display: flex; align-items: center; justify-content: center; gap: clamp(6px, 1.2vw, 14px); flex-wrap: nowrap;
-  max-width: 94%; padding: 6px clamp(10px, 1.6vw, 16px); border-radius: var(--r-md);
-  background: var(--controls-bg); border: 1px solid var(--hairline-strong); box-shadow: var(--shadow-3);
+  max-width: 94%; padding: 6px clamp(10px, 1.6vw, 16px); border-radius: var(--r-ui);
+  background: var(--controls-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-paper);
 }
-.controls__you { font-size: clamp(12px, 1.6vw, 14.5px); color: var(--text-tertiary); white-space: nowrap; }
+.controls__you {
+  font-size: clamp(12px, 1.6vw, 14.5px); color: var(--text-secondary); white-space: nowrap;
+  font-family: var(--font-display); font-weight: 700;
+}
 .controls .btn { padding: clamp(6px, 1vh, 9px) clamp(10px, 1.8vw, 18px); font-size: clamp(13px, 1.7vw, 16px); }
 /* Bidding has its own panel (Pass/1/2/3); Hint/Pass/Play do nothing until
-   play starts, and floating both over a short felt is how they overlapped. */
+   play starts, and floating both over a short table is how they overlapped. */
 .controls.is-hidden { display: none; }
 /* Hand over: the result sheet now waits a second, so the bar must go at once.
    visibility, not display, keeps the layout (and the hand) where it is. */
@@ -394,25 +432,27 @@
 
 .overlay {
   position: fixed; inset: 0; z-index: var(--z-overlay); display: grid; place-items: center; padding: 18px;
-  background: rgba(3, 12, 9, 0.78); backdrop-filter: blur(3px);
+  /* A veil of card stock rather than a dark scrim: the sheet is stock too, so
+     it is its border and paper shadow that lift it off the pale table. */
+  background: var(--panel); backdrop-filter: blur(3px);
   /* visibility flips at once on show so the fade is visible, and while pending
      it keeps the buttons out of reach of taps and Tab. */
   transition: opacity var(--dur-slow) var(--ease-std), visibility 0s;
 }
 .overlay.is-pending { opacity: 0; visibility: hidden; pointer-events: none; }
 .result {
-  width: min(92vw, 520px); text-align: center; padding: 26px 26px 22px; border-radius: var(--r-lg);
-  border: 1px solid var(--hairline-strong); background: var(--panel-solid);
-  box-shadow: var(--shadow-8);
+  width: min(92vw, 520px); text-align: center; padding: 26px 26px 22px; border-radius: var(--r-ui);
+  border: 1px solid var(--hairline); background: var(--panel-solid);
+  box-shadow: var(--shadow-paper);
 }
-.result__title { font-size: clamp(26px, 5.2vw, 38px); font-weight: 500; margin: 0 0 4px; }
-.result__title.is-win { color: var(--gold-bright); }
-.result__title.is-loss { color: #f0a58f; }
-.result__delta { font-size: clamp(22px, 4.2vw, 30px); margin: 6px 0 14px; font-variant-numeric: lining-nums tabular-nums; }
+.result__title { font-size: clamp(26px, 5.2vw, 38px); font-weight: 800; margin: 0 0 4px; }
+.result__title.is-win { color: var(--red-deep); }
+.result__title.is-loss { color: var(--text-secondary); }
+.result__delta { font-size: clamp(22px, 4.2vw, 30px); font-family: var(--font-display); font-weight: 700; margin: 6px 0 14px; font-variant-numeric: lining-nums tabular-nums; }
 .result__delta.is-win { color: var(--ok); }
 .result__delta.is-loss { color: var(--danger); }
 .result__lines { list-style: none; margin: 0 0 18px; padding: 0; font-size: 15px; line-height: 1.5; color: var(--text-secondary); display: grid; gap: 6px; }
-.result__lines span { color: var(--gold); }
+.result__lines span { color: var(--red-deep); font-weight: 700; }
 
 .rotate-gate { display: none; }
 @media (orientation: portrait) and (max-width: 960px) {
@@ -420,8 +460,8 @@
     position: fixed; inset: 0; z-index: var(--z-rotate-gate); display: grid; place-items: center; text-align: center;
     padding: 30px; background: var(--panel-solid); color: var(--text);
   }
-  .rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--gold); }
-  .rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 500; color: var(--ivory); }
+  .rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--red); }
+  .rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 800; color: var(--red-deep); }
   .rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
 }
 
@@ -454,7 +494,7 @@
      defect this query exists to fix. There's no headroom to spare above at
      this height, only below, so self borrows the opponents' below-the-cards
      placement for the duration of this query. -1.5em rather than the shared
-     -2em above: this corridor is the tightest on the felt, and 1.5em is as
+     -2em above: this corridor is the tightest on the table, and 1.5em is as
      far as the (now tightened, see .play__name's line-height) caption needs
      to clear its own cards by >= 4px. */
   .play--self .play__name { top: auto; bottom: -1.5em; }
