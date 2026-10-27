@@ -168,17 +168,21 @@
   --ring: 0 0 0 3px var(--leaf);
   --focus-outline: 3px solid var(--leaf);
 
-  /* ----- Playing cards: white stock, flat red and black ink -----
-     Read by the SVG cardart.js builds (a <stop style="stop-color:var(--x)">
-     reads a custom property exactly like any other computed style), and by
-     both card styles. */
-  --face: #FFFFFF;
-  --face-edge: #DDD5C8;
+  /* ----- Playing cards: the lantern deck -----
+     Cream stock, red and ink suits, gold rules and lantern medallions, and a
+     deep-red dragon-scale back. Read by the SVG cardart.js builds through
+     style="fill:var(--x)" (a presentation attribute would not resolve inside
+     the <use> shadow tree), by both card styles. */
+  --face: #FFF6E5;            /* cream card stock */
+  --face-edge: #C9A227;       /* gold outer edge */
+  --card-gold: #C9A227;       /* rules, cloud corners, lantern caps */
+  --card-gold-light: #F4D27A; /* glyphs inside lanterns, emblem on back */
   --suit-red: #C8102E;
-  --suit-black: #1D1B19;
-  --back: #B71C2C;
-  --back-line: rgba(255, 255, 255, 0.55);
-  --back-border: #FFFFFF;
+  --suit-black: #2B2622;
+  --seal-text: #FFF6E5;       /* rank reversed out of a seal */
+  --back: #8E1020;            /* back field */
+  --back-frame: #B71C2C;      /* thick frame around the back */
+  --back-line: #E8C55A;       /* scale pattern and emblem ring */
   --card-shadow: 0 3px 6px -3px rgba(60, 20, 20, 0.35);
 
   color-scheme: light;

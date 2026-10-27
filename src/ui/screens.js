@@ -46,7 +46,7 @@ export function topbar(app) {
 // diamonds, 44 ace of spades, 41 king of hearts.
 const TILE_FANS = {
   doudizhu: { ids: [53, 48], opts: { style: 'bold' } },
-  big2: { ids: [48, 3], opts: {} },
+  big2: { ids: [48, 3], opts: { style: 'bold' } },
   blackjack: { ids: [44, 41], opts: {} },
 };
 
