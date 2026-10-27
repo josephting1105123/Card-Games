@@ -7,7 +7,7 @@ import net from 'node:net';
 import { WsConnection, acceptKey, attachWebSocket } from '../server/ws.js';
 import { RoomHub } from '../server/rooms.js';
 import { gameAdapter } from '../server/games.js';
-import { C2S, S2C } from '../src/net/protocol.js';
+import { BIG2_MIN_STACK, C2S, S2C, potForStack } from '../src/net/protocol.js';
 import { DEFAULT_ROOM_CURRENCY, SOLO_CURRENCY } from '../src/core/currency.js';
 import { ALPHABET, CODE_LENGTH, formatCode, generateCode, parseCode, socketUrlFor } from '../src/net/roomcode.js';
 import { legalPlays } from '../src/games/doudizhu/moves.js';
@@ -517,7 +517,7 @@ test('resuming with a token nobody holds is refused', async (t) => {
   stranger.close();
 });
 
-test('a newcomer can join between hands but not during one', async (t) => {
+test('a newcomer joining mid-hand watches as a spectator and can sit once it ends', async (t) => {
   const host = await startHost();
   t.after(() => host.stop());
 
@@ -534,17 +534,20 @@ test('a newcomer can join between hands but not during one', async (t) => {
 
   const carol = await connect(host);
   carol.send({ t: 'join', code, name: 'Carol' });
-  assert.match((await carol.next(S2C.ERROR)).message, /still being played/);
+  const watching = await carol.next(S2C.ROOM);
+  assert.equal(watching.room.phase, 'playing');
+  assert.equal(typeof watching.token, 'string');
+  assert.deepEqual(watching.room.spectators.map((s) => s.name), ['Carol']);
+  assert.equal(watching.room.seats.some((s) => s.name === 'Carol'), false);
 
   autopilot(alice);
   autopilot(bob);
   await alice.next(S2C.RESULT, 20_000);
+  assert.equal(carol.log.some((m) => m.t === S2C.VIEW), false, 'a spectator is never sent a seat\'s view');
 
-  carol.send({ t: 'join', code, name: 'Carol' });
-  const joined = await carol.next(S2C.ROOM);
-  assert.equal(joined.room.phase, 'finished');
-  assert.equal(joined.room.seats[2].name, 'Carol');
-  assert.equal(typeof joined.token, 'string');
+  carol.send({ t: 'sit', seat: 2 });
+  const seated = await alice.until(S2C.ROOM, (m) => m.room.seats[2].name === 'Carol');
+  assert.equal(seated.room.spectators.length, 0);
   alice.close();
   bob.close();
   carol.close();
@@ -565,13 +568,14 @@ test('a full room gives a dropped member\'s seat to a newcomer, oldest drop firs
 
   const dave = await connect(host);
   dave.send({ t: 'join', code, name: 'Dave' });
-  assert.match((await dave.next(S2C.ERROR)).message, /full/);
+  const watching = await dave.next(S2C.ROOM);
+  assert.deepEqual(watching.room.spectators.map((s) => s.name), ['Dave'], 'a full table seats a newcomer as a spectator');
 
   bob.close();
   await alice.until(S2C.ROOM, (m) => m.room.seats[1].connected === false);
   dave.send({ t: 'join', code, name: 'Dave' });
-  const taken = await dave.next(S2C.ROOM);
-  assert.equal(taken.room.seats[1].name, 'Dave');
+  const taken = await dave.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Dave');
+  assert.equal(taken.room.spectators.length, 0);
 
   const late = await connect(host);
   late.send({ t: 'resume', code, token: joined.token });
@@ -1082,7 +1086,7 @@ test('a bid is refused in a Big Two room', async (t) => {
   alice.close();
 });
 
-test('humanSeats clamps to the seats the game has, and the game cannot change after create', async (t) => {
+test('humanSeats clamps to the seats the game has, and only set_game changes the game', async (t) => {
   const host = await startHub();
   t.after(() => host.stop());
 
@@ -1097,6 +1101,13 @@ test('humanSeats clamps to the seats the game has, and the game cannot change af
   assert.equal(updated.seats.length, 4);
   big.send({ t: 'seat_fill', humanSeats: 9 });
   assert.equal((await big.until(S2C.ROOM, (m) => m.room.settings.humanSeats === 4)).room.seats.length, 4);
+  big.send({ t: 'set_game', game: 'doudizhu' });
+  const switched = (await big.until(S2C.ROOM, (m) => m.room.settings.game === 'doudizhu')).room;
+  assert.equal(switched.seats.length, 3);
+  assert.equal(switched.settings.humanSeats, 3);
+  assert.equal(switched.seats[0].name, 'Big');
+  big.send({ t: 'set_game', game: 'poker' });
+  assert.match((await big.next(S2C.ERROR)).message, /unknown game/);
 
   const dou = await connect(host);
   dou.send({ t: 'create', name: 'Dou', settings: { game: 'doudizhu', humanSeats: 9 } });
@@ -1264,4 +1275,222 @@ test('a deal that throws leaves the room in its lobby', async (t) => {
   assert.equal(room.phase, 'lobby');
   room.adapter = real;
   alice.close();
+});
+
+// --- switching games and spectators ---------------------------------------------
+
+/** A lobby of `names` (the first is the host), each seated or watching as the server placed them. */
+async function roomOf(host, names, settings = {}) {
+  const [first, ...rest] = names;
+  const clients = {};
+  clients[first] = await connect(host);
+  clients[first].send({ t: 'create', name: first, settings });
+  const created = await clients[first].next(S2C.ROOM);
+  const ids = { [first]: created.you };
+  for (const name of rest) {
+    clients[name] = await connect(host);
+    clients[name].send({ t: 'join', code: created.room.code, name });
+    ids[name] = (await clients[name].next(S2C.ROOM)).you;
+  }
+  await clients[first].until(
+    S2C.ROOM,
+    (m) => m.room.seats.filter((s) => s.id).length + m.room.spectators.length === names.length,
+  );
+  return { clients, ids, code: created.room.code, room: host.hub.rooms.get(created.room.code) };
+}
+
+test('switching Dou Di Zhu to Big Two seats the spectator and keeps every purse', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice', 'Bob', 'Carol', 'Dan'], {
+    game: 'doudizhu', pot: 100, startingChips: 2_500, humanSeats: 3,
+  });
+  const { Alice, Bob, Carol, Dan } = clients;
+  // Different purses, so "kept" cannot be satisfied by everyone holding the same stack.
+  room.chips.set(ids.Alice, 3_100);
+  room.chips.set(ids.Bob, 1_900);
+  room.chips.set(ids.Carol, 2_500);
+  room.chips.set(ids.Dan, 777);
+  room.departed.set('eve', 400);
+
+  Alice.send({ t: 'set_game', game: 'big2' });
+  const switched = (await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'big2')).room;
+  assert.equal(switched.seats.length, 4);
+  assert.deepEqual(switched.seats.map((s) => s.name), ['Alice', 'Bob', 'Carol', 'Dan']);
+  assert.deepEqual(switched.seats.map((s) => s.chips), [3_100, 1_900, 2_500, 777]);
+  assert.equal(switched.spectators.length, 0);
+  assert.equal(switched.settings.pot, potForStack('big2', 2_500));
+  assert.equal(switched.settings.startingChips, 2_500);
+  assert.equal(switched.settings.humanSeats, 4);
+  assert.equal(switched.phase, 'lobby');
+  assert.equal(room.departed.get('eve'), 400, 'a switch leaves the purses of people away alone');
+
+  for (const c of Object.values(clients)) c.drain(S2C.VIEW);
+  Alice.send({ t: 'start' });
+  for (const c of [Alice, Bob, Carol, Dan]) {
+    const view = (await c.next(S2C.VIEW)).view;
+    assert.equal(view.players.length, 4);
+    assert.equal(view.you.hand.length, 13);
+  }
+  for (const c of Object.values(clients)) c.close();
+});
+
+test('switching Big Two to Dou Di Zhu stands one non-host down and keeps the host seated', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice', 'Bob', 'Carol', 'Dan'], { game: 'big2', humanSeats: 4 });
+  const { Alice, Dan } = clients;
+
+  Alice.send({ t: 'set_game', game: 'doudizhu' });
+  const switched = (await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'doudizhu')).room;
+  assert.equal(switched.seats.length, 3);
+  assert.equal(switched.seats[0].name, 'Alice');
+  assert.deepEqual(switched.spectators.map((s) => s.name), ['Dan']);
+  assert.equal(switched.settings.humanSeats, 3);
+  assert.equal(room.members.get(ids.Dan).seat, null);
+  assert.equal(room.members.get(ids.Dan).conn.data.seat, null);
+
+  // Growing back seats Dan again; then put the host in the last seat, where a
+  // shrink would drop her if the rule did not protect the host.
+  Alice.send({ t: 'set_game', game: 'big2' });
+  await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'big2' && m.room.seats[3].name === 'Dan');
+  Dan.send({ t: 'stand' });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[3].name === null);
+  Alice.send({ t: 'sit', seat: 3 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[3].name === 'Alice');
+  Dan.send({ t: 'sit', seat: 0 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[0].name === 'Dan');
+  Alice.send({ t: 'set_game', game: 'doudizhu' });
+  const hostLast = (await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'doudizhu')).room;
+  assert.deepEqual(hostLast.seats.map((s) => s.name), ['Dan', 'Bob', 'Alice']);
+  assert.deepEqual(hostLast.spectators.map((s) => s.name), ['Carol']);
+  for (const c of Object.values(clients)) c.close();
+});
+
+test('a spectator can sit in a bot seat and a player can stand, but only the host moves others', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids } = await roomOf(host, ['Alice', 'Bob'], { game: 'doudizhu', humanSeats: 1 });
+  const { Alice, Bob } = clients;
+
+  Bob.send({ t: 'sit', seat: 0 });
+  assert.match((await Bob.next(S2C.ERROR)).message, /taken/);
+  Bob.send({ t: 'sit', seat: 7 });
+  assert.match((await Bob.next(S2C.ERROR)).message, /taken/);
+
+  Bob.send({ t: 'sit', seat: 1 });
+  const sat = (await Alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob')).room;
+  assert.equal(sat.spectators.length, 0);
+  assert.equal(sat.settings.humanSeats, 2);
+
+  Bob.send({ t: 'stand', id: ids.Alice });
+  assert.match((await Bob.next(S2C.ERROR)).message, /only the room host/);
+
+  Bob.send({ t: 'stand' });
+  const stood = (await Alice.until(S2C.ROOM, (m) => m.room.seats[1].name === null)).room;
+  assert.deepEqual(stood.spectators.map((s) => s.name), ['Bob']);
+  assert.equal(stood.seats[1].bot, true);
+
+  Bob.send({ t: 'sit', seat: 2 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[2].name === 'Bob');
+  Alice.send({ t: 'stand', id: ids.Bob });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[2].name === null && m.room.spectators.length === 1);
+
+  Bob.send({ t: 'sit', seat: 1 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[1].name === 'Bob');
+  Alice.send({ t: 'start' });
+  await Alice.next(S2C.VIEW);
+  Bob.send({ t: 'stand' });
+  assert.match((await Bob.next(S2C.ERROR)).message, /wait for the hand to end/);
+  Bob.send({ t: 'sit', seat: 2 });
+  assert.match((await Bob.next(S2C.ERROR)).message, /wait for the hand to end/);
+  for (const c of Object.values(clients)) c.close();
+});
+
+test('set_game is the host\'s alone and not while a hand is running', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients } = await roomOf(host, ['Alice', 'Bob'], { game: 'doudizhu', humanSeats: 2 });
+  const { Alice, Bob } = clients;
+
+  Bob.send({ t: 'set_game', game: 'big2' });
+  assert.match((await Bob.next(S2C.ERROR)).message, /only the room host/);
+
+  Alice.send({ t: 'start' });
+  await Alice.next(S2C.VIEW);
+  Alice.send({ t: 'set_game', game: 'big2' });
+  assert.match((await Alice.next(S2C.ERROR)).message, /finish the hand/);
+  Alice.send({ t: 'to_lobby' });
+  assert.match((await Alice.next(S2C.ERROR)).message, /finish the hand/);
+  for (const c of Object.values(clients)) c.close();
+});
+
+test('to_lobby leaves a finished hand and then the game can be changed', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients } = await roomOf(host, ['Alice'], { game: 'doudizhu', humanSeats: 1 });
+  const { Alice } = clients;
+
+  autopilot(Alice);
+  Alice.send({ t: 'start' });
+  await Alice.next(S2C.RESULT, 30_000);
+  await Alice.until(S2C.ROOM, (m) => m.room.phase === 'finished');
+
+  Alice.send({ t: 'to_lobby' });
+  await Alice.until(S2C.ROOM, (m) => m.room.phase === 'lobby');
+  Alice.send({ t: 'set_game', game: 'big2' });
+  const switched = (await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'big2')).room;
+  assert.equal(switched.seats.length, 4);
+  assert.equal(switched.phase, 'lobby');
+  Alice.close();
+});
+
+test('a full room never evicts a seated player who dropped mid-hand', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const names = ['Alice', 'Bob', 'Carol', 'S1', 'S2', 'S3', 'S4', 'S5'];
+  const { clients, ids, code, room } = await roomOf(host, names, { game: 'doudizhu', humanSeats: 3, startingChips: 2_500, pot: 100 });
+  clients.Alice.send({ t: 'start' });
+  await clients.Alice.next(S2C.VIEW);
+
+  clients.Carol.close();
+  await waitFor(() => !room.members.get(ids.Carol).connected);
+
+  const ninth = await connect(host);
+  ninth.send({ t: 'join', code, name: 'Ninth' });
+  assert.match((await ninth.next(S2C.ERROR)).message, /full/);
+  assert.equal(room.members.has(ids.Carol), true, 'the dropped player keeps their seat');
+  assert.equal(room.chips.get(ids.Carol), 2_500, 'and their purse is not stashed under their name');
+  assert.equal(room.departed.has('carol'), false);
+  ninth.close();
+  for (const c of Object.values(clients)) c.close();
+});
+
+test('switching to Big Two lifts a stack below its floor and leaves purses alone', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, room } = await roomOf(host, ['Alice', 'Bob'], { game: 'doudizhu', humanSeats: 2, startingChips: 25, pot: 1 });
+  assert.equal(room.settings.startingChips, 25);
+
+  clients.Alice.send({ t: 'set_game', game: 'big2' });
+  const switched = (await clients.Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'big2')).room;
+  assert.equal(switched.settings.startingChips, BIG2_MIN_STACK);
+  assert.equal(switched.settings.pot, potForStack('big2', BIG2_MIN_STACK));
+  assert.deepEqual(switched.seats.slice(0, 2).map((s) => s.chips), [25, 25]);
+  for (const c of Object.values(clients)) c.close();
+});
+
+test('a hand cannot be dealt when nobody is sitting at the table', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients } = await roomOf(host, ['Alice'], { game: 'doudizhu', humanSeats: 1 });
+  const { Alice } = clients;
+
+  Alice.send({ t: 'stand' });
+  await Alice.until(S2C.ROOM, (m) => m.room.spectators.length === 1);
+  Alice.send({ t: 'start' });
+  assert.match((await Alice.next(S2C.ERROR)).message, /nobody is sitting/);
+  Alice.send({ t: 'again' });
+  assert.match((await Alice.next(S2C.ERROR)).message, /nobody is sitting/);
+  Alice.close();
 });

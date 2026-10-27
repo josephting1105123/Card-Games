@@ -10,13 +10,13 @@
  */
 
 import { DEFAULT_ROOM_CURRENCY, formatMoney } from '../core/currency.js';
-import { STARTING_STACK_MULTIPLE } from '../core/economy.js';
 import { SKILLS as BIG2_SKILLS } from '../games/big2/ai.js';
 import { classify } from '../games/big2/rules.js';
 import { SKILLS as DDZ_SKILLS } from '../games/doudizhu/ai.js';
+import { gameById } from '../games/registry.js';
 import { LanClient } from '../net/client.js';
 import { healthUrlFor, onlineSocketUrl } from '../net/config.js';
-import { SETTING_LIMITS, SEATS_BY_GAME, S2C, defaultSettings } from '../net/protocol.js';
+import { SETTING_LIMITS, SEATS_BY_GAME, S2C, defaultSettings, potForStack } from '../net/protocol.js';
 import { formatCode, normaliseCode, parseCode, socketUrlFor } from '../net/roomcode.js';
 import { Big2View } from './big2.js';
 import { TableView } from './tableview.js';
@@ -230,7 +230,7 @@ class LanScreens {
     this.reenable = null;
     this.stopKeepAlive();
     this.shell(
-      this.backLink('All games', () => this.app.go('mode', { gameId: this.gameId })),
+      this.backLink('All games', () => this.app.go('menu')),
       el('div.page__head',
         el('h1.page__title', this.online ? 'Play online' : 'Play on this network'),
         el('p.page__sub', this.online
@@ -339,6 +339,17 @@ class LanScreens {
     const seatCount = SEATS_BY_GAME[game];
     const s = { ...defaultSettings(game) };
     const nameInput = el('input.input', { value: this.name, maxlength: 18, placeholder: 'Your name' });
+    // Seat options, limits and the preview all depend on the game, so a change
+    // rebuilds the form; the typed name is carried over.
+    const gameSelect = select('set-game', [
+      { value: 'doudizhu', label: 'Dou Di Zhu 斗地主' },
+      { value: 'big2', label: 'Big Two 锄大地' },
+    ], game);
+    gameSelect.addEventListener('change', () => {
+      this.name = nameInput.value.trim() || this.name;
+      this.gameId = gameSelect.value === 'big2' ? 'big2' : 'doudizhu';
+      this.renderCreate();
+    });
     // Big Two pays a tenth of the pot per card, so a smaller stack would round
     // the rate down to nothing.
     const limits = { ...SETTING_LIMITS.startingChips, min: isBig2 ? 100 : SETTING_LIMITS.startingChips.min };
@@ -347,13 +358,9 @@ class LanScreens {
     // The pot is not a second thing to get wrong: it is the stack divided by the
     // house multiple, so typing one number sets both.
     const startingChips = () => Math.min(limits.max, Math.max(limits.min, Math.round(Number(chips.value) || 0)));
-    // Big Two's rate is the pot over ten and must stay a whole number of coins.
-    const potFor = (stack) => (isBig2
-      ? Math.max(10, Math.round(stack / (STARTING_STACK_MULTIPLE * 10)) * 10)
-      : Math.max(1, Math.round(stack / STARTING_STACK_MULTIPLE)));
     const refreshPreview = () => {
       const stack = startingChips();
-      const pot = potFor(stack);
+      const pot = potForStack(game, stack);
       const head = `Everyone starts with ${formatMoney(stack, DEFAULT_ROOM_CURRENCY)}`;
       preview.textContent = isBig2
         ? `${head} · each card left in a loser's hand pays ${formatMoney(pot / 10, DEFAULT_ROOM_CURRENCY)}`
@@ -402,7 +409,7 @@ class LanScreens {
         client.createRoom(this.name, {
           game,
           currency: DEFAULT_ROOM_CURRENCY,
-          pot: potFor(stack),
+          pot: potForStack(game, stack),
           startingChips: stack,
           humanSeats: Number(seats.value),
           // A hidden select still holds a value; don't send a choice nobody saw.
@@ -419,11 +426,12 @@ class LanScreens {
       this.backLink(this.modeName, () => this.renderChoice()),
       el('div.page__head',
         el('h1.page__title', 'Create a room'),
-        el('p.page__sub', 'Set the seats and how many coins everyone starts with, then send the invite link.'),
+        el('p.page__sub', 'Pick the game, set the seats and how many coins everyone starts with, then send the invite link. You can switch games between hands.'),
       ),
       this.reachable() ? null : this.notReachable(),
       el('div.card-panel',
         el('div.form-grid',
+          field('Game', gameSelect),
           field('Your name', nameInput),
           field('Seats', seats, `Bots fill whatever is left of the ${seatCount === 3 ? 'three' : 'four'}`),
           field('Starting coins', chips, 'Room coins only — they never touch your single-player purse'),
@@ -577,9 +585,11 @@ class LanScreens {
     this.startKeepAlive();
     this.endReconnect();
     const room = this.room;
+    const seatedNow = room.seats.some((s) => s.id === this.you);
     // Someone can join between hands, so 'finished' or 'playing' may arrive
-    // before this device has ever been dealt a view.
-    if (room.phase === 'lobby' || (!this.view && (room.phase === 'finished' || room.phase === 'playing'))) {
+    // before this device has ever been dealt a view. The host can also bench a
+    // player, or a game switch can, while they sit on a result card.
+    if (room.phase === 'lobby' || (!this.view && (room.phase === 'finished' || room.phase === 'playing')) || (!seatedNow && this.table)) {
       this.dropTable();
       this.renderRoomLobby();
     } else if (!this.table) this.renderTable();
@@ -682,9 +692,15 @@ class LanScreens {
       lines,
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
+      ...this.changeGameOption(isHost),
       onLeave: () => this.leave(),
       immediate: replacing,
     });
+  }
+
+  /** The host's way off a result card and back to the lobby, where the game can be switched. */
+  changeGameOption(isHost) {
+    return isHost ? { extraLabel: 'Change game', onExtra: () => this.client.toLobby() } : {};
   }
 
   onBig2Result(message) {
@@ -718,6 +734,7 @@ class LanScreens {
       lines,
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
+      ...this.changeGameOption(isHost),
       onLeave: () => this.leave(),
       immediate: replacing,
     });
@@ -1021,14 +1038,28 @@ class LanScreens {
     // The big line is the five characters people read out. The address belongs
     // underneath, for anyone whose page came from somewhere else.
     const fullCode = showAddress ? formatCode(room.code, hostInfo.host, hostInfo.port) : room.code;
-    const seated = room.seats.filter((s) => s.id).length;
-    const ready = seated >= 1;
+    // The server refuses a deal with nobody seated; say so up front.
+    const ready = room.seats.some((s) => s.id && s.connected !== false);
     const game = room.settings.game === 'big2' ? 'big2' : 'doudizhu';
     const skills = skillsFor(game);
+    const mySeat = room.seats.find((s) => s.id === this.you);
+    const spectating = !mySeat;
+    const playing = room.phase === 'playing';
+    const spectators = room.spectators ?? [];
 
     const seatList = el('ul.seat-list');
     room.seats.forEach((seat) => {
       const bot = !seat.id;
+      let action = null;
+      if (!playing) {
+        if (bot && mySeat?.seat !== seat.seat) {
+          action = el('button.btn.btn--small', { type: 'button', onclick: () => this.client.sit(seat.seat) }, 'Sit here');
+        } else if (seat.id === this.you) {
+          action = el('button.btn.btn--small', { type: 'button', onclick: () => this.client.stand() }, 'Watch');
+        } else if (seat.id && isHost) {
+          action = el('button.btn.btn--small', { type: 'button', onclick: () => this.client.stand(seat.id) }, 'To watchers');
+        }
+      }
       seatList.append(el('li', { class: seat.isHost ? 'is-host' : '' },
         el('span', `Seat ${seat.seat + 1}`),
         el('span', { style: 'flex:1' }, bot
@@ -1036,8 +1067,36 @@ class LanScreens {
           : (seat.connected === false ? `${String(seat.name)} (away)` : String(seat.name))),
         seat.isHost ? el('span', 'host') : null,
         el('span.seat-list__chips', seat.id ? this.money(seat.chips, true) : '—'),
+        action,
       ));
     });
+
+    let watching = null;
+    if (spectators.length) {
+      const watchList = el('ul.seat-list');
+      for (const person of spectators) {
+        watchList.append(el('li', { class: person.isHost ? 'is-host' : '' },
+          el('span', { style: 'flex:1' }, person.connected === false ? `${String(person.name)} (away)` : String(person.name)),
+          person.isHost ? el('span', 'host') : null,
+          el('span.seat-list__chips', this.money(person.chips, true)),
+        ));
+      }
+      watching = [el('h3.seat-heading', 'Watching'), watchList];
+    }
+
+    // Only the host can switch, and not mid-hand; everyone else just sees which game it is.
+    const canPick = isHost && !playing;
+    const gamePicker = canPick
+      ? el('div.game-pick', { role: 'group', 'aria-label': 'Game' },
+        ...['doudizhu', 'big2'].map((id) => {
+          const def = gameById(id);
+          const current = id === game;
+          return el('button.game-pick__btn', {
+            type: 'button', 'aria-pressed': current ? 'true' : 'false', disabled: current, onclick: () => this.client.setGame(id),
+          },
+          el('b', def.name), ' ', el('span', def.nameZh), el('small', `${def.players} seats`));
+        }))
+      : null;
 
     let invite = null;
     if (this.online) {
@@ -1054,30 +1113,39 @@ class LanScreens {
       ];
     }
 
-    const tiles = [statTile('Starting stack', this.money(room.settings.startingChips))];
+    const tiles = [];
+    if (!canPick) tiles.push(statTile('Game', gameById(game).name));
+    tiles.push(statTile('Starting stack', this.money(room.settings.startingChips)));
     if (game === 'big2') tiles.push(statTile('Per card left', this.money(room.settings.pot / 10)));
     else tiles.push(statTile('Base stake', this.money(room.settings.pot), 'Per seat, before the multiplier'));
 
     this.shell(
       this.backLink('Leave room', () => this.leave()),
       el('div.page__head',
-        el('h1.page__title', isHost ? 'Your room is open' : 'Waiting for the host'),
+        el('h1.page__title', isHost ? 'Your room is open' : (spectating ? 'You\'re watching' : 'Waiting for the host')),
         el('p.page__sub', isHost
           ? (this.online ? 'Send the invite link, or read the code out.' : 'Read the code out. Everyone else opens this same address and joins.')
-          : 'You are seated. The host starts the hand.'),
+          : (spectating
+            ? (playing ? 'A hand is being played. You can take a free seat when it ends.' : 'Take a free seat to play the next hand, or keep watching.')
+            : 'You are seated. The host starts the hand.')),
       ),
       el('div.card-panel',
         el('div.room-code', String(room.code)),
         this.online ? invite : el('p.room-url', showAddress
           ? `Everyone opens http://${hostInfo.host}:${hostInfo.port} on this network, then joins with ${room.code}. From another page, the full code is ${fullCode}.`
           : `Others join with ${room.code}`),
+        gamePicker ? el('p.seat-heading', 'Game') : null,
+        gamePicker,
         seatList,
+        watching,
         el('div.stat-grid.stat-grid--spaced', ...tiles),
         el('div.btn-row.btn-row--spaced',
           isHost
             ? el('button.btn.btn--primary.btn--big', { type: 'button', disabled: !ready, onclick: () => this.client.start() }, 'Deal')
-            : el('span.footnote', 'The host will deal when everyone is in.'),
+            // Not a .footnote: toast() writes refusals into the first one.
+            : el('span.field__hint', 'The host will deal when everyone is in.'),
         ),
+        el('p.footnote', ''),
       ),
     );
   }

@@ -1,8 +1,8 @@
 /**
  * Menu, mode picker and lobby picker.
  *
- * Flow: menu -> pick a game -> single player or local multiplayer -> (solo) pick
- * a stake table, or (LAN) create or join a room.
+ * Flow: menu -> pick a game -> pick a stake table; "Play online" in the menu
+ * header -> create or join a room.
  */
 
 import {
@@ -62,7 +62,7 @@ export function renderMenu(app, root) {
     const fan = el('span.tile__fan', { 'aria-hidden': 'true' });
     const spec = TILE_FANS[game.id];
     if (spec) fans.push({ fan, spec });
-    const tile = el('button.tile.tile--game', { type: 'button', onclick: () => app.go('mode', { gameId: game.id }) },
+    const tile = el('button.tile.tile--game', { type: 'button', onclick: () => app.go(game.id === 'blackjack' ? 'mode' : 'lobby', { gameId: game.id }) },
       fan,
       el('div.tile__body',
         tileHead(game),
@@ -128,6 +128,15 @@ export function renderMenu(app, root) {
         el('h1.page__title.page__title--display', 'Pick a game'),
         el('p.page__sub',
           `${NUMBER_WORDS[readyCount] ?? readyCount} game${readyCount === 1 ? '' : 's'} ready to deal, against the house bots or with friends online. No account, and it keeps working offline once installed.`),
+        el('div.btn-row',
+          el('button.btn.btn--primary', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'online' }) }, 'Play online'),
+          // A page served over http is a LAN or local host, so the same-Wi-Fi
+          // option only makes sense there; over https the only server in reach
+          // is the public one.
+          location.protocol === 'http:'
+            ? el('button.btn', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'lan' }) }, 'Local network')
+            : null,
+        ),
       ),
       profile.rescueMode
         ? el('div.notice.notice--warn',
@@ -182,47 +191,9 @@ function renderBlackjackScreen(app, root, paint) {
 
 export function renderMode(app, root, gameId) {
   if (gameId === 'blackjack') return renderBlackjackScreen(app, root, (mod) => mod.renderBlackjackMode(app, root));
-  const game = gameById(gameId);
-  // A page served over http is a LAN or local host, so the same-Wi-Fi tile only
-  // makes sense there; over https the only server in reach is the public one.
-  const lanAvailable = location.protocol === 'http:';
-  clear(root);
-  root.append(
-    topbar(app),
-    el('main.page',
-      el('button.back-link', { type: 'button', onclick: () => app.go('menu') }, '← All games'),
-      el('div.page__head',
-        el('h1.page__title', game.name, game.nameZh ? el('span.tile__zh', game.nameZh) : null),
-        el('p.page__sub', game.description),
-      ),
-      el('div.tiles',
-        el('button.tile', { type: 'button', onclick: () => app.go('lobby', { gameId }) },
-          el('h2.tile__name', 'Single player'),
-          el('p.tile__tag', 'Against the house bots'),
-          el('p.tile__desc', 'Pick a stake table. The bots get sharper as the pot grows, your chips and Elo are on the line, and a cap limits what any one hand can cost you.'),
-        ),
-        el('button.tile', { type: 'button', onclick: () => app.go('lan', { gameId, mode: 'online' }) },
-          el('h2.tile__name', 'Play online'),
-          el('p.tile__tag', 'Friends anywhere · invite link'),
-          el('p.tile__desc', 'Make a room and send the link. Friends join from their own phones, wherever they are, and bots fill any empty seat.'),
-        ),
-        lanAvailable
-          ? el('button.tile', { type: 'button', onclick: () => app.go('lan', { gameId, mode: 'lan' }) },
-              el('h2.tile__name', 'Local network'),
-              el('p.tile__tag', 'Same Wi-Fi · room code'),
-              el('p.tile__desc', 'For a room run from your own computer with node server/server.js — everyone on the same Wi-Fi opens its address.'),
-            )
-          : null,
-      ),
-      el('div.rule'),
-      el('div.card-panel',
-        el('h2.panel__title', 'House rules'),
-        el('ul.panel__list',
-          ...(game.ruleNotes ?? []).map((note) => el('li', note)),
-        ),
-      ),
-    ),
-  );
+  // Only Blackjack still has a mode step (American or Malaysian). main.js redirects
+  // other games before this runs; this keeps a direct call from rendering nothing.
+  return renderLobby(app, root, gameId);
 }
 
 export function renderLobby(app, root, gameId, variant) {
@@ -286,8 +257,9 @@ export function renderLobby(app, root, gameId, variant) {
   root.append(
     topbar(app),
     el('main.page',
-      el('button.back-link', { type: 'button', onclick: () => app.go('mode', { gameId }) }, `← ${game.name}`),
+      el('button.back-link', { type: 'button', onclick: () => app.go('menu') }, '← All games'),
       el('div.page__head',
+        el('span.eyebrow', game.name, game.nameZh ? ` ${game.nameZh}` : ''),
         el('h1.page__title', 'Choose a table'),
         el('p.page__sub', sub),
       ),
@@ -296,6 +268,13 @@ export function renderLobby(app, root, gameId, variant) {
       el('div.card-panel',
         el('h2.panel__title', 'How the caps work'),
         el('ul.panel__list', ...capsNotes),
+      ),
+      el('div.rule'),
+      el('div.card-panel',
+        el('h2.panel__title', 'House rules'),
+        el('ul.panel__list',
+          ...(game.ruleNotes ?? []).map((note) => el('li', note)),
+        ),
       ),
     ),
   );

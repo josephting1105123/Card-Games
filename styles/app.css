@@ -447,6 +447,22 @@ button.tile:active,
 }
 .seat-list .is-host { color: var(--red-deep); font-weight: 700; }
 .seat-list__chips { color: var(--text-secondary); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Compact so a row with a name, chips and an action still fits an 844px phone. */
+.seat-list .btn--small, .page .seat-list .btn--small { font-size: 13px; padding: 4px 10px; min-height: 0; line-height: 1.3; white-space: nowrap; flex: 0 0 auto; }
+.seat-heading { margin: 18px 0 0; font-size: 14px; font-weight: 700; color: var(--text-tertiary); }
+.seat-heading + .seat-list, .seat-heading + .game-pick { margin-top: 6px; }
+
+.game-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.game-pick__btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px;
+  font: inherit; font-size: 15px; text-align: left; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--hairline-strong); border-radius: var(--r-md); cursor: pointer;
+}
+.game-pick__btn small { font-size: 13px; color: var(--text-tertiary); }
+.game-pick__btn:hover:not(:disabled) { background: var(--red-tint); }
+/* The current game is disabled (nothing to switch to) but must not look greyed out. */
+.game-pick__btn[aria-pressed="true"] { background: var(--red); border-color: var(--red); color: var(--on-red); opacity: 1; cursor: default; }
+.game-pick__btn[aria-pressed="true"] small { color: var(--on-red); }
 
 .notice {
   border: 1px solid var(--hairline-strong); border-radius: var(--r-md); background: var(--panel);

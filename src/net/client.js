@@ -104,6 +104,10 @@ export class LanClient {
   pass() { this.send({ t: C2S.PASS }); }
   resume(code, token) { this.send({ t: C2S.RESUME, code, token }); }
   leave() { this.send({ t: C2S.LEAVE }); }
+  setGame(game) { this.send({ t: C2S.SET_GAME, game }); }
+  sit(seat) { this.send({ t: C2S.SIT, seat }); }
+  stand(id) { this.send(id === undefined ? { t: C2S.STAND } : { t: C2S.STAND, id }); }
+  toLobby() { this.send({ t: C2S.TO_LOBBY }); }
 
   close() {
     this.handlers.clear();

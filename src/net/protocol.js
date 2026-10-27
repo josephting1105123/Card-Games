@@ -8,7 +8,7 @@
  */
 
 import { DEFAULT_ROOM_CURRENCY } from '../core/currency.js';
-import { stackForPot, suggestedStakes } from '../core/economy.js';
+import { STARTING_STACK_MULTIPLE, stackForPot, suggestedStakes } from '../core/economy.js';
 
 export const C2S = {
   HELLO: 'hello',
@@ -24,6 +24,10 @@ export const C2S = {
   LEAVE: 'leave',
   CHAT: 'chat',
   RESUME: 'resume',         // reclaim a held seat with the token from the ROOM frame
+  SET_GAME: 'set_game',     // host switches the room's game between hands ({game})
+  SIT: 'sit',               // take a free seat ({seat}); a spectator or a seated player moving
+  STAND: 'stand',           // give up a seat and watch; the host may pass {id} to stand someone else
+  TO_LOBBY: 'to_lobby',     // host leaves a finished hand's result and returns the room to its lobby
 };
 
 export const S2C = {
@@ -36,8 +40,31 @@ export const S2C = {
   CHAT: 'chat',
 };
 
-/** Seats at the table, per game. A room's game is fixed when it is created. */
+/** Seats at the table, per game. The host can switch a room's game between hands (SET_GAME). */
 export const SEATS_BY_GAME = { doudizhu: 3, big2: 4 };
+
+/**
+ * Seated players plus spectators in one room. Spectators cost the server a socket
+ * and a ROOM frame per change but no game state, so the cap only has to stop one
+ * room hoarding connections, not to size a table.
+ */
+export const MAX_MEMBERS = 8;
+
+/**
+ * Smallest starting stack a Big Two room can have. The per-card rate is pot / 10
+ * and a pot is a fraction of the stack, so anything smaller rounds the rate to nothing.
+ */
+export const BIG2_MIN_STACK = 100;
+
+/**
+ * The pot a room should play for after a game switch, keeping its stack worth the
+ * same number of pots. Big Two stakes move in tens; Dou Di Zhu's in ones.
+ */
+export function potForStack(game, stack) {
+  return game === 'big2'
+    ? Math.max(10, Math.round(stack / (STARTING_STACK_MULTIPLE * 10)) * 10)
+    : Math.max(1, Math.round(stack / STARTING_STACK_MULTIPLE));
+}
 
 const knownGame = (id) => (Object.hasOwn(SEATS_BY_GAME, id) ? id : 'doudizhu');
 

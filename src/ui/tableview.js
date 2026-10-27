@@ -759,7 +759,7 @@ export class TableView {
   }
 
   /** Full-screen result card. `onAgain` and `onLeave` are buttons on it. */
-  showResult({ title, win, deltaText, lines, onAgain, onLeave, againLabel = 'Deal again', immediate = false }) {
+  showResult({ title, win, deltaText, lines, onAgain, onLeave, againLabel = 'Deal again', immediate = false, extraLabel, onExtra }) {
     const overlay = el('div.overlay',
       el('div.result',
         el('h2', { class: `result__title ${win ? 'is-win' : 'is-loss'}` }, title),
@@ -767,6 +767,9 @@ export class TableView {
         el('ul.result__lines', ...lines.map((line) => el('li', { html: line }))),
         el('div.btn-row', { style: 'justify-content:center' },
           el('button.btn.btn--primary', { type: 'button', onclick: () => { overlay.remove(); onAgain?.(); } }, againLabel),
+          extraLabel && onExtra
+            ? el('button.btn', { type: 'button', onclick: () => { overlay.remove(); onExtra(); } }, extraLabel)
+            : null,
           el('button.btn', { type: 'button', onclick: () => { overlay.remove(); onLeave?.(); } }, 'Back to menu'),
         ),
       ),
