@@ -17,7 +17,10 @@ import { skillByName as douSkillByName } from '../src/games/doudizhu/ai.js';
 import * as big2 from '../src/games/big2/engine.js';
 import { botTurn as big2BotTurn } from '../src/games/big2/match.js';
 import { skillByName as big2SkillByName } from '../src/games/big2/ai.js';
-import { S2C } from '../src/net/protocol.js';
+import * as malaysian from '../src/games/blackjack/malaysian.js';
+import { createShoe, malaysianTotal } from '../src/games/blackjack/cards.js';
+import { makeRng } from '../src/core/rng.js';
+import { C2S, S2C, blackjackLimits } from '../src/net/protocol.js';
 
 const doudizhu = {
   id: 'doudizhu',
@@ -227,7 +230,277 @@ const bigTwo = {
   },
 };
 
-export const GAMES = { doudizhu, big2: bigTwo };
+/**
+ * Malaysian Blackjack. Room seat 0 is the banker's box (a person banks if one is
+ * seated there, a bot otherwise); room seats 1-4 are the engine's four player
+ * seats, so engine seat i is room seat i + 1.
+ *
+ * rooms.js wants state.players indexed by room seat with { id, name, isBot }, so
+ * the state wraps the engine's round. The wrapper's isBot says who acts; the
+ * engine's own isHuman is only set false just before it plays a bot's turn.
+ */
+const clampInt = (value, low, high) => Math.max(low, Math.min(high, Math.round(value)));
+
+const bjPhase = (state) => state.round.phase;
+
+const bjMove = (apply) => (state, seat) => (
+  seat >= 1 ? apply(state.round, seat - 1, state.deck) : { ok: false, error: 'not your move' }
+);
+
+const blackjack = {
+  id: 'blackjack',
+  seats: 5,
+  // The engine's bots have one fixed policy; there is no skill to pick.
+  skillByName: () => null,
+  // The house filler (bots) is topped back up between hands so a banker or seat
+  // that went broke does not leave the table short of players.
+  rebuyBots: true,
+  createGame({ seed, players, settings }) {
+    const rng = makeRng(`${seed}:deal`);
+    const deck = createShoe(1, rng);
+    const limits = blackjackLimits(settings);
+    const seats = [];
+    for (let i = 0; i < 4; i++) {
+      const player = players[i + 1];
+      if (player.isBot) {
+        seats.push({ isHuman: false, name: player.name });
+      } else if ((player.chips ?? 0) < 1) {
+        seats.push(null); // out of chips: sits the hand out
+      } else {
+        // A short purse lowers the floor too: a bet stored while chips were short must not play on below the minimum.
+        const bet = clampInt(player.bet ?? limits.min, Math.min(limits.min, player.chips), Math.min(limits.max, player.chips));
+        seats.push({ isHuman: true, name: player.name, bet });
+      }
+    }
+    const round = malaysian.startTableRound({ deck, table: limits, rng, seats, bankerIsHuman: !players[0].isBot });
+    return {
+      game: 'blackjack',
+      round,
+      deck,
+      limits,
+      // dealtHuman: a seat dealt to a bot (its member was away) stays the house's for the hand,
+      // so a resume cannot swap a bot-sized bet or a declined Run for the member's own.
+      players: players.map((p) => ({ id: p.id, name: p.name, isBot: p.isBot, dealtHuman: !p.isBot })),
+    };
+  },
+  seatOnTurn(state) {
+    if (bjPhase(state) === 'players') return state.round.activeSeat + 1;
+    return bjPhase(state) === 'banker' ? 0 : -1;
+  },
+  isBotTurn(state) {
+    if (bjPhase(state) === 'players') return !!state.players[state.round.activeSeat + 1]?.isBot;
+    return bjPhase(state) === 'banker' ? !!state.players[0].isBot : false;
+  },
+  isFinished: (state) => !!state.round.settled,
+  botTurn(state, rng) {
+    const { round, deck } = state;
+    if (round.phase === 'players') {
+      const index = round.activeSeat;
+      const p = round.players[index];
+      // A human who dropped is a bot now, but the engine still remembers the seat as theirs.
+      p.isHuman = false;
+      if (p.bankerSpecialPending) {
+        // Declining Run would hand the held-back banker special its 2-3x loss; running is a push.
+        malaysian.runSeat(round, index);
+        return { seat: index + 1, kind: 'run' };
+      }
+      malaysian.playSeatTurn(round, index, deck, rng);
+      return { seat: index + 1, kind: 'play' };
+    }
+    const step = malaysian.bankerBotStep(round, deck, rng);
+    return { seat: 0, kind: step.type, ...(step.seatIndex === undefined ? {} : { target: step.seatIndex + 1 }) };
+  },
+  isBot: (player) => !!player.isBot,
+  // A seat dealt to a bot stays one: its member was away at the deal, and swapping them in
+  // mid-hand would trade the bot's bet and Run decision for theirs.
+  toBot(player, skill, name) {
+    if (!player.dealtHuman) return;
+    player.isBot = true;
+    player.skill = skill;
+    player.name = name;
+  },
+  toHuman(player, id, name) {
+    if (!player.dealtHuman) return;
+    player.isBot = false;
+    player.id = id;
+    player.name = name;
+  },
+  actions: {
+    [C2S.BJ_RUN]: bjMove(malaysian.runSeat),
+    [C2S.BJ_STAND]: bjMove(malaysian.standSeat),
+    [C2S.BJ_HIT](state, seat) {
+      if (seat === 0) return malaysian.bankerHit(state.round, state.deck);
+      return bjMove(malaysian.hitSeat)(state, seat);
+    },
+    [C2S.BJ_OPEN](state, seat, message) {
+      if (seat !== 0) return { ok: false, error: 'not your move' };
+      const target = Number(message.seat) - 1;
+      if (!Number.isInteger(target) || target < 0 || target > 3) return { ok: false, error: 'no such seat' };
+      return malaysian.openSeat(state.round, target);
+    },
+  },
+  // The views carry the whole table, so there is nothing to caption or to read back.
+  snapshot: () => null,
+  describeAction: () => [],
+  seatView(state, viewerSeat) {
+    const { round } = state;
+    const settled = round.phase === 'settled';
+    const bankerSees = viewerSeat === 0 || round.phase !== 'players';
+    const bankerCards = bankerSees ? round.banker.cards : round.banker.cards.map((card, i) => (i === 0 ? card : null));
+    const seats = round.players.map((p, i) => {
+      if (!p) return null;
+      // The banker is the one person who may not see an unopened hand; everyone else shares the table.
+      const visible = settled || p.opened || viewerSeat !== 0;
+      return {
+        seat: i + 1,
+        name: p.name,
+        isBot: !!state.players[i + 1]?.isBot,
+        bet: p.bet,
+        count: p.cards.length,
+        cards: visible ? p.cards : p.cards.map(() => null),
+        opened: p.opened,
+        // A hidden seat that is done is either standing or bust; saying which would leak the bust.
+        stood: visible ? p.stood : p.stood || p.busted,
+        result: p.result,
+        payout: p.opened ? p.payout : 0,
+        busted: visible ? p.busted : null,
+        special: visible ? p.special : null,
+        total: visible ? malaysianTotal(p.cards).total : null,
+        bankerTotalAtOpen: p.bankerTotalAtOpen,
+      };
+    });
+    const you = { canRun: false, canHit: false, canStand: false, canBankerHit: false, openable: [] };
+    if (state.players[viewerSeat]?.isBot) {
+      // A member who resumed into a seat dealt to a bot only watches this hand: no buttons.
+    } else if (viewerSeat === 0) {
+      you.canBankerHit = malaysian.canBankerHit(round);
+      round.players.forEach((p, i) => { if (p && malaysian.canOpenSeat(round, i)) you.openable.push(i + 1); });
+    } else if (viewerSeat >= 1) {
+      const i = viewerSeat - 1;
+      you.canRun = malaysian.canRunSeat(round, i);
+      you.canHit = malaysian.canHitSeat(round, i);
+      you.canStand = malaysian.canStandSeat(round, i);
+    }
+    return {
+      game: 'blackjack',
+      phase: round.phase,
+      seat: viewerSeat,
+      activeSeat: this.seatOnTurn(state),
+      limits: state.limits,
+      banker: {
+        name: state.players[0].name,
+        isBot: !!state.players[0].isBot,
+        count: round.banker.cards.length,
+        cards: bankerCards,
+        special: bankerSees ? round.banker.special : null,
+        total: bankerSees ? malaysianTotal(round.banker.cards).total : null,
+      },
+      seats,
+      you,
+    };
+  },
+  /**
+   * The engine's payouts are what each seat wins from the banker (negative: pays
+   * it). A losing seat pays at most the chips it has; the banker collects that,
+   * and winners are paid out of the banker's chips plus the collection. If the
+   * banker cannot cover everyone, winners are cut back pro rata. Whatever is not
+   * paid out stays with the banker, so the deltas always sum to zero.
+   */
+  settle(room) {
+    const { state } = room;
+    const chipsOf = (player) => room.chips.get(player.id) ?? room.settings.startingChips;
+    const banker = state.players[0];
+    const rows = [];
+    let collected = 0;
+    const winners = [];
+    state.round.players.forEach((p, i) => {
+      if (!p) return;
+      const player = state.players[i + 1];
+      const chips = chipsOf(player);
+      const row = {
+        seat: i + 1,
+        name: player.name,
+        isBot: !!player.isBot,
+        isBanker: false,
+        delta: 0,
+        chips,
+        capped: false,
+        won: false,
+        result: p.result,
+      };
+      if (p.payout < 0) {
+        const paid = Math.min(-p.payout, chips);
+        row.capped = paid < -p.payout;
+        row.delta = -paid;
+        collected += paid;
+      } else if (p.payout > 0) {
+        winners.push({ row, owed: p.payout });
+      }
+      rows.push({ row, player });
+    });
+
+    const bankerChips = chipsOf(banker);
+    const available = bankerChips + collected;
+    const owedTotal = winners.reduce((sum, w) => sum + w.owed, 0);
+    let paidOut = 0;
+    let bankerCapped = false;
+    winners.forEach((w, index) => {
+      let share = w.owed;
+      if (owedTotal > available) {
+        const rest = available - paidOut;
+        // The last winner takes the remainder; it never exceeds what the engine owes it.
+        share = index === winners.length - 1 ? Math.min(w.owed, rest) : Math.floor((available * w.owed) / owedTotal);
+        w.row.capped = share < w.owed;
+        bankerCapped ||= w.row.capped;
+      }
+      w.row.delta = share;
+      paidOut += share;
+    });
+
+    const bankerRow = {
+      seat: 0,
+      name: banker.name,
+      isBot: !!banker.isBot,
+      isBanker: true,
+      delta: collected - paidOut,
+      chips: bankerChips,
+      capped: bankerCapped,
+      won: false,
+      result: null,
+    };
+    // A player with no chips sat the hand out, but still needs a row: without one their
+    // client never shows a result, and if they are the host nobody can deal again.
+    state.round.players.forEach((p, i) => {
+      if (p) return;
+      const player = state.players[i + 1];
+      rows.push({
+        row: {
+          seat: i + 1,
+          name: player.name,
+          isBot: !!player.isBot,
+          isBanker: false,
+          delta: 0,
+          chips: chipsOf(player),
+          capped: false,
+          won: false,
+          result: 'out',
+        },
+        player,
+      });
+    });
+    rows.sort((a, b) => a.row.seat - b.row.seat);
+    const all = [{ row: bankerRow, player: banker }, ...rows];
+    const changes = [];
+    for (const { row, player } of all) {
+      row.chips += row.delta;
+      row.won = row.delta > 0;
+      changes.push([player.id, row.chips]);
+    }
+    return { frame: { t: S2C.RESULT, game: 'blackjack', rows: all.map((entry) => entry.row) }, changes };
+  },
+};
+
+export const GAMES = { doudizhu, big2: bigTwo, blackjack };
 
 /** An unknown id falls back to Dou Di Zhu, matching sanitiseSettings. */
 export function gameAdapter(id) {

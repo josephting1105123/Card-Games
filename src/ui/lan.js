@@ -10,15 +10,16 @@
  */
 
 import { DEFAULT_ROOM_CURRENCY, formatMoney } from '../core/currency.js';
-import { STARTING_STACK_MULTIPLE } from '../core/economy.js';
 import { SKILLS as BIG2_SKILLS } from '../games/big2/ai.js';
 import { classify } from '../games/big2/rules.js';
 import { SKILLS as DDZ_SKILLS } from '../games/doudizhu/ai.js';
+import { GAMES, gameById } from '../games/registry.js';
 import { LanClient } from '../net/client.js';
 import { healthUrlFor, onlineSocketUrl } from '../net/config.js';
-import { SETTING_LIMITS, SEATS_BY_GAME, S2C, defaultSettings } from '../net/protocol.js';
+import { SETTING_LIMITS, SEATS_BY_GAME, S2C, blackjackLimits, defaultSettings, potForStack } from '../net/protocol.js';
 import { formatCode, normaliseCode, parseCode, socketUrlFor } from '../net/roomcode.js';
 import { Big2View } from './big2.js';
+import { BjOnlineView, createBetStepper } from './bjonline.js';
 import { TableView } from './tableview.js';
 import { wordmark } from './screens.js';
 import { announce, button, clear, el, field, numberInput, select, wait } from './dom.js';
@@ -108,8 +109,32 @@ function cleanRow(row) {
   };
 }
 
+function cleanBjRow(row) {
+  return {
+    seat: row.seat,
+    name: String(row.name ?? ''),
+    isBot: Boolean(row.isBot),
+    isBanker: Boolean(row.isBanker),
+    delta: Number(row.delta),
+    chips: Number(row.chips),
+    capped: Boolean(row.capped),
+    won: Boolean(row.won),
+    result: row.result == null ? null : String(row.result),
+  };
+}
+
 function skillsFor(game) {
   return game === 'big2' ? BIG2_SKILLS : DDZ_SKILLS;
+}
+
+/** Any game the host knows by id; an unknown one plays as Dou Di Zhu. */
+function knownGame(id) {
+  return Object.hasOwn(SEATS_BY_GAME, id) ? id : 'doudizhu';
+}
+
+/** The games a room can be made for, in the order the registry lists them. */
+function onlineGames() {
+  return GAMES.filter((g) => g.online);
 }
 
 export function renderLan(app, root, params = {}) {
@@ -123,7 +148,7 @@ class LanScreens {
     this.root = root;
     this.session = session;
     // Only a hint until a room exists; room.settings.game decides after that.
-    this.gameId = params.gameId === 'big2' ? 'big2' : 'doudizhu';
+    this.gameId = knownGame(params.gameId);
     this.mode = params.mode ?? (location.protocol === 'http:' ? 'lan' : 'online');
     this.online = this.mode === 'online';
     this.joinCode = params.joinCode ?? null;
@@ -167,8 +192,7 @@ class LanScreens {
 
   /** The table's game: the room's once there is one, else the screen it was opened from. */
   get game() {
-    const game = this.room?.settings?.game ?? this.gameId;
-    return game === 'big2' ? 'big2' : 'doudizhu';
+    return knownGame(this.room?.settings?.game ?? this.gameId);
   }
 
   reachable() {
@@ -230,7 +254,7 @@ class LanScreens {
     this.reenable = null;
     this.stopKeepAlive();
     this.shell(
-      this.backLink('All games', () => this.app.go('mode', { gameId: this.gameId })),
+      this.backLink('All games', () => this.app.go('menu')),
       el('div.page__head',
         el('h1.page__title', this.online ? 'Play online' : 'Play on this network'),
         el('p.page__sub', this.online
@@ -336,9 +360,21 @@ class LanScreens {
     this.reenable = null;
     const game = this.gameId;
     const isBig2 = game === 'big2';
+    const isBj = game === 'blackjack';
     const seatCount = SEATS_BY_GAME[game];
     const s = { ...defaultSettings(game) };
     const nameInput = el('input.input', { value: this.name, maxlength: 18, placeholder: 'Your name' });
+    // Seat options, limits and the preview all depend on the game, so a change
+    // rebuilds the form; the typed name is carried over.
+    const gameSelect = select('set-game', onlineGames().map((g) => ({
+      value: g.id,
+      label: `${g.onlineName ?? g.name}${g.nameZh ? ` ${g.nameZh}` : ''}`,
+    })), game);
+    gameSelect.addEventListener('change', () => {
+      this.name = nameInput.value.trim() || this.name;
+      this.gameId = knownGame(gameSelect.value);
+      this.renderCreate();
+    });
     // Big Two pays a tenth of the pot per card, so a smaller stack would round
     // the rate down to nothing.
     const limits = { ...SETTING_LIMITS.startingChips, min: isBig2 ? 100 : SETTING_LIMITS.startingChips.min };
@@ -347,14 +383,14 @@ class LanScreens {
     // The pot is not a second thing to get wrong: it is the stack divided by the
     // house multiple, so typing one number sets both.
     const startingChips = () => Math.min(limits.max, Math.max(limits.min, Math.round(Number(chips.value) || 0)));
-    // Big Two's rate is the pot over ten and must stay a whole number of coins.
-    const potFor = (stack) => (isBig2
-      ? Math.max(10, Math.round(stack / (STARTING_STACK_MULTIPLE * 10)) * 10)
-      : Math.max(1, Math.round(stack / STARTING_STACK_MULTIPLE)));
     const refreshPreview = () => {
       const stack = startingChips();
-      const pot = potFor(stack);
+      const pot = potForStack(game, stack);
       const head = `Everyone starts with ${formatMoney(stack, DEFAULT_ROOM_CURRENCY)}`;
+      if (isBj) {
+        preview.textContent = `${head} · bets from ${formatMoney(pot, DEFAULT_ROOM_CURRENCY)} to ${formatMoney(pot * 10, DEFAULT_ROOM_CURRENCY)} · the banker covers every seat`;
+        return;
+      }
       preview.textContent = isBig2
         ? `${head} · each card left in a loser's hand pays ${formatMoney(pot / 10, DEFAULT_ROOM_CURRENCY)}`
         : `${head} · a landlord win at ×2 moves ${formatMoney(pot * 4, DEFAULT_ROOM_CURRENCY)}`;
@@ -371,8 +407,9 @@ class LanScreens {
     const seats = select('set-seats', seatOptions, String(Math.min(s.humanSeats, seatCount)));
     const skill = select('set-skill', Object.entries(skillsFor(game)).map(([id, def]) => ({ value: id, label: def.name })), s.botSkill);
     const skillField = field('Bot strength', skill, 'For any seat a person does not take');
-    // Only worth asking while a bot will actually sit down.
-    const needsBots = () => Number(seats.value) < seatCount;
+    // Only worth asking while a bot will actually sit down. The Ban Luck bots
+    // have no skill levels, so the field never shows there.
+    const needsBots = () => !isBj && Number(seats.value) < seatCount;
     const syncSkill = () => { skillField.hidden = !needsBots(); };
     seats.addEventListener('change', syncSkill);
     syncSkill();
@@ -402,7 +439,7 @@ class LanScreens {
         client.createRoom(this.name, {
           game,
           currency: DEFAULT_ROOM_CURRENCY,
-          pot: potFor(stack),
+          pot: potForStack(game, stack),
           startingChips: stack,
           humanSeats: Number(seats.value),
           // A hidden select still holds a value; don't send a choice nobody saw.
@@ -419,13 +456,16 @@ class LanScreens {
       this.backLink(this.modeName, () => this.renderChoice()),
       el('div.page__head',
         el('h1.page__title', 'Create a room'),
-        el('p.page__sub', 'Set the seats and how many coins everyone starts with, then send the invite link.'),
+        el('p.page__sub', 'Pick the game, set the seats and how many coins everyone starts with, then send the invite link. You can switch games between hands.'),
       ),
       this.reachable() ? null : this.notReachable(),
       el('div.card-panel',
         el('div.form-grid',
+          field('Game', gameSelect),
           field('Your name', nameInput),
-          field('Seats', seats, `Bots fill whatever is left of the ${seatCount === 3 ? 'three' : 'four'}`),
+          field('Seats', seats, isBj
+            ? 'You take the banker box; bots fill empty seats'
+            : `Bots fill whatever is left of the ${['', 'one', 'two', 'three', 'four', 'five'][seatCount] ?? seatCount}`),
           field('Starting coins', chips, 'Room coins only — they never touch your single-player purse'),
           skillField,
         ),
@@ -539,7 +579,7 @@ class LanScreens {
     text = String(text ?? '');
     // The table screen has no .footnote, so a refused play was silent.
     if (this.table) {
-      if (this.tableGame === 'big2') {
+      if (this.tableGame === 'big2' || this.tableGame === 'blackjack') {
         this.table.flashError(text);
         announce(text);
       } else this.setCaption(text);
@@ -577,9 +617,11 @@ class LanScreens {
     this.startKeepAlive();
     this.endReconnect();
     const room = this.room;
+    const seatedNow = room.seats.some((s) => s.id === this.you);
     // Someone can join between hands, so 'finished' or 'playing' may arrive
-    // before this device has ever been dealt a view.
-    if (room.phase === 'lobby' || (!this.view && (room.phase === 'finished' || room.phase === 'playing'))) {
+    // before this device has ever been dealt a view. The host can also bench a
+    // player, or a game switch can, while they sit on a result card.
+    if (room.phase === 'lobby' || (!this.view && (room.phase === 'finished' || room.phase === 'playing')) || (!seatedNow && this.table)) {
       this.dropTable();
       this.renderRoomLobby();
     } else if (!this.table) this.renderTable();
@@ -602,10 +644,11 @@ class LanScreens {
 
   onView(message) {
     const isBig2 = this.game === 'big2';
+    const isBj = this.game === 'blackjack';
     // view.deal restarts at 0 every hand; the room's hand counter is what tells
-    // one hand from the next. Big Two's view has no deal counter, so it keys on
-    // the hand alone.
-    const key = isBig2 ? `${message.hand ?? ''}` : `${message.hand ?? ''}:${message.view.deal}`;
+    // one hand from the next. Big Two's and Ban Luck's views have no deal
+    // counter, so they key on the hand alone.
+    const key = isBig2 || isBj ? `${message.hand ?? ''}` : `${message.hand ?? ''}:${message.view.deal}`;
     const firstOfDeal = key !== this.dealKey;
     this.dealKey = key;
     const resync = this.needSync;
@@ -615,6 +658,10 @@ class LanScreens {
     if (!this.table) this.renderTable();
     if (isBig2) {
       this.onBig2View(message.view, firstOfDeal, resync);
+      return;
+    }
+    if (isBj) {
+      this.table.update(message.view);
       return;
     }
     this.table.update(message.view);
@@ -656,8 +703,57 @@ class LanScreens {
   }
 
   onResult(message) {
-    if ((message.game ?? this.game) === 'big2') this.onBig2Result(message);
+    const game = message.game ?? this.game;
+    if (game === 'big2') this.onBig2Result(message);
+    else if (game === 'blackjack') this.onBjResult(message);
     else this.onDdzResult(message);
+  }
+
+  onBjResult(message) {
+    this.lastResult = message;
+    const clean = message.rows.map(cleanBjRow);
+    const mySeat = this.view?.seat;
+    const mine = clean.find((row) => row.seat === mySeat);
+    // A watcher has nothing to settle. A seated player always gets a sheet, even
+    // without a row, so the host can still deal again.
+    const seated = !!this.room?.seats.some((s) => s.id === this.you);
+    if (!this.table || this.tableGame !== 'blackjack' || (!mine && !seated)) return;
+    // Sat the hand out with no chips (or no row at all): no win, no loss, no bet to size.
+    const out = !mine || mine.result === 'out';
+    const replacing = !!this.resultOverlay?.isConnected;
+    this.resultOverlay?.remove();
+    const signed = (delta) => `${delta > 0 ? '+' : delta < 0 ? '−' : ''}${this.money(Math.abs(delta))}`;
+    const rows = clean.map((row) => ({
+      name: row.seat === mySeat ? `${row.name} (you)` : row.name,
+      isBanker: row.isBanker,
+      result: row.result,
+      delta: row.delta,
+      isMine: row.seat === mySeat,
+    }));
+    // Lines go through innerHTML, so every server value is coerced or escaped here.
+    const lines = [];
+    const banker = clean.find((row) => row.isBanker);
+    if (banker && mySeat !== banker.seat) lines.push(`Banker: <span>${escapeHtml(banker.name)}</span>`);
+    if (mine) lines.push(`Stack: <span>${this.money(mine.chips)}</span>`);
+    const capped = clean.filter((row) => row.capped).map((row) => escapeHtml(row.name));
+    if (capped.length) lines.push(`Paid only what they had: <span>${capped.join(', ')}</span>`);
+    const limits = this.view?.limits ?? blackjackLimits(this.room?.settings ?? {});
+    const myBet = this.room?.seats.find((s) => s.id === this.you)?.bet;
+    const isHost = this.room?.hostId === this.you;
+    this.resultOverlay = this.table.showResult({
+      title: out ? 'Sat out' : mine.delta > 0 ? 'You win' : mine.delta < 0 ? 'You lose' : 'Push',
+      win: out ? null : mine.delta > 0,
+      deltaText: out ? '' : signed(mine.delta),
+      rows,
+      lines,
+      // The banker has no bet of their own to size, and a player sitting out has no chips for one.
+      betControl: !out && mine.seat >= 1 ? { min: limits.min, max: limits.max, value: typeof myBet === 'number' ? myBet : limits.min } : null,
+      againLabel: isHost ? 'Deal again' : 'Waiting for the host',
+      onAgain: () => (isHost ? this.client.again() : null),
+      ...this.changeGameOption(isHost),
+      onLeave: () => this.leave(),
+      immediate: replacing,
+    });
   }
 
   onDdzResult(message) {
@@ -682,9 +778,15 @@ class LanScreens {
       lines,
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
+      ...this.changeGameOption(isHost),
       onLeave: () => this.leave(),
       immediate: replacing,
     });
+  }
+
+  /** The host's way off a result card and back to the lobby, where the game can be switched. */
+  changeGameOption(isHost) {
+    return isHost ? { extraLabel: 'Change game', onExtra: () => this.client.toLobby() } : {};
   }
 
   onBig2Result(message) {
@@ -718,6 +820,7 @@ class LanScreens {
       lines,
       againLabel: isHost ? 'Deal again' : 'Waiting for the host',
       onAgain: () => (isHost ? this.client.again() : null),
+      ...this.changeGameOption(isHost),
       onLeave: () => this.leave(),
       immediate: replacing,
     });
@@ -1021,23 +1124,80 @@ class LanScreens {
     // The big line is the five characters people read out. The address belongs
     // underneath, for anyone whose page came from somewhere else.
     const fullCode = showAddress ? formatCode(room.code, hostInfo.host, hostInfo.port) : room.code;
-    const seated = room.seats.filter((s) => s.id).length;
-    const ready = seated >= 1;
-    const game = room.settings.game === 'big2' ? 'big2' : 'doudizhu';
+    // The server refuses a deal with nobody seated; say so up front.
+    const ready = room.seats.some((s) => s.id && s.connected !== false);
+    const game = knownGame(room.settings.game);
+    const isBj = game === 'blackjack';
     const skills = skillsFor(game);
+    const limits = isBj ? blackjackLimits(room.settings) : null;
+    const mySeat = room.seats.find((s) => s.id === this.you);
+    const spectating = !mySeat;
+    const playing = room.phase === 'playing';
+    const spectators = room.spectators ?? [];
 
     const seatList = el('ul.seat-list');
     room.seats.forEach((seat) => {
       const bot = !seat.id;
+      let action = null;
+      if (!playing) {
+        if (bot && mySeat?.seat !== seat.seat) {
+          action = el('button.btn.btn--small', { type: 'button', onclick: () => this.client.sit(seat.seat) }, isBj && seat.seat === 0 ? 'Bank here' : 'Sit here');
+        } else if (seat.id === this.you) {
+          action = el('button.btn.btn--small', { type: 'button', onclick: () => this.client.stand() }, 'Watch');
+        } else if (seat.id && isHost) {
+          action = el('button.btn.btn--small', { type: 'button', onclick: () => this.client.stand(seat.id) }, 'To watchers');
+        }
+      }
       seatList.append(el('li', { class: seat.isHost ? 'is-host' : '' },
-        el('span', `Seat ${seat.seat + 1}`),
+        el('span', isBj ? (seat.seat === 0 ? 'Banker' : `Seat ${seat.seat}`) : `Seat ${seat.seat + 1}`),
         el('span', { style: 'flex:1' }, bot
-          ? `Bot (${skills[room.settings.botSkill]?.name ?? room.settings.botSkill})`
+          ? (isBj ? 'Bot' : `Bot (${skills[room.settings.botSkill]?.name ?? room.settings.botSkill})`)
           : (seat.connected === false ? `${String(seat.name)} (away)` : String(seat.name))),
         seat.isHost ? el('span', 'host') : null,
+        isBj && typeof seat.bet === 'number' ? el('span.seat-list__bet', `Bet ${this.money(seat.bet, true)}`) : null,
         el('span.seat-list__chips', seat.id ? this.money(seat.chips, true) : '—'),
+        action,
       ));
     });
+
+    let watching = null;
+    if (spectators.length) {
+      const watchList = el('ul.seat-list');
+      for (const person of spectators) {
+        watchList.append(el('li', { class: person.isHost ? 'is-host' : '' },
+          el('span', { style: 'flex:1' }, person.connected === false ? `${String(person.name)} (away)` : String(person.name)),
+          person.isHost ? el('span', 'host') : null,
+          el('span.seat-list__chips', this.money(person.chips, true)),
+        ));
+      }
+      watching = [el('h3.seat-heading', 'Watching'), watchList];
+    }
+
+    // Only the host can switch, and not mid-hand; everyone else just sees which game it is.
+    const canPick = isHost && !playing;
+    const gamePicker = canPick
+      ? el('div.game-pick', { role: 'group', 'aria-label': 'Game' },
+        ...onlineGames().map((def) => {
+          const current = def.id === game;
+          return el('button.game-pick__btn', {
+            type: 'button', 'aria-pressed': current ? 'true' : 'false', disabled: current, onclick: () => this.client.setGame(def.id),
+          },
+          el('b', def.onlineName ?? def.name), ' ', def.nameZh ? el('span', def.nameZh) : null,
+          el('small', def.onlineSeatsLabel ?? `${SEATS_BY_GAME[def.id]} seats`));
+        }))
+      : null;
+
+    // A bet can be set while the table is idle so the first deal already has it.
+    let betPicker = null;
+    if (isBj && mySeat && mySeat.seat >= 1 && !playing) {
+      betPicker = el('div.bj-lobby-bet', createBetStepper({
+        min: limits.min,
+        max: limits.max,
+        value: typeof mySeat.bet === 'number' ? mySeat.bet : limits.min,
+        money: (v) => this.money(v),
+        onChange: (amount) => this.client.bjBet(amount),
+      }));
+    }
 
     let invite = null;
     if (this.online) {
@@ -1054,30 +1214,41 @@ class LanScreens {
       ];
     }
 
-    const tiles = [statTile('Starting stack', this.money(room.settings.startingChips))];
-    if (game === 'big2') tiles.push(statTile('Per card left', this.money(room.settings.pot / 10)));
+    const tiles = [];
+    if (!canPick) tiles.push(statTile('Game', gameById(game).onlineName ?? gameById(game).name));
+    tiles.push(statTile('Starting stack', this.money(room.settings.startingChips)));
+    if (isBj) tiles.push(statTile('Bets', `${this.money(limits.min, true)}–${this.money(limits.max, true)}`, 'Per seat; the banker covers every seat'));
+    else if (game === 'big2') tiles.push(statTile('Per card left', this.money(room.settings.pot / 10)));
     else tiles.push(statTile('Base stake', this.money(room.settings.pot), 'Per seat, before the multiplier'));
 
     this.shell(
       this.backLink('Leave room', () => this.leave()),
       el('div.page__head',
-        el('h1.page__title', isHost ? 'Your room is open' : 'Waiting for the host'),
+        el('h1.page__title', isHost ? 'Your room is open' : (spectating ? 'You\'re watching' : 'Waiting for the host')),
         el('p.page__sub', isHost
           ? (this.online ? 'Send the invite link, or read the code out.' : 'Read the code out. Everyone else opens this same address and joins.')
-          : 'You are seated. The host starts the hand.'),
+          : (spectating
+            ? (playing ? 'A hand is being played. You can take a free seat when it ends.' : 'Take a free seat to play the next hand, or keep watching.')
+            : 'You are seated. The host starts the hand.')),
       ),
       el('div.card-panel',
         el('div.room-code', String(room.code)),
         this.online ? invite : el('p.room-url', showAddress
           ? `Everyone opens http://${hostInfo.host}:${hostInfo.port} on this network, then joins with ${room.code}. From another page, the full code is ${fullCode}.`
           : `Others join with ${room.code}`),
+        gamePicker ? el('p.seat-heading', 'Game') : null,
+        gamePicker,
         seatList,
+        betPicker,
+        watching,
         el('div.stat-grid.stat-grid--spaced', ...tiles),
         el('div.btn-row.btn-row--spaced',
           isHost
             ? el('button.btn.btn--primary.btn--big', { type: 'button', disabled: !ready, onclick: () => this.client.start() }, 'Deal')
-            : el('span.footnote', 'The host will deal when everyone is in.'),
+            // Not a .footnote: toast() writes refusals into the first one.
+            : el('span.field__hint', 'The host will deal when everyone is in.'),
         ),
+        el('p.footnote', ''),
       ),
     );
   }
@@ -1111,6 +1282,24 @@ class LanScreens {
           onLeave: () => this.leave(),
         },
       });
+    } else if (this.game === 'blackjack') {
+      this.tableGame = 'blackjack';
+      this.table = new BjOnlineView({
+        root: this.root,
+        meta: {
+          lobbyName: `Room ${this.room?.code ?? ''}`,
+          currency: settings.currency,
+          bankroll: mine?.chips ?? settings.startingChips,
+        },
+        handlers: {
+          onRun: guarded(() => this.client.bjRun()),
+          onHit: guarded(() => this.client.bjHit()),
+          onStand: guarded(() => this.client.bjStand()),
+          onOpen: guarded((seat) => this.client.bjOpen(seat)),
+          onBet: guarded((amount) => this.client.bjBet(amount)),
+          onLeave: () => this.leave(),
+        },
+      });
     } else {
       this.tableGame = 'doudizhu';
       this.table = new TableView({
@@ -1140,7 +1329,8 @@ class LanScreens {
       });
     }
     if (this.view) this.table.update(this.view);
-    this.onResize = () => { if (this.view) this.table?.renderHand(); };
+    // The Ban Luck table has no hand fan to re-fit.
+    this.onResize = () => { if (this.view) this.table?.renderHand?.(); };
     globalThis.addEventListener('resize', this.onResize);
   }
 
@@ -1155,6 +1345,8 @@ class LanScreens {
   updateTableMeta() {
     const mine = this.room?.seats.find((s) => s.id === this.you);
     if (mine && this.table) this.table.setBankroll(mine.chips);
+    // The host may have clamped the step; show the bet it holds, not the one tapped.
+    if (mine && typeof mine.bet === 'number' && this.tableGame === 'blackjack' && this.resultOverlay?.isConnected) this.table.setBet(mine.bet);
   }
 }
 

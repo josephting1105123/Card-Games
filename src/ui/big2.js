@@ -777,7 +777,7 @@ export class Big2View {
   }
 
   /** Full-screen result card: every seat's cards left and chip change, bankroll after. */
-  showResult({ title, win, deltaText, rows, lines, onAgain, onLeave, againLabel, immediate = false }) {
+  showResult({ title, win, deltaText, rows, lines, onAgain, onLeave, againLabel, immediate = false, extraLabel, onExtra }) {
     const rowsEl = el('div.b2-result__rows',
       ...rows.map((r) => el('div', { class: `b2-result__row${r.isWinner ? ' is-winner' : ''}` },
         el('span.b2-result__name', String(r.name ?? '')),
@@ -794,6 +794,9 @@ export class Big2View {
       el('div', { class: `b2-result__big-delta ${win ? 'is-win' : 'is-loss'}` }, deltaText),
     );
     const nextBtn = el('button.btn.btn--primary', { type: 'button', onclick: (e) => { e.stopPropagation(); overlay.remove(); onAgain?.(); } }, againLabel);
+    const extraBtn = extraLabel && onExtra
+      ? el('button.btn', { type: 'button', onclick: (e) => { e.stopPropagation(); overlay.remove(); onExtra(); } }, extraLabel)
+      : null;
     const leaveBtn = el('button.btn', { type: 'button', onclick: (e) => { e.stopPropagation(); overlay.remove(); onLeave?.(); } }, 'Leave');
     // F4: every hand is revealed face up in place, but the sheet and its
     // dimmed backdrop were sitting right on top of the seats — this toggle
@@ -809,7 +812,7 @@ export class Big2View {
       head,
       rowsEl,
       el('ul.b2-result__lines', ...lines.map((line) => el('li', { html: line }))),
-      el('div.btn-row', { style: 'justify-content:center' }, nextBtn, leaveBtn),
+      el('div.btn-row', { style: 'justify-content:center' }, nextBtn, extraBtn, leaveBtn),
       toggleBtn,
     );
     const overlay = el('div.b2-overlay', card);

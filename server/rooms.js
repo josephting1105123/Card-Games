@@ -13,7 +13,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { makeRng } from '../src/core/rng.js';
-import { C2S, S2C, encode, sanitiseSettings } from '../src/net/protocol.js';
+import { BIG2_MIN_STACK, C2S, MAX_MEMBERS, S2C, SEATS_BY_GAME, blackjackLimits, encode, potForStack, sanitiseSettings } from '../src/net/protocol.js';
 import { generateCode } from '../src/net/roomcode.js';
 import { gameAdapter } from './games.js';
 
@@ -154,11 +154,20 @@ export class RoomHub {
       case C2S.JOIN: return this.join(conn, message);
       case C2S.SETTINGS: return this.updateSettings(conn, message);
       case C2S.SEAT_FILL: return this.setHumanSeats(conn, message);
+      case C2S.SET_GAME: return this.setGame(conn, message);
+      case C2S.SIT: return this.sit(conn, message);
+      case C2S.STAND: return this.stand(conn, message);
+      case C2S.TO_LOBBY: return this.toLobby(conn);
       case C2S.START: return this.start(conn);
       case C2S.AGAIN: return this.again(conn);
       case C2S.BID:
       case C2S.PLAY:
-      case C2S.PASS: return this.action(conn, message);
+      case C2S.PASS:
+      case C2S.BJ_RUN:
+      case C2S.BJ_HIT:
+      case C2S.BJ_STAND:
+      case C2S.BJ_OPEN: return this.action(conn, message);
+      case C2S.BJ_BET: return this.setBet(conn, message);
       case C2S.CHAT: return this.chat(conn, message);
       case C2S.RESUME: return this.resume(conn, message);
       case C2S.LEAVE: return this.disconnect(conn, true);
@@ -207,6 +216,8 @@ export class RoomHub {
       botTimer: null,
       lastActivity: Date.now(),
       chips: new Map(),
+      // Standing blackjack bets by member id; they outlive a hand and apply at the next deal.
+      bets: new Map(),
       // Chips of players who left, by lower-cased name, so leaving between hands
       // and coming back neither wipes a stack nor hands out a fresh one.
       departed: new Map(),
@@ -216,7 +227,7 @@ export class RoomHub {
       lastResult: null,
     };
     this.rooms.set(code, room);
-    const member = this.seat(room, conn, message.name);
+    const member = this.seat(room, conn, message.name, 0);
     this.sendRoom(room, member, { code });
     this.broadcastRoom(room);
     return undefined;
@@ -226,7 +237,6 @@ export class RoomHub {
     const code = String(message.code ?? '').toUpperCase();
     const room = this.rooms.get(code);
     if (!room) return this.lookupFailed(conn, `no room with the code ${code}`);
-    if (room.phase === 'playing') return this.fail(conn, 'that hand is still being played — join when it ends');
     // Leave the old seat first: a player re-joining the room they already fill
     // frees their own seat, so it must not count against capacity or evict a ghost.
     if (conn.data.room) {
@@ -234,19 +244,36 @@ export class RoomHub {
       // Leaving the room it is about to rejoin may have dropped it as empty.
       if (!this.rooms.has(room.code)) this.rooms.set(room.code, room);
     }
-    // A member who dropped still holds a seat for a resume, so they count here.
-    // The longest-gone one is the first to lose theirs to a newcomer.
-    let evict = null;
-    if (room.members.size >= room.settings.humanSeats) {
+    // A member who dropped still holds a seat (or a place in the stands) for a
+    // resume, so they count here. The longest-gone one is the first to lose theirs.
+    const longestGone = (wanted) => {
+      let found = null;
       for (const m of room.members.values()) {
-        if (!m.connected && (!evict || m.disconnectedAt < evict.disconnectedAt)) evict = m;
+        if (!m.connected && wanted(m) && (!found || m.disconnectedAt < found.disconnectedAt)) found = m;
       }
-      if (!evict) return this.fail(conn, 'that room is full');
+      return found;
+    };
+    // A hand in progress keeps its table; a newcomer watches until it ends.
+    const open = room.phase !== 'playing';
+    let seatIndex = null;
+    if (open && this.seatedCount(room) < room.settings.humanSeats && room.seats.includes(null)) {
+      seatIndex = room.seats.indexOf(null);
+    } else if (open && this.seatedCount(room) >= room.settings.humanSeats) {
+      const evict = longestGone((m) => m.seat !== null);
+      if (evict) {
+        seatIndex = evict.seat;
+        this.releaseSeat(room, evict);
+      }
     }
-    if (evict && room.members.has(evict.id)) {
+    if (seatIndex === null && room.members.size >= MAX_MEMBERS) {
+      // A seated member who dropped mid-hand is still named by state.players, so
+      // releasing them would stash their chips and then settle() would mint a
+      // second purse for the same id; only the stands are fair game until the hand ends.
+      const evict = longestGone((m) => room.phase !== 'playing' || m.seat === null);
+      if (!evict) return this.fail(conn, 'that room is full');
       this.releaseSeat(room, evict);
     }
-    const member = this.seat(room, conn, message.name);
+    const member = this.seat(room, conn, message.name, seatIndex);
     // Nobody connected is left to run the room if the host's seat was just evicted.
     const host = room.members.get(room.hostId);
     if (!host || !host.connected) room.hostId = member.id;
@@ -256,9 +283,14 @@ export class RoomHub {
     return undefined;
   }
 
-  seat(room, conn, rawName) {
-    const seat = room.seats.findIndex((s) => s === null);
-    const name = cleanName(rawName) || `Player ${seat + 1}`;
+  seatedCount(room) {
+    return room.seats.filter((id) => id !== null).length;
+  }
+
+  /** `seatIndex` null seats the member as a spectator: in the room, watching, holding no seat. */
+  seat(room, conn, rawName, seatIndex) {
+    const seat = seatIndex ?? null;
+    const name = cleanName(rawName) || `Player ${seat === null ? room.members.size + 1 : seat + 1}`;
     // The member id stays fixed for the life of the seat; conn.id changes with
     // every reconnect, so lookups go through conn.data.member instead.
     const member = {
@@ -269,7 +301,7 @@ export class RoomHub {
       connected: true,
       token: randomBytes(12).toString('hex'),
     };
-    room.seats[seat] = member.id;
+    if (seat !== null) room.seats[seat] = member.id;
     room.members.set(member.id, member);
     const key = name.toLowerCase();
     room.chips.set(member.id, room.departed.get(key) ?? room.settings.startingChips);
@@ -285,7 +317,8 @@ export class RoomHub {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can change the settings');
     if (room.phase !== 'lobby') return this.fail(conn, 'the settings are locked once a hand is dealt');
-    // The game is fixed at create: the seats array and the engine are built for it.
+    // Settings never carry the game: the seats array and the engine are built for
+    // it, and switching them is setGame()'s job.
     room.settings = sanitiseSettings({ ...room.settings, ...message.settings, game: room.settings.game });
     for (const id of room.chips.keys()) room.chips.set(id, room.settings.startingChips);
     room.departed.clear(); // a new starting stack resets everyone, including those away
@@ -297,10 +330,133 @@ export class RoomHub {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can change the seats');
     if (room.phase !== 'lobby') return this.fail(conn, 'the seats are locked once a hand is dealt');
-    const wanted = Math.min(room.adapter.seats, Math.max(room.members.size, Math.round(Number(message.humanSeats) || 1)));
+    const wanted = Math.min(room.adapter.seats, Math.max(this.seatedCount(room), Math.round(Number(message.humanSeats) || 1)));
     room.settings.humanSeats = wanted;
     this.broadcastRoom(room);
     return undefined;
+  }
+
+  /**
+   * Switch the room's game between hands. Members, chips and the stack stay; only
+   * the table is rebuilt, so the pot is re-derived for the new game's stake scale.
+   */
+  setGame(conn, message) {
+    const room = this.roomOf(conn);
+    if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can change the game');
+    if (room.phase === 'playing') return this.fail(conn, 'finish the hand before changing the game');
+    const game = message.game;
+    if (typeof game !== 'string' || !Object.hasOwn(SEATS_BY_GAME, game)) return this.fail(conn, 'unknown game');
+    if (game === room.settings.game) {
+      this.broadcastRoom(room);
+      return undefined;
+    }
+    clearTimeout(room.botTimer);
+    const oldHumanSeats = room.settings.humanSeats;
+    room.adapter = gameAdapter(game);
+    // Players' own chips stay as they are; only the room's reference stack is lifted.
+    const stack = game === 'big2' ? Math.max(BIG2_MIN_STACK, room.settings.startingChips) : room.settings.startingChips;
+    room.settings = sanitiseSettings({ ...room.settings, game, startingChips: stack, pot: potForStack(game, stack) });
+
+    const newN = room.adapter.seats;
+    const oldN = room.seats.length;
+    const seats = new Array(newN).fill(null);
+    const overflow = [];
+    for (const id of room.seats) {
+      const m = id === null ? null : room.members.get(id);
+      if (!m) continue;
+      if (m.seat < newN) seats[m.seat] = m.id;
+      else overflow.push(m);
+    }
+    // The host keeps a seat through a shrink: if the table is full the highest
+    // non-host steps down to the stands instead.
+    const hostIndex = overflow.findIndex((m) => m.id === room.hostId);
+    if (hostIndex > 0) overflow.unshift(...overflow.splice(hostIndex, 1));
+    for (const m of overflow) {
+      let free = seats.indexOf(null);
+      if (free < 0 && m.id === room.hostId) {
+        for (let i = newN - 1; i >= 0; i--) {
+          if (seats[i] !== room.hostId) {
+            free = i;
+            break;
+          }
+        }
+      }
+      if (free >= 0) seats[free] = m.id;
+    }
+    // A bigger table seats those who were watching, in the order they arrived.
+    if (newN > oldN) {
+      for (const m of room.members.values()) {
+        const free = seats.indexOf(null);
+        if (free < 0) break;
+        if (m.seat === null && m.connected) seats[free] = m.id;
+      }
+    }
+    room.seats = seats;
+    for (const m of room.members.values()) {
+      const index = seats.indexOf(m.id);
+      m.seat = index < 0 ? null : index;
+      if (m.conn?.data) m.conn.data.seat = m.seat;
+    }
+    room.settings.humanSeats = Math.min(newN, Math.max(oldHumanSeats, this.seatedCount(room)));
+    room.state = null;
+    room.lastResult = null;
+    room.phase = 'lobby';
+    room.dealKey = null;
+    this.broadcastRoom(room);
+    return undefined;
+  }
+
+  sit(conn, message) {
+    const room = this.roomOf(conn);
+    if (room.phase === 'playing') return this.fail(conn, 'wait for the hand to end');
+    const member = room.members.get(conn.data.member);
+    if (!member) return this.fail(conn, 'you are not in a room');
+    const seat = message.seat;
+    if (!Number.isInteger(seat) || seat < 0 || seat >= room.seats.length || room.seats[seat] !== null) {
+      return this.fail(conn, 'that seat is taken');
+    }
+    if (member.seat !== null) room.seats[member.seat] = null;
+    room.seats[seat] = member.id;
+    member.seat = seat;
+    conn.data.seat = seat;
+    room.settings.humanSeats = Math.min(room.seats.length, Math.max(room.settings.humanSeats, this.seatedCount(room)));
+    this.broadcastRoom(room);
+    return undefined;
+  }
+
+  stand(conn, message) {
+    const room = this.roomOf(conn);
+    if (room.phase === 'playing') return this.fail(conn, 'wait for the hand to end');
+    const selfId = conn.data.member;
+    const targetId = typeof message.id === 'string' ? message.id : selfId;
+    if (targetId !== selfId && room.hostId !== selfId) return this.fail(conn, 'only the room host can move someone else');
+    const target = room.members.get(targetId);
+    if (!target || target.seat === null) return this.fail(conn, 'that player is not sitting');
+    room.seats[target.seat] = null;
+    target.seat = null;
+    if (target.conn?.data) target.conn.data.seat = null;
+    this.broadcastRoom(room);
+    return undefined;
+  }
+
+  /** Leave a finished hand's result and go back to the lobby, where the game can be changed. */
+  toLobby(conn) {
+    const room = this.roomOf(conn);
+    if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can return to the lobby');
+    if (room.phase === 'playing') return this.fail(conn, 'finish the hand first');
+    if (room.phase === 'finished') {
+      clearTimeout(room.botTimer);
+      room.state = null;
+      room.lastResult = null;
+      room.phase = 'lobby';
+    }
+    this.broadcastRoom(room);
+    return undefined;
+  }
+
+  /** A hand needs at least one person at the table to deal it to. */
+  nobodySeated(room) {
+    return ![...room.members.values()].some((m) => m.seat !== null && m.connected);
   }
 
   // --- play ------------------------------------------------------------------
@@ -309,6 +465,7 @@ export class RoomHub {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can start the hand');
     if (room.phase === 'playing') return this.fail(conn, 'the hand is already running');
+    if (this.nobodySeated(room)) return this.fail(conn, 'nobody is sitting at the table');
     try {
       this.deal(room);
     } catch (error) {
@@ -320,6 +477,7 @@ export class RoomHub {
   again(conn) {
     const room = this.roomOf(conn);
     if (room.hostId !== conn.data.member) return this.fail(conn, 'only the room host can deal again');
+    if (this.nobodySeated(room)) return this.fail(conn, 'nobody is sitting at the table');
     try {
       this.deal(room);
     } catch (error) {
@@ -338,11 +496,20 @@ export class RoomHub {
       const memberId = room.seats[seat];
       const member = memberId ? room.members.get(memberId) : null;
       if (member && member.connected) {
-        players.push({ id: member.id, name: member.name, isBot: false });
+        players.push({
+          id: member.id,
+          name: member.name,
+          isBot: false,
+          bet: room.bets.get(member.id),
+          chips: room.chips.get(member.id) ?? room.settings.startingChips,
+        });
       } else {
         const name = spare.pop() ?? 'Bot';
-        players.push({ id: `bot-${seat}`, name, isBot: true, skill });
-        if (!room.chips.has(`bot-${seat}`)) room.chips.set(`bot-${seat}`, room.settings.startingChips);
+        const id = `bot-${seat}`;
+        // A game's house filler is topped back up so it never sits the table out broke.
+        const broke = adapter.rebuyBots && (room.chips.get(id) ?? Infinity) < room.settings.startingChips;
+        if (!room.chips.has(id) || broke) room.chips.set(id, room.settings.startingChips);
+        players.push({ id, name, isBot: true, skill, chips: room.chips.get(id) });
       }
     }
     const seed = randomBytes(8).toString('hex');
@@ -354,7 +521,25 @@ export class RoomHub {
     room.lastActivity = Date.now();
     this.broadcastRoom(room);
     this.broadcastViews(room);
-    this.scheduleBots(room);
+    // A blackjack deal can settle on the spot (a banker special), with no turn to wait for.
+    if (adapter.isFinished(room.state)) this.settle(room);
+    else this.scheduleBots(room);
+  }
+
+  /** A blackjack player's standing bet. It applies from the next deal, so it is accepted in any phase. */
+  setBet(conn, message) {
+    const room = this.roomOf(conn);
+    if (room.settings.game !== 'blackjack') return this.fail(conn, 'this game has no bets');
+    const member = room.members.get(conn.data.member);
+    if (!member || member.seat === null || member.seat < 1) return this.fail(conn, 'only a player seat can bet');
+    const amount = Number(message.amount);
+    if (!Number.isFinite(amount)) return this.fail(conn, 'that is not an amount');
+    const limits = blackjackLimits(room.settings);
+    const chips = room.chips.get(member.id) ?? room.settings.startingChips;
+    const bet = Math.max(1, Math.min(Math.round(amount), limits.max, chips));
+    room.bets.set(member.id, Math.max(bet, Math.min(limits.min, chips)));
+    this.broadcastRoom(room);
+    return undefined;
   }
 
   action(conn, message) {
@@ -363,7 +548,9 @@ export class RoomHub {
     if (!apply) return this.fail(conn, 'that move is not part of this game');
     if (room.phase !== 'playing' || !room.state) return this.fail(conn, 'no hand is running');
     const member = room.members.get(conn.data.member);
-    if (!member) return this.fail(conn, 'you are not seated');
+    if (!member || member.seat === null) return this.fail(conn, 'you are not seated');
+    // A seat dealt to a bot while its member was away stays the bot's for the hand, even after they resume.
+    if (room.state.players[member.seat]?.id !== member.id) return this.fail(conn, 'a bot is playing your seat this hand');
     const before = room.adapter.snapshot(room.state, member.seat);
     const result = apply(room.state, member.seat, message);
     if (!result?.ok) return this.fail(conn, result?.error ?? 'that move was refused');
@@ -466,8 +653,10 @@ export class RoomHub {
     if (!member || member.conn !== conn) return;
 
     const playing = room.phase === 'playing' && room.state;
+    // A spectator has no seat to hand to a bot.
+    const holdsSeat = playing && member.seat !== null;
     member.connected = false;
-    if (playing) {
+    if (holdsSeat) {
       // Hand the seat to a bot so the table does not wedge mid-hand.
       room.adapter.toBot(
         room.state.players[member.seat],
@@ -478,10 +667,11 @@ export class RoomHub {
       this.scheduleBots(room);
     }
     if (explicit) {
+      room.bets.delete(member.id);
       // state.players[seat].id still names this member, so a running hand settles
       // into the right purse (settle() then files it under their name); only the
       // seat itself is freed.
-      if (playing) {
+      if (holdsSeat) {
         room.members.delete(member.id);
         room.seats[member.seat] = null;
       } else {
@@ -534,15 +724,16 @@ export class RoomHub {
     conn.data.room = room.code;
     conn.data.seat = member.seat;
     conn.data.member = member.id;
-    room.seats[member.seat] = member.id;
+    const seated = member.seat !== null;
+    if (seated) room.seats[member.seat] = member.id;
     room.lastActivity = Date.now();
 
     const playing = room.phase === 'playing' && room.state;
     // After a hand, the seat may have been handed to a newcomer; the previous
-    // holder's cards and result are not theirs to see.
-    const holdsHand = room.state?.players[member.seat]?.id === member.id;
+    // holder's cards and result are not theirs to see. A spectator never had any.
+    const holdsHand = seated && room.state?.players[member.seat]?.id === member.id;
     this.sendRoom(room, member, { code: room.code });
-    if (playing) {
+    if (playing && seated) {
       // The hand may have been dealt while they were away, with a bot id in the
       // seat; settle() pays the purse named by player.id, so put theirs back.
       room.adapter.toHuman(room.state.players[member.seat], member.id, member.name);
@@ -562,7 +753,8 @@ export class RoomHub {
   /** Free a member's seat outside a running hand, keeping their chips for a rejoin. */
   releaseSeat(room, member) {
     room.members.delete(member.id);
-    room.seats[member.seat] = null;
+    room.bets.delete(member.id);
+    if (member.seat !== null) room.seats[member.seat] = null;
     this.stash(room, member.name, room.chips.get(member.id));
     room.chips.delete(member.id);
   }
@@ -648,9 +840,22 @@ export class RoomHub {
           connected: !!member?.connected,
           isHost: id === room.hostId,
           chips: id ? room.chips.get(id) ?? room.settings.startingChips : null,
-          bot: seat >= room.settings.humanSeats || !member,
+          // Seat 0 is the banker's box and has no bet; bots' bets are rolled by the engine.
+          bet: id && room.settings.game === 'blackjack' && seat >= 1
+            ? room.bets.get(id) ?? blackjackLimits(room.settings).min
+            : null,
+          bot: !member,
         };
       }),
+      spectators: [...room.members.values()]
+        .filter((m) => m.seat === null)
+        .map((m) => ({
+          id: m.id,
+          name: m.name,
+          connected: m.connected,
+          isHost: m.id === room.hostId,
+          chips: room.chips.get(m.id) ?? room.settings.startingChips,
+        })),
     };
   }
 
@@ -680,7 +885,7 @@ export class RoomHub {
   broadcastViews(room) {
     if (!room.state) return;
     for (const member of room.members.values()) {
-      if (member.connected) this.sendView(room, member);
+      if (member.connected && member.seat !== null) this.sendView(room, member);
     }
   }
 }

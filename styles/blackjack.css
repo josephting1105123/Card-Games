@@ -477,3 +477,48 @@ button.bj-box:not(:disabled) { cursor: pointer; }
   0%, 100% { transform: scaleX(1); }
   50% { transform: scaleX(0); }
 }
+
+/* --- online Ban Luck (ui/bjonline.js): what the solo Malaysian table does not need --- */
+
+.bj-box--empty { opacity: 0.45; }
+
+/* The affordance on a seat the banker can open: a filled pill in the slot the
+   result tag will take. It sits in the result row, so showing it moves nothing. */
+.bj-box__open {
+  display: inline-block; padding: 1px 12px; border-radius: 999px;
+  background: var(--red); color: var(--white);
+  font-family: var(--font-display); font-weight: 700; font-size: clamp(10.5px, 1.3vw, 12.5px); line-height: 1.5;
+  animation: bj-open-pulse 1.4s var(--ease-std) infinite alternate;
+}
+button.bj-box.is-openable:hover .bj-box__open { background: var(--red-hover); }
+@keyframes bj-open-pulse { from { opacity: 1; } to { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .bj-box__open { animation: none; } }
+
+.bj-actions__label { font-size: clamp(12px, 1.6vw, 14px); color: var(--text-secondary); text-align: center; }
+.bj-actions__label.is-error { color: var(--danger); }
+
+/* "Your bet" row, on the result card and in the room lobby. */
+.bj-bet-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 16px; }
+.bj-bet-row__label { font-size: 14.5px; color: var(--text-secondary); }
+.bj-bet-step { display: inline-flex; align-items: center; gap: 8px; }
+.bj-bet-step__btn { min-width: 36px; padding: 6px 10px; line-height: 1; }
+.bj-bet-step__value { min-width: 6ch; text-align: center; font-family: var(--font-display); font-weight: 700; color: var(--red-deep); font-variant-numeric: lining-nums tabular-nums; }
+.bj-lobby-bet { margin: 12px 0 0; }
+.bj-lobby-bet .bj-bet-row { margin: 0; }
+
+.seat-list__bet { color: var(--text-secondary); font-variant-numeric: lining-nums tabular-nums; }
+
+.bj-result__tag { color: var(--text-tertiary); }
+
+/* Folded to its slim bar the sheet keeps only the result and Next hand. */
+.b2-overlay.is-collapsed .bj-bet-row { display: none; }
+
+@media (orientation: landscape) and (max-height: 460px) {
+  .bj-actions__label { font-size: 11.5px; }
+  .bj-bet-row { gap: 8px; margin: 0 0 6px; }
+  .bj-bet-row__label { font-size: 12.5px; }
+  .bj-bet-step { gap: 6px; }
+  .bj-bet-step__btn { min-width: 30px; padding: 2px 8px; }
+  .bj-bet-step__value { font-size: 13px; }
+  .bj-box__open { padding: 0 8px; font-size: 9.5px; }
+}

@@ -67,9 +67,17 @@ const app = {
     }
     clear(root);
     switch (this.route) {
-      case 'mode':
-        renderMode(this, root, this.params.gameId ?? 'doudizhu');
+      case 'mode': {
+        const gameId = this.params.gameId ?? 'doudizhu';
+        // Only Blackjack keeps a mode step. An old #/mode/doudizhu bookmark or Back
+        // entry lands on the table picker, with the address bar rewritten to match.
+        if (gameId !== 'blackjack') {
+          history.replaceState({ route: 'lobby', params: { gameId } }, '', `#/lobby/${gameId}`);
+          return this.replace('lobby', { gameId });
+        }
+        renderMode(this, root, gameId);
         break;
+      }
       case 'lobby':
         renderLobby(this, root, this.params.gameId ?? 'doudizhu', this.params.variant);
         break;

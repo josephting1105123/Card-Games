@@ -4,6 +4,12 @@
  *
  * `status` is one of 'ready' | 'planned'. A planned game keeps its tile in the
  * menu but the tile does not open a table.
+ *
+ * `online: true` marks a game with a room adapter on the host (server/games.js).
+ * The online create form lists exactly the games with this flag, so a planned
+ * game gets it when its adapter exists, not before. `onlineName` and
+ * `onlineSeatsLabel` override the tile's name and seat count in that form where
+ * the table is not a plain N-player one.
  */
 
 export const GAMES = [
@@ -14,6 +20,7 @@ export const GAMES = [
     tagline: 'Fight the Landlord',
     players: 3,
     status: 'ready',
+    online: true,
     accent: '#c8362f',
     description:
       'Two farmers against one landlord over 54 cards. Call points to take the landlord’s seat and the three face-down cards, then be first to empty your hand. Bombs double the stake.',
@@ -31,6 +38,7 @@ export const GAMES = [
     tagline: 'Deuces / Choi Dai Di',
     players: 4,
     status: 'ready',
+    online: true,
     accent: '#2f6fc8',
     description:
       'Four players, 13 cards each, and suits rank too: ♦ < ♣ < ♥ < ♠. Whoever holds the 3♦ leads; empty your hand first and every other seat pays you by the card.',
@@ -48,6 +56,9 @@ export const GAMES = [
     tagline: 'American and Malaysian',
     players: 1,
     status: 'ready',
+    online: true,
+    onlineName: 'Blackjack · Ban Luck',
+    onlineSeatsLabel: 'Banker + 4 seats',
     accent: '#1f7a4d',
     noElo: true,
     description: 'Two rule sets in one table: the American game, and the Malaysian house game with its own payouts and five-card rules.',
