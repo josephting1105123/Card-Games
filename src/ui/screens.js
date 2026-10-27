@@ -17,16 +17,22 @@ import { SKILLS } from '../games/doudizhu/ai.js';
 import { clear, el } from './dom.js';
 
 // Static literal, no user data, so innerHTML is safe; el() only builds HTML-namespace nodes.
-const MARK_SVG = '<svg viewBox="96 118 320 276" width="18" height="16">'
-  + '<rect class="mark-bar" x="106" y="128" width="182.35" height="64" rx="32"/>'
-  + '<rect class="mark-bar mark-bar-lead" x="106" y="224" width="300" height="64" rx="32"/>'
-  + '<rect class="mark-bar" x="106" y="320" width="135.29" height="64" rx="32"/>'
-  + '</svg>';
+// The flask is the same mark the entropicsoftwarelabs.com header uses.
+const MARK_SVG = '<svg viewBox="76 82 360 360" width="16" height="16" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" focusable="false">'
+  + '<mask id="mark-liquid"><path d="M216 104v104L128 372a32 32 0 0 0 28 48h200a32 32 0 0 0 28-48L296 208V104z" fill="#fff" stroke="none"/>'
+  + '<path d="M216 104v104L128 372a32 32 0 0 0 28 48h200a32 32 0 0 0 28-48L296 208V104" stroke="#000" stroke-width="60"/></mask>'
+  + '<rect x="0" y="310" width="512" height="202" fill="currentColor" stroke="none" mask="url(#mark-liquid)"/>'
+  + '<path d="M216 104v104L128 372a32 32 0 0 0 28 48h200a32 32 0 0 0 28-48L296 208V104"/>'
+  + '<path d="M196 104h120"/></svg>';
 
+// aria-label because phones hide the second half of the visible text.
 export function wordmark() {
-  return el('a.wordmark', { href: 'https://entropicsoftwarelabs.com/' },
+  return el('a.wordmark', { href: 'https://entropicsoftwarelabs.com/', 'aria-label': 'Entropic Software Labs' },
     el('span.mark', { 'aria-hidden': 'true', html: MARK_SVG }),
-    el('span.wordmark-text', 'Entropic Software Labs'),
+    el('span.wordmark-text',
+      el('span.wordmark-short', 'Entropic'),
+      el('span.wordmark-rest', ' Software Labs'),
+    ),
   );
 }
 
@@ -56,6 +62,8 @@ export function renderMenu(app, root) {
   const tiles = el('div.tiles.tiles--games');
 
   const fans = [];
+  const heroFan = el('div.menu-hero__band', { 'aria-hidden': 'true' });
+  fans.push({ fan: heroFan, spec: { ids: [53, 48, 44], opts: { style: 'bold' } } });
   for (const game of GAMES) {
     if (game.status !== 'ready') continue;
     const stats = gameStats(profile, game.id);
@@ -123,14 +131,18 @@ export function renderMenu(app, root) {
   root.append(
     topbar(app),
     el('main.page',
-      el('div.page__head.page__head--split',
-        el('div.page__head-text',
+      el('div.page__head.menu-hero',
+        el('div.menu-hero__text',
           el('span.eyebrow', 'Card room'),
           el('h1.page__title.page__title--display', 'Pick a game'),
           el('p.page__sub',
             `${NUMBER_WORDS[readyCount] ?? readyCount} game${readyCount === 1 ? '' : 's'} ready to deal, against the house bots or with friends online. No account, and it keeps working offline once installed.`),
+          el('div.menu-hero__actions',
+            el('button.btn.btn--primary', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'online' }) }, 'Play online'),
+            el('span.menu-hero__hint', 'Create a room or join one with a code'),
+          ),
         ),
-        el('button.btn.btn--primary', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'online' }) }, 'Play online'),
+        heroFan,
       ),
       profile.rescueMode
         ? el('div.notice.notice--warn',

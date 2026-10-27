@@ -58,8 +58,8 @@ input, select, textarea { caret-color: var(--red); }
    scroll visibly under the brand. */
 .topbar {
   display: flex; align-items: center; gap: 14px;
-  min-height: 60px;
-  padding: 0 var(--gutter);
+  height: 64px;
+  padding: 0 var(--bar-gutter);
   background: var(--red);
   box-shadow: var(--shadow-bar);
   position: sticky; top: 0; z-index: var(--z-hud);
@@ -70,35 +70,31 @@ input, select, textarea { caret-color: var(--red); }
 .topbar__spacer { flex: 1; }
 
 .wordmark {
-  display: inline-flex; align-items: center; gap: 10px;
+  display: inline-flex; align-items: center; gap: 12px;
   min-height: 44px; min-width: 0; flex: none;
   color: var(--on-red); font-family: var(--font-display);
-  font-size: clamp(17px, 2vw, 20px); font-weight: 700; letter-spacing: 0;
+  font-size: 17px; font-weight: 700; letter-spacing: normal; white-space: nowrap;
   text-decoration: none; border-radius: var(--r-md);
 }
 /* Underline rather than a lighter tint: no tint of the cream holds 4.5:1 on the red. */
 .wordmark:hover .wordmark-text { text-decoration: underline; text-underline-offset: 3px; }
 .mark {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; flex: none;
-  border: 1px solid var(--on-red); border-radius: var(--r-md);
-  background: var(--on-red);
+  width: 28px; height: 28px; flex: none;
+  border-radius: var(--r-md);
+  background: var(--on-red); color: var(--red);
 }
-.mark-bar { fill: var(--red-deep); }
-.mark-bar-lead { fill: var(--red); }
-/* Narrow screens keep the mark and drop the words visually, not for screen readers. */
-@media (max-width: 479px) {
-  .wordmark-text {
-    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
-    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
-  }
+.mark svg { display: block; width: 16px; height: 16px; }
+/* Phones keep "Entropic" and drop the rest; the link's aria-label still reads in full. */
+@media (max-width: 519px) {
+  .wordmark-rest { display: none; }
 }
 
 .chip-purse {
   display: flex; align-items: center; gap: 8px;
-  height: 38px; padding: 0 14px;
+  min-height: 40px; padding: 0 14px;
   font-family: var(--font-display);
-  border: 1px solid var(--on-red-line); border-radius: var(--r-pill);
+  border: 1.5px solid var(--on-red-line); border-radius: var(--r-pill);
   background: transparent;
 }
 .chip-purse::before {
@@ -124,21 +120,63 @@ input, select, textarea { caret-color: var(--red); }
 }
 
 /* Headings and the record sit straight on the cloth, where a peony would sit
-   behind the letters. A card-stock backing fixes that; the spread shadows stand
-   in for its padding and border so nothing in the layout moves. */
+   behind the letters, so each is a white card with its own padding. */
 .page__head, .record {
-  background: var(--stock); border-radius: var(--r-ui);
-  box-shadow: 0 0 0 10px var(--stock), 0 0 0 11px var(--hairline), var(--shadow-paper);
+  padding: clamp(18px, 2.6vw, 28px);
+  background: var(--white); border-radius: var(--r-ui);
+  box-shadow: var(--shadow-paper), inset 0 0 0 1px var(--hairline);
 }
 .page__head { margin-bottom: 22px; }
-.page__head--split { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.page__head--split > .btn { flex: none; }
-.page__head-text { min-width: 0; flex: 1 1 auto; }
-/* Stack on narrow viewports so the sentence keeps its width; phone landscape
-   (844 wide) stays side by side. */
+
+/* Menu header: text on the left, a strip of cloth with a card fan on the right.
+   The card's padding moves to the text column so the band can run flush to the
+   top, right and bottom edges. The inset hairline sits on a pseudo-element
+   because the band's background would paint over the card's own inset ring. */
+.menu-hero {
+  position: relative;
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(200px, 30%, 320px);
+  padding: 0;
+  box-shadow: var(--shadow-paper);
+}
+.menu-hero::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  border-radius: inherit; box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.menu-hero__text { min-width: 0; padding: clamp(18px, 2.6vw, 28px); }
+.menu-hero__band {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--cloth-texture) 0 0 / 360px 360px, var(--cloth);
+  border-left: 1px solid var(--hairline);
+  border-radius: 0 calc(var(--r-ui) - 1px) calc(var(--r-ui) - 1px) 0;
+}
+.menu-hero__band .card {
+  --card-w: 64px; flex: none;
+}
+/* The overlap is a fraction of the card, in px, never a percentage of the row. */
+.menu-hero__band .card + .card { margin-left: calc(var(--card-w) * -0.35); }
+.menu-hero__band .card:nth-child(1) { transform: translateY(6px) rotate(-12deg); }
+.menu-hero__band .card:nth-child(2) { transform: rotate(0deg); }
+.menu-hero__band .card:nth-child(3) { transform: translateY(6px) rotate(12deg); }
+.menu-hero__actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
+  margin-top: 20px;
+}
+.menu-hero__hint { font-size: 14px; color: var(--text-tertiary); }
+/* Phone landscape: the header would otherwise take over half the screen. */
+@media (max-height: 500px) {
+  .menu-hero__band .card { --card-w: 52px; }
+  .menu-hero__text { padding: 12px 20px; }
+  .menu-hero .eyebrow { margin-bottom: 4px; }
+  .menu-hero .page__title--display { font-size: var(--t-h1); margin-bottom: 6px; }
+  .menu-hero .page__sub { font-size: 15px; line-height: 1.45; }
+  .menu-hero__actions { margin-top: 10px; }
+}
 @media (max-width: 599px) {
-  .page__head--split { flex-direction: column; align-items: stretch; }
-  .page__head--split > .btn { width: 100%; }
+  .menu-hero { grid-template-columns: minmax(0, 1fr); }
+  .menu-hero__band { display: none; }
+  .menu-hero__actions { flex-direction: column; align-items: stretch; gap: 10px; }
+  .menu-hero__actions .btn { width: 100%; }
+  .menu-hero__hint { text-align: center; }
 }
 .page__title { font-family: var(--font-display); font-size: var(--t-h1); font-weight: 800; letter-spacing: -0.02em; margin: 0 0 6px; color: var(--red-deep); }
 .page__title--display { font-size: var(--t-display); line-height: 1.12; margin-bottom: 10px; }
