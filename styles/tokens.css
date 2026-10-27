@@ -7,8 +7,8 @@
    card-games so the playsite stops sharing the dark-and-green look of the
    OffBridge site.
    Colour comes from the print, not from lighting: surfaces are flat, shadows
-   are the only depth, and the one gradient is the soft sheen across the cloth
-   and the light fade under each hand (a bottom-up scrim in table.css .dock /
+   are the only depth, and the one gradient is the light fade under each hand
+   (a bottom-up scrim in table.css .dock /
    big2.css .b2-dock) so the fan reads against the cloth. Light is the only
    theme — a tablecloth does not have a dark mode.
    All other CSS reads only these vars.
@@ -30,9 +30,10 @@
   /* ----- Cloth: the vinyl the whole site sits on ----- */
   --cloth: #F4F1EA;
   --cloth-texture: url("../assets/textures/tablecloth.svg");
-  /* Page and menu background. The sheen is the same stack as the ESL page body. */
+  /* Page and menu background: the cloth under a sand veil, darker than the
+     table's, so the cream menu cards stand off it instead of blending in. */
   --cloth-surface:
-    linear-gradient(115deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 62%),
+    linear-gradient(rgba(226, 214, 195, 0.80), rgba(226, 214, 195, 0.80)),
     var(--cloth-texture) 0 0 / 360px 360px,
     var(--cloth);
   /* The table is the same cloth, quietened under a veil so cards read over the
