@@ -1494,3 +1494,470 @@ test('a hand cannot be dealt when nobody is sitting at the table', async (t) => 
   assert.match((await Alice.next(S2C.ERROR)).message, /nobody is sitting/);
   Alice.close();
 });
+
+// --- Malaysian Blackjack -----------------------------------------------------
+
+/** Plays a client's blackjack seat as frames arrive: players hit to 16 then stand, the banker draws to 16 then opens. */
+function autoplayBlackjack(client, inspect) {
+  client.socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    if (message.t !== S2C.VIEW) return;
+    const { view } = message;
+    inspect?.(view);
+    if (view.seat === 0) {
+      if (view.you.openable.length) client.send({ t: 'bj_open', seat: view.you.openable[0] });
+      else if (view.you.canBankerHit) client.send({ t: 'bj_hit' });
+    } else if (view.you.canStand) {
+      client.send({ t: 'bj_stand' });
+    } else if (view.you.canHit) {
+      client.send({ t: 'bj_hit' });
+    }
+  });
+}
+
+const bjSettings = { game: 'blackjack', humanSeats: 2, pot: 10, startingChips: 1_000, botSkill: 'casual' };
+
+function bjPlayers(humanSeats, extra = {}) {
+  return Array.from({ length: 5 }, (_, seat) => (humanSeats.includes(seat)
+    ? { id: `human-${seat}`, name: `H${seat}`, isBot: false, chips: 500, ...extra }
+    : { id: `bot-${seat}`, name: `B${seat}`, isBot: true, chips: 1_000 }));
+}
+
+test('a human banker and a human player play blackjack rounds that conserve chips', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice', 'Bob'], bjSettings);
+  const { Alice, Bob } = clients;
+  assert.equal(room.seats.length, 5);
+  assert.equal(room.members.get(ids.Alice).seat, 0);
+  assert.equal(room.members.get(ids.Bob).seat, 1);
+
+  const leaks = [];
+  autoplayBlackjack(Alice, (view) => {
+    if (view.phase !== 'players') return;
+    for (const seat of view.seats) {
+      if (seat && !seat.opened && (seat.cards.some((c) => c !== null) || seat.total !== null)) leaks.push(`banker sees seat ${seat.seat}`);
+    }
+  });
+  autoplayBlackjack(Bob, (view) => {
+    if (view.phase === 'players' && (view.banker.cards[1] !== null || view.banker.total !== null)) leaks.push('player sees the banker');
+  });
+
+  let previous = null;
+  for (let round = 0; round < 6; round++) {
+    Alice.send({ t: round === 0 ? 'start' : 'again' });
+    const [a, b] = await Promise.all([Alice.next(S2C.RESULT, 8_000), Bob.next(S2C.RESULT, 8_000)]);
+    assert.deepEqual(a.rows, b.rows);
+    assert.equal(a.game, 'blackjack');
+    assert.equal(a.rows.reduce((sum, row) => sum + row.delta, 0), 0, 'a settlement moves chips between seats, never mints them');
+    assert.equal(a.rows[0].seat, 0);
+    assert.equal(a.rows[0].isBanker, true);
+    assert.equal(a.rows[0].isBot, false);
+    for (const row of a.rows) {
+      assert.equal(row.won, row.delta > 0);
+      assert.ok(row.chips >= 0);
+    }
+    const alice = a.rows.find((row) => row.name === 'Alice');
+    const bob = a.rows.find((row) => row.name === 'Bob');
+    assert.equal(room.chips.get(ids.Alice), alice.chips);
+    assert.equal(room.chips.get(ids.Bob), bob.chips);
+    if (previous) {
+      assert.equal(alice.chips - alice.delta, previous.alice, 'chips carry from one round to the next');
+      assert.equal(bob.chips - bob.delta, previous.bob);
+    }
+    previous = { alice: alice.chips, bob: bob.chips };
+  }
+  assert.deepEqual(leaks, []);
+  Alice.close();
+  Bob.close();
+});
+
+test('blackjack views hide the banker\'s hole card from players and unopened hands from the banker', () => {
+  const adapter = gameAdapter('blackjack');
+  const settings = { pot: 10, startingChips: 1_000 };
+  let checked = 0;
+  for (let n = 0; n < 40 && checked < 5; n++) {
+    const state = adapter.createGame({ seed: `view-${n}`, players: bjPlayers([0, 1], { bet: 20 }), settings });
+    if (state.round.phase !== 'players') continue;
+    checked += 1;
+
+    const bankerView = adapter.seatView(state, 0);
+    for (const seat of bankerView.seats) {
+      if (!seat || seat.opened) continue;
+      assert.ok(seat.count >= 2);
+      assert.equal(seat.cards.length, seat.count);
+      assert.ok(seat.cards.every((c) => c === null));
+      assert.equal(seat.total, null);
+      assert.equal(seat.busted, null);
+      assert.equal(seat.special, null);
+    }
+    assert.equal(bankerView.banker.cards.length, 2);
+    assert.ok(bankerView.banker.cards.every((c) => c !== null));
+
+    const playerView = adapter.seatView(state, 1);
+    assert.notEqual(playerView.banker.cards[0], null);
+    assert.equal(playerView.banker.cards[1], null);
+    assert.equal(playerView.banker.count, 2);
+    assert.equal(playerView.banker.total, null);
+    assert.equal(playerView.banker.special, null);
+    assert.ok(playerView.seats[0].cards.every((c) => c !== null), 'a player sees their own cards');
+
+    const wire = JSON.stringify(playerView);
+    assert.equal(wire.includes(JSON.stringify(state.round.banker.cards[1])), false, 'the hole card never goes on the wire');
+    const bankerWire = JSON.stringify(bankerView);
+    for (const p of state.round.players) {
+      if (p && !p.opened) for (const card of p.cards) assert.equal(bankerWire.includes(JSON.stringify(card)), false);
+    }
+    assert.equal(bankerView.you.canBankerHit, false);
+    assert.deepEqual(bankerView.you.openable, []);
+  }
+  assert.ok(checked > 0, 'some seeds leave the round in the players phase');
+});
+
+test('blackjack bets are clamped to the table limits and to the purse, and only player seats may bet', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice', 'Bob', 'Cara'], { ...bjSettings, startingChips: 250 });
+  const { Alice, Bob, Cara } = clients;
+  assert.equal(room.members.get(ids.Cara).seat, null);
+
+  const lobby = host.hub.describe(room);
+  assert.equal(lobby.seats[0].bet, null);
+  assert.equal(lobby.seats[1].bet, 10, 'an unset bet shows the table minimum');
+
+  Bob.send({ t: 'bj_bet', amount: 5_000 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[1].bet === 100);
+  assert.equal(room.bets.get(ids.Bob), 100);
+
+  Bob.send({ t: 'bj_bet', amount: 1 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[1].bet === 10);
+
+  room.chips.set(ids.Bob, 40);
+  Bob.send({ t: 'bj_bet', amount: 500 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[1].bet === 40);
+
+  Alice.send({ t: 'bj_bet', amount: 20 });
+  assert.match((await Alice.next(S2C.ERROR)).message, /player seat/);
+  Cara.send({ t: 'bj_bet', amount: 20 });
+  assert.match((await Cara.next(S2C.ERROR)).message, /player seat/);
+  Bob.send({ t: 'bj_bet', amount: 'lots' });
+  assert.match((await Bob.next(S2C.ERROR)).message, /amount/);
+  assert.equal(room.bets.has(ids.Alice), false);
+  assert.equal(room.bets.has(ids.Cara), false);
+
+  const adapter = gameAdapter('blackjack');
+  const settings = { pot: 10, startingChips: 250 };
+  const rich = adapter.createGame({ seed: 'bet', players: bjPlayers([0, 1], { bet: 5_000, chips: 400 }), settings });
+  assert.equal(rich.round.players[0].bet, 100, 'the deal caps a stale bet at the table maximum');
+  const poor = adapter.createGame({ seed: 'bet', players: bjPlayers([0, 1], { bet: 100, chips: 35 }), settings });
+  assert.equal(poor.round.players[0].bet, 35, 'and at the chips the player has');
+  const broke = adapter.createGame({ seed: 'bet', players: bjPlayers([0, 1], { bet: 100, chips: 0 }), settings });
+  assert.equal(broke.round.players[0], null, 'a player with no chips sits the hand out');
+
+  const solo = await connect(host);
+  solo.send({ t: 'create', name: 'Solo', settings: { game: 'doudizhu', humanSeats: 1 } });
+  await solo.next(S2C.ROOM);
+  solo.send({ t: 'bj_bet', amount: 20 });
+  assert.match((await solo.next(S2C.ERROR)).message, /no bets/);
+  solo.send({ t: 'bj_hit' });
+  assert.match((await solo.next(S2C.ERROR)).message, /not part of this game/);
+  for (const c of [Alice, Bob, Cara, solo]) c.close();
+});
+
+test('a blackjack room with a bot banker settles hands by itself', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice'], { ...bjSettings, humanSeats: 1 });
+  const { Alice } = clients;
+  Alice.send({ t: 'sit', seat: 2 });
+  await Alice.until(S2C.ROOM, (m) => m.room.seats[2].name === 'Alice' && m.room.seats[0].bot);
+  autoplayBlackjack(Alice);
+
+  for (let round = 0; round < 4; round++) {
+    Alice.send({ t: round === 0 ? 'start' : 'again' });
+    const result = await Alice.next(S2C.RESULT, 8_000);
+    assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+    assert.equal(result.rows[0].isBanker, true);
+    assert.equal(result.rows[0].isBot, true);
+    const mine = result.rows.find((row) => row.name === 'Alice');
+    assert.equal(mine.seat, 2);
+    assert.equal(room.chips.get(ids.Alice), mine.chips);
+    for (const row of result.rows.filter((r) => r.isBot)) assert.ok(row.chips >= 0);
+  }
+  Alice.close();
+});
+
+function makeBjRng(seed) {
+  let x = seed + 1;
+  return () => {
+    x = (x * 16807) % 2147483647;
+    return x / 2147483647;
+  };
+}
+
+test('blackjack settlement pays winners pro rata when the banker cannot cover them, and still sums to zero', () => {
+  const adapter = gameAdapter('blackjack');
+  let capped = 0;
+  for (let n = 0; n < 200 && capped < 3; n++) {
+    const players = bjPlayers([0, 1], { bet: 100 });
+    const chips = new Map(players.map((p) => [p.id, p.isBot ? 30 : 500]));
+    chips.set(players[0].id, 20); // a banker who can cover almost nothing
+    const state = adapter.createGame({ seed: `cap-${n}`, players, settings: { pot: 10, startingChips: 1_000 } });
+    const rng = makeBjRng(n);
+    // Finish the round: bots through the adapter, the human seats with the same stand-at-16 rule the clients use.
+    for (let guard = 0; !adapter.isFinished(state) && guard < 200; guard++) {
+      if (adapter.isBotTurn(state)) {
+        adapter.botTurn(state, rng);
+        continue;
+      }
+      const seat = adapter.seatOnTurn(state);
+      const view = adapter.seatView(state, seat);
+      if (seat === 0) {
+        if (view.you.openable.length) adapter.actions.bj_open(state, 0, { seat: view.you.openable[0] });
+        else adapter.actions.bj_hit(state, 0, {});
+      } else {
+        adapter.actions[view.you.canStand ? 'bj_stand' : 'bj_hit'](state, seat, {});
+      }
+    }
+    assert.ok(adapter.isFinished(state));
+    const { frame, changes } = adapter.settle({ state, chips, settings: { startingChips: 1_000 } });
+    assert.equal(frame.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+    for (const row of frame.rows) assert.ok(row.chips >= 0, 'nobody is charged or paid below zero');
+    assert.equal(changes.length, frame.rows.length);
+    if (frame.rows[0].capped) capped += 1;
+  }
+  assert.ok(capped > 0, 'some seeds leave the banker short');
+});
+
+test('switching a room to blackjack gives it five seats with the host in the banker box', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients } = await roomOf(host, ['Alice', 'Bob'], { game: 'doudizhu', humanSeats: 2, startingChips: 250, pot: 10 });
+  const { Alice, Bob } = clients;
+
+  Alice.send({ t: 'set_game', game: 'blackjack' });
+  const switched = (await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'blackjack')).room;
+  assert.equal(switched.seats.length, 5);
+  assert.equal(switched.seats[0].name, 'Alice');
+  assert.equal(switched.seats[1].name, 'Bob');
+  assert.equal(switched.settings.pot, potForStack('blackjack', 250));
+  assert.equal(switched.phase, 'lobby');
+
+  autoplayBlackjack(Alice);
+  autoplayBlackjack(Bob);
+  Alice.send({ t: 'start' });
+  const view = (await Bob.next(S2C.VIEW)).view;
+  assert.equal(view.game, 'blackjack');
+  assert.equal(view.seats.length, 4);
+  await Alice.next(S2C.RESULT, 8_000);
+
+  Alice.send({ t: 'set_game', game: 'big2' });
+  assert.equal((await Alice.until(S2C.ROOM, (m) => m.room.settings.game === 'big2')).room.seats.length, 4);
+  Alice.close();
+  Bob.close();
+});
+
+// --- Malaysian Blackjack: audit fixes ----------------------------------------
+
+/** Plays an adapter-level round out: bots by the adapter, human seats stand at 16, a human banker draws then opens. */
+function finishBlackjack(adapter, state, rng) {
+  for (let guard = 0; !adapter.isFinished(state) && guard < 300; guard++) {
+    if (adapter.isBotTurn(state)) {
+      adapter.botTurn(state, rng);
+      continue;
+    }
+    const seat = adapter.seatOnTurn(state);
+    const view = adapter.seatView(state, seat);
+    if (seat === 0) {
+      if (view.you.openable.length) adapter.actions.bj_open(state, 0, { seat: view.you.openable[0] });
+      else adapter.actions.bj_hit(state, 0, {});
+    } else {
+      adapter.actions[view.you.canStand ? 'bj_stand' : 'bj_hit'](state, seat, {});
+    }
+  }
+  assert.ok(adapter.isFinished(state));
+}
+
+test('the banker cannot tell an unopened bust seat from an unopened standing one', () => {
+  const adapter = gameAdapter('blackjack');
+  let checked = 0;
+  for (let n = 0; n < 200 && checked < 5; n++) {
+    const state = adapter.createGame({ seed: `mask-${n}`, players: bjPlayers([0, 1, 2], { bet: 20 }), settings: { pot: 10, startingChips: 1_000 } });
+    const open = state.round.players.filter((p) => p && !p.opened);
+    if (state.round.phase !== 'players' || open.length < 2) continue;
+    checked += 1;
+    open[0].stood = true;
+    open[0].busted = false;
+    open[1].stood = false;
+    open[1].busted = true;
+    const view = adapter.seatView(state, 0);
+    const [a, b] = [open[0], open[1]].map((p) => view.seats[p.seatIndex]);
+    assert.equal(a.stood, true);
+    assert.equal(b.stood, true, 'a hidden bust reads as done, same as a stand');
+    assert.equal(a.busted, null);
+    assert.equal(b.busted, null);
+    const strip = ({ seat, name, isBot, bet, count, cards, ...rest }) => rest;
+    assert.deepEqual(strip(a), strip(b));
+    // Everyone else still sees the real thing.
+    assert.equal(adapter.seatView(state, 3).seats[open[1].seatIndex].busted, true);
+  }
+  assert.ok(checked > 0);
+});
+
+test('a player with no chips sits out but still gets a result row', async (t) => {
+  const adapter = gameAdapter('blackjack');
+  const players = bjPlayers([0, 1], { bet: 20 });
+  players[1].chips = 0;
+  const state = adapter.createGame({ seed: 'out', players, settings: { pot: 10, startingChips: 1_000 } });
+  assert.equal(state.round.players[0], null);
+  finishBlackjack(adapter, state, makeBjRng(1));
+  const chips = new Map(players.map((p) => [p.id, p.chips]));
+  const { frame } = adapter.settle({ state, chips, settings: { startingChips: 1_000 } });
+  const out = frame.rows.find((row) => row.seat === 1);
+  assert.deepEqual({ ...out }, { seat: 1, name: 'H1', isBot: false, isBanker: false, delta: 0, chips: 0, capped: false, won: false, result: 'out' });
+  assert.equal(frame.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.deepEqual(frame.rows.map((row) => row.seat), [0, 1, 2, 3, 4]);
+
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice', 'Bob'], bjSettings);
+  const { Alice, Bob } = clients;
+  room.chips.set(ids.Bob, 0);
+  autoplayBlackjack(Alice);
+  Alice.send({ t: 'start' });
+  const [a, b] = await Promise.all([Alice.next(S2C.RESULT, 8_000), Bob.next(S2C.RESULT, 8_000)]);
+  assert.equal(a.rows.find((row) => row.name === 'Bob').result, 'out');
+  assert.deepEqual(a.rows, b.rows);
+  Alice.send({ t: 'again' });
+  await Alice.next(S2C.RESULT, 8_000);
+  Alice.close();
+  Bob.close();
+});
+
+test('a stored bet below the table minimum is dealt at the minimum, or at the purse when that is smaller', () => {
+  const adapter = gameAdapter('blackjack');
+  const settings = { pot: 10, startingChips: 1_000 };
+  const flush = adapter.createGame({ seed: 'floor', players: bjPlayers([0, 1], { bet: 3, chips: 400 }), settings });
+  assert.equal(flush.round.players[0].bet, 10);
+  const short = adapter.createGame({ seed: 'floor', players: bjPlayers([0, 1], { bet: 3, chips: 4 }), settings });
+  assert.equal(short.round.players[0].bet, 4);
+  const shorter = adapter.createGame({ seed: 'floor', players: bjPlayers([0, 1], { bet: 50, chips: 6 }), settings });
+  assert.equal(shorter.round.players[0].bet, 6);
+});
+
+test('a dropped player on an opening 15 against a banker special runs instead of hitting', () => {
+  const adapter = gameAdapter('blackjack');
+  let found = 0;
+  for (let n = 0; n < 40_000 && found < 2; n++) {
+    const state = adapter.createGame({ seed: `run-${n}`, players: bjPlayers([0, 1], { bet: 20 }), settings: { pot: 10, startingChips: 1_000 } });
+    const seat = state.round.players[0];
+    if (!seat?.bankerSpecialPending || state.round.activeSeat !== 0) continue;
+    found += 1;
+    adapter.toBot(state.players[1], null, 'H1 (bot)');
+    assert.equal(adapter.isBotTurn(state), true);
+    const acted = adapter.botTurn(state, makeBjRng(n));
+    assert.deepEqual({ seat: acted.seat, kind: acted.kind }, { seat: 1, kind: 'run' });
+    assert.equal(seat.result, 'run');
+    assert.equal(seat.payout, 0);
+    assert.equal(seat.bankerSpecialPending, false);
+  }
+  assert.ok(found > 0, 'some seeds deal a human an opening 15 against a banker special');
+});
+
+test('a seat dealt to a bot stays a bot when its member comes back', async (t) => {
+  const adapter = gameAdapter('blackjack');
+  const state = adapter.createGame({ seed: 'dealt', players: bjPlayers([0]), settings: { pot: 10, startingChips: 1_000 } });
+  adapter.toHuman(state.players[1], 'member-1', 'Bob');
+  assert.deepEqual({ id: state.players[1].id, isBot: state.players[1].isBot }, { id: 'bot-1', isBot: true });
+  adapter.toBot(state.players[1], null, 'Bob (bot)');
+  assert.equal(state.players[1].name, 'B1', 'a house bot is not renamed after a member who never held the seat');
+  const human = adapter.createGame({ seed: 'dealt', players: bjPlayers([0, 1]), settings: { pot: 10, startingChips: 1_000 } });
+  adapter.toBot(human.players[1], null, 'H1 (bot)');
+  assert.equal(human.players[1].isBot, true);
+  adapter.toHuman(human.players[1], 'human-1', 'H1');
+  assert.equal(human.players[1].isBot, false, 'a seat dealt to a person still returns to them');
+
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, code, room } = await roomOf(host, ['Alice', 'Bob'], bjSettings);
+  const { Alice, Bob } = clients;
+  const token = room.members.get(ids.Bob).token;
+  Bob.close();
+  await waitFor(() => !room.members.get(ids.Bob).connected);
+  autoplayBlackjack(Alice);
+  Alice.send({ t: 'start' });
+  await waitFor(() => room.state);
+  assert.equal(room.state.players[1].dealtHuman, false);
+  const back = await connect(host);
+  back.send({ t: 'resume', code, token });
+  await back.next(S2C.ROOM);
+  assert.equal(room.state.players[1].isBot, true, 'the member waits for the next deal');
+  assert.match(room.state.players[1].id, /^bot-/);
+  const result = await Alice.next(S2C.RESULT, 8_000);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(room.chips.get(ids.Bob), 1_000, 'the absent member\'s purse is untouched');
+  Alice.close();
+  back.close();
+});
+
+test('a blackjack bet is dropped when its owner leaves', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, room } = await roomOf(host, ['Alice', 'Bob', 'Cara'], { ...bjSettings, humanSeats: 3 });
+  const { Alice, Bob, Cara } = clients;
+  Bob.send({ t: 'bj_bet', amount: 50 });
+  Cara.send({ t: 'bj_bet', amount: 30 });
+  await waitFor(() => room.bets.get(ids.Bob) === 50 && room.bets.get(ids.Cara) === 30);
+
+  Bob.send({ t: 'leave' });
+  await waitFor(() => !room.members.has(ids.Bob));
+  assert.equal(room.bets.has(ids.Bob), false, 'leaving between hands');
+
+  Alice.send({ t: 'start' });
+  await Cara.next(S2C.VIEW);
+  Cara.send({ t: 'leave' });
+  await waitFor(() => !room.members.has(ids.Cara));
+  assert.equal(room.bets.has(ids.Cara), false, 'leaving mid-hand');
+  Alice.close();
+});
+
+test('a member who resumes into a seat dealt to a bot cannot play it, and the hand still settles', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { clients, ids, code, room } = await roomOf(host, ['Alice', 'Bob'], bjSettings);
+  const { Alice, Bob } = clients;
+  const token = room.members.get(ids.Bob).token;
+  Bob.close();
+  await waitFor(() => !room.members.get(ids.Bob).connected);
+
+  Alice.send({ t: 'start' });
+  await waitFor(() => room.state);
+  const back = await connect(host);
+  const views = [];
+  back.socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    if (message.t === S2C.VIEW) views.push(message.view);
+  });
+  back.send({ t: 'resume', code, token });
+  await back.next(S2C.ROOM);
+  assert.equal(room.state.players[1].isBot, true);
+
+  for (const t of ['bj_hit', 'bj_stand', 'bj_run']) {
+    back.send({ t });
+    assert.match((await back.next(S2C.ERROR)).message, /a bot is playing your seat/);
+  }
+  back.send({ t: 'bj_open', seat: 2 });
+  assert.match((await back.next(S2C.ERROR)).message, /a bot is playing your seat/);
+
+  autoplayBlackjack(Alice);
+  const result = await Alice.next(S2C.RESULT, 8_000);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(result.rows.some((row) => row.name === 'Bob'), false, 'the bot played the seat under its own name');
+  assert.equal(room.chips.get(ids.Bob), 1_000);
+  assert.ok(views.length > 0);
+  for (const view of views) {
+    assert.deepEqual(view.you, { canRun: false, canHit: false, canStand: false, canBankerHit: false, openable: [] });
+  }
+  Alice.close();
+  back.close();
+});

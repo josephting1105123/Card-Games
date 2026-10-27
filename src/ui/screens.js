@@ -123,20 +123,14 @@ export function renderMenu(app, root) {
   root.append(
     topbar(app),
     el('main.page',
-      el('div.page__head',
-        el('span.eyebrow', 'Card room'),
-        el('h1.page__title.page__title--display', 'Pick a game'),
-        el('p.page__sub',
-          `${NUMBER_WORDS[readyCount] ?? readyCount} game${readyCount === 1 ? '' : 's'} ready to deal, against the house bots or with friends online. No account, and it keeps working offline once installed.`),
-        el('div.btn-row',
-          el('button.btn.btn--primary', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'online' }) }, 'Play online'),
-          // A page served over http is a LAN or local host, so the same-Wi-Fi
-          // option only makes sense there; over https the only server in reach
-          // is the public one.
-          location.protocol === 'http:'
-            ? el('button.btn', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'lan' }) }, 'Local network')
-            : null,
+      el('div.page__head.page__head--split',
+        el('div.page__head-text',
+          el('span.eyebrow', 'Card room'),
+          el('h1.page__title.page__title--display', 'Pick a game'),
+          el('p.page__sub',
+            `${NUMBER_WORDS[readyCount] ?? readyCount} game${readyCount === 1 ? '' : 's'} ready to deal, against the house bots or with friends online. No account, and it keeps working offline once installed.`),
         ),
+        el('button.btn.btn--primary', { type: 'button', onclick: () => app.go('lan', { gameId: 'doudizhu', mode: 'online' }) }, 'Play online'),
       ),
       profile.rescueMode
         ? el('div.notice.notice--warn',

@@ -13,7 +13,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { makeRng } from '../src/core/rng.js';
-import { BIG2_MIN_STACK, C2S, MAX_MEMBERS, S2C, SEATS_BY_GAME, encode, potForStack, sanitiseSettings } from '../src/net/protocol.js';
+import { BIG2_MIN_STACK, C2S, MAX_MEMBERS, S2C, SEATS_BY_GAME, blackjackLimits, encode, potForStack, sanitiseSettings } from '../src/net/protocol.js';
 import { generateCode } from '../src/net/roomcode.js';
 import { gameAdapter } from './games.js';
 
@@ -162,7 +162,12 @@ export class RoomHub {
       case C2S.AGAIN: return this.again(conn);
       case C2S.BID:
       case C2S.PLAY:
-      case C2S.PASS: return this.action(conn, message);
+      case C2S.PASS:
+      case C2S.BJ_RUN:
+      case C2S.BJ_HIT:
+      case C2S.BJ_STAND:
+      case C2S.BJ_OPEN: return this.action(conn, message);
+      case C2S.BJ_BET: return this.setBet(conn, message);
       case C2S.CHAT: return this.chat(conn, message);
       case C2S.RESUME: return this.resume(conn, message);
       case C2S.LEAVE: return this.disconnect(conn, true);
@@ -211,6 +216,8 @@ export class RoomHub {
       botTimer: null,
       lastActivity: Date.now(),
       chips: new Map(),
+      // Standing blackjack bets by member id; they outlive a hand and apply at the next deal.
+      bets: new Map(),
       // Chips of players who left, by lower-cased name, so leaving between hands
       // and coming back neither wipes a stack nor hands out a fresh one.
       departed: new Map(),
@@ -489,11 +496,20 @@ export class RoomHub {
       const memberId = room.seats[seat];
       const member = memberId ? room.members.get(memberId) : null;
       if (member && member.connected) {
-        players.push({ id: member.id, name: member.name, isBot: false });
+        players.push({
+          id: member.id,
+          name: member.name,
+          isBot: false,
+          bet: room.bets.get(member.id),
+          chips: room.chips.get(member.id) ?? room.settings.startingChips,
+        });
       } else {
         const name = spare.pop() ?? 'Bot';
-        players.push({ id: `bot-${seat}`, name, isBot: true, skill });
-        if (!room.chips.has(`bot-${seat}`)) room.chips.set(`bot-${seat}`, room.settings.startingChips);
+        const id = `bot-${seat}`;
+        // A game's house filler is topped back up so it never sits the table out broke.
+        const broke = adapter.rebuyBots && (room.chips.get(id) ?? Infinity) < room.settings.startingChips;
+        if (!room.chips.has(id) || broke) room.chips.set(id, room.settings.startingChips);
+        players.push({ id, name, isBot: true, skill, chips: room.chips.get(id) });
       }
     }
     const seed = randomBytes(8).toString('hex');
@@ -505,7 +521,25 @@ export class RoomHub {
     room.lastActivity = Date.now();
     this.broadcastRoom(room);
     this.broadcastViews(room);
-    this.scheduleBots(room);
+    // A blackjack deal can settle on the spot (a banker special), with no turn to wait for.
+    if (adapter.isFinished(room.state)) this.settle(room);
+    else this.scheduleBots(room);
+  }
+
+  /** A blackjack player's standing bet. It applies from the next deal, so it is accepted in any phase. */
+  setBet(conn, message) {
+    const room = this.roomOf(conn);
+    if (room.settings.game !== 'blackjack') return this.fail(conn, 'this game has no bets');
+    const member = room.members.get(conn.data.member);
+    if (!member || member.seat === null || member.seat < 1) return this.fail(conn, 'only a player seat can bet');
+    const amount = Number(message.amount);
+    if (!Number.isFinite(amount)) return this.fail(conn, 'that is not an amount');
+    const limits = blackjackLimits(room.settings);
+    const chips = room.chips.get(member.id) ?? room.settings.startingChips;
+    const bet = Math.max(1, Math.min(Math.round(amount), limits.max, chips));
+    room.bets.set(member.id, Math.max(bet, Math.min(limits.min, chips)));
+    this.broadcastRoom(room);
+    return undefined;
   }
 
   action(conn, message) {
@@ -515,6 +549,8 @@ export class RoomHub {
     if (room.phase !== 'playing' || !room.state) return this.fail(conn, 'no hand is running');
     const member = room.members.get(conn.data.member);
     if (!member || member.seat === null) return this.fail(conn, 'you are not seated');
+    // A seat dealt to a bot while its member was away stays the bot's for the hand, even after they resume.
+    if (room.state.players[member.seat]?.id !== member.id) return this.fail(conn, 'a bot is playing your seat this hand');
     const before = room.adapter.snapshot(room.state, member.seat);
     const result = apply(room.state, member.seat, message);
     if (!result?.ok) return this.fail(conn, result?.error ?? 'that move was refused');
@@ -631,6 +667,7 @@ export class RoomHub {
       this.scheduleBots(room);
     }
     if (explicit) {
+      room.bets.delete(member.id);
       // state.players[seat].id still names this member, so a running hand settles
       // into the right purse (settle() then files it under their name); only the
       // seat itself is freed.
@@ -716,6 +753,7 @@ export class RoomHub {
   /** Free a member's seat outside a running hand, keeping their chips for a rejoin. */
   releaseSeat(room, member) {
     room.members.delete(member.id);
+    room.bets.delete(member.id);
     if (member.seat !== null) room.seats[member.seat] = null;
     this.stash(room, member.name, room.chips.get(member.id));
     room.chips.delete(member.id);
@@ -802,6 +840,10 @@ export class RoomHub {
           connected: !!member?.connected,
           isHost: id === room.hostId,
           chips: id ? room.chips.get(id) ?? room.settings.startingChips : null,
+          // Seat 0 is the banker's box and has no bet; bots' bets are rolled by the engine.
+          bet: id && room.settings.game === 'blackjack' && seat >= 1
+            ? room.bets.get(id) ?? blackjackLimits(room.settings).min
+            : null,
           bot: !member,
         };
       }),

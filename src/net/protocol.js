@@ -28,6 +28,12 @@ export const C2S = {
   SIT: 'sit',               // take a free seat ({seat}); a spectator or a seated player moving
   STAND: 'stand',           // give up a seat and watch; the host may pass {id} to stand someone else
   TO_LOBBY: 'to_lobby',     // host leaves a finished hand's result and returns the room to its lobby
+  // Blackjack keeps its own spellings: STAND above already means "move to the watchers".
+  BJ_BET: 'bj_bet',         // a seated player's standing bet ({amount}); applies from the next deal
+  BJ_RUN: 'bj_run',         // run on an opening 15
+  BJ_HIT: 'bj_hit',         // a player's hit on their turn, or the banker's draw in the banker phase
+  BJ_STAND: 'bj_stand',
+  BJ_OPEN: 'bj_open',       // the banker opens a player's hand ({seat}: room seat 1-4)
 };
 
 export const S2C = {
@@ -41,7 +47,7 @@ export const S2C = {
 };
 
 /** Seats at the table, per game. The host can switch a room's game between hands (SET_GAME). */
-export const SEATS_BY_GAME = { doudizhu: 3, big2: 4 };
+export const SEATS_BY_GAME = { doudizhu: 3, big2: 4, blackjack: 5 };
 
 /**
  * Seated players plus spectators in one room. Spectators cost the server a socket
@@ -64,6 +70,11 @@ export function potForStack(game, stack) {
   return game === 'big2'
     ? Math.max(10, Math.round(stack / (STARTING_STACK_MULTIPLE * 10)) * 10)
     : Math.max(1, Math.round(stack / STARTING_STACK_MULTIPLE));
+}
+
+/** A blackjack room's bet range: the pot is the table minimum, the ceiling ten of them. */
+export function blackjackLimits(settings) {
+  return { min: settings.pot, max: settings.pot * 10 };
 }
 
 const knownGame = (id) => (Object.hasOwn(SEATS_BY_GAME, id) ? id : 'doudizhu');

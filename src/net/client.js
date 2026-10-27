@@ -108,6 +108,11 @@ export class LanClient {
   sit(seat) { this.send({ t: C2S.SIT, seat }); }
   stand(id) { this.send(id === undefined ? { t: C2S.STAND } : { t: C2S.STAND, id }); }
   toLobby() { this.send({ t: C2S.TO_LOBBY }); }
+  bjBet(amount) { this.send({ t: C2S.BJ_BET, amount }); }
+  bjRun() { this.send({ t: C2S.BJ_RUN }); }
+  bjHit() { this.send({ t: C2S.BJ_HIT }); }
+  bjStand() { this.send({ t: C2S.BJ_STAND }); }
+  bjOpen(seat) { this.send({ t: C2S.BJ_OPEN, seat }); }
 
   close() {
     this.handlers.clear();
