@@ -384,12 +384,6 @@
   font-variant-numeric: lining-nums;
   font-feature-settings: 'lnum' 1;
 }
-/* Both card styles print in the same two inks now; the bold style differs in
-   its layout, not its colour. A back's currentColor is the white of its
-   lattice border. */
-.card--red, .card--bold-red { color: var(--suit-red); }
-.card--black, .card--bold-black { color: var(--suit-black); }
-.card--down { color: var(--back-border); }
 .card-svg, .cg-card-svg { width: 100%; height: 100%; display: block; }
 
 .hand .card {
@@ -506,10 +500,10 @@
    three. Only self's cards need to shrink: the landlord's three itself
    doesn't move, and the left/right opponents' played cards sit clear of it
    horizontally already (.play--left/.play--right are off-centre; the
-   landlord's three is pinned to the middle). 37px keeps the rank index (the
-   corner digit/letter) >= 12 CSS px tall — cardart.js pins its cap height to
-   DIGIT_H/VB_H = 33.5/140 of the rendered card height (card-w * 1.4), so
-   0.335 * 37 =~ 12.4px — with a little room to spare, and 41.6% (nudged down
+   landlord's three is pinned to the middle). 37px is set by the layout, not by the index: the lantern seal's rank has
+   a cap height of ~16.8 of the card's 140 units, so at 37px wide (51.8px
+   tall) it is ~6px — smaller than the 12px the old digit corner kept, and
+   accepted with the lantern design. 41.6% (nudged down
    from the 460px query's 40.5%, to match the shorter card) splits the
    now-larger slack evenly: ~5px clear of the landlord's three above the
    cards, ~5px clear of the controls pill below the caption. */
