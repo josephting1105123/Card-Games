@@ -1018,7 +1018,11 @@ test('a Big Two payout is capped at each loser bankroll and the winner gets only
     assert.ok(row.delta >= -150);
     assert.equal(row.capped, row.cardsLeft * 100 > 150);
   }
-  assert.ok(result.rows.some((r) => r.capped), 'with a 150 stack at 100 a card, someone is capped');
+  // The deal is random, so every loser can end on one card (100, under the
+  // 150 stack); the loop above already pins capped to cardsLeft per row.
+  if (result.rows.some((r) => !r.won && r.cardsLeft > 1)) {
+    assert.ok(result.rows.some((r) => r.capped), 'with a 150 stack at 100 a card, someone is capped');
+  }
   alice.close();
   bob.close();
 });
