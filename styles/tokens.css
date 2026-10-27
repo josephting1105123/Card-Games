@@ -144,6 +144,8 @@
 
   --container-max: 1080px;
   --gutter: clamp(14px, 3vw, 28px);
+  /* Same inset as the entropicsoftwarelabs.com header, so the two bars line up. */
+  --bar-gutter: clamp(16px, 5vw, 48px);
 
   /* ----- Motion ----- */
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
