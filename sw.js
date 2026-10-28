@@ -13,7 +13,7 @@
  * stamp by hand.
  */
 
-const CACHE = 'card-games-99ac43060b6c';
+const CACHE = 'card-games-37332e23c4da';
 
 const PRECACHE = [
   './',
@@ -24,6 +24,7 @@ const PRECACHE = [
   './styles/table.css',
   './styles/blackjack.css',
   './styles/big2.css',
+  './styles/holdem.css',
   './src/main.js',
   './src/core/cards.js',
   './src/core/currency.js',
@@ -48,6 +49,11 @@ const PRECACHE = [
   './src/games/doudizhu/match.js',
   './src/games/doudizhu/moves.js',
   './src/games/doudizhu/rules.js',
+  './src/games/holdem/ai.js',
+  './src/games/holdem/engine.js',
+  './src/games/holdem/match.js',
+  './src/games/holdem/rules.js',
+  './src/games/holdem/tables.js',
   './src/net/client.js',
   './src/net/config.js',
   './src/net/protocol.js',
@@ -58,6 +64,7 @@ const PRECACHE = [
   './src/ui/cardart.js',
   './src/ui/dom.js',
   './src/ui/fullscreen.js',
+  './src/ui/holdem.js',
   './src/ui/lan.js',
   './src/ui/screens.js',
   './src/ui/solo.js',

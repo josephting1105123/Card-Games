@@ -29,7 +29,7 @@ node server/server.js     # host for local network play, also serves the app
 | **Big Two** 锄大地 | Playable — single player |
 | **Blackjack** (American and Malaysian/Ban Luck) | Playable — single player |
 | Niu Niu 牛牛 | Planned |
-| Texas Hold'em | Planned |
+| **Texas Hold'em** | Playable — single player against five bots, and online rooms |
 
 ## Installing
 

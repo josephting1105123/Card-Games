@@ -19,6 +19,9 @@ import { botTurn as big2BotTurn } from '../src/games/big2/match.js';
 import { skillByName as big2SkillByName } from '../src/games/big2/ai.js';
 import * as malaysian from '../src/games/blackjack/malaysian.js';
 import { createShoe, malaysianTotal } from '../src/games/blackjack/cards.js';
+import * as holdemEngine from '../src/games/holdem/engine.js';
+import { botTurn as holdemBotTurn } from '../src/games/holdem/match.js';
+import { skillByName as holdemSkillByName } from '../src/games/holdem/ai.js';
 import { makeRng } from '../src/core/rng.js';
 import { C2S, S2C, blackjackLimits } from '../src/net/protocol.js';
 
@@ -500,7 +503,97 @@ const blackjack = {
   },
 };
 
-export const GAMES = { doudizhu, big2: bigTwo, blackjack };
+/**
+ * No-limit Texas Hold'em, six seats. The room's pot is the big blind; the engine
+ * keeps the stacks, so a seat's room chips go in as its stack and its final stack
+ * goes back out. Bots are topped up between hands (rebuyBots) so the table always
+ * has two funded seats to deal to.
+ */
+const holdem = {
+  id: 'texas',
+  seats: 6,
+  skillByName: holdemSkillByName,
+  rebuyBots: true,
+  // The engine cannot deal to fewer than two funded seats; rooms.js refuses the deal instead of resetting.
+  canDeal: (players) => players.filter((p) => p.chips > 0).length >= 2,
+  createGame({ seed, players, settings, previous, lastHoldemButton }) {
+    const seats = players.map((p) => ({
+      name: p.name,
+      isHuman: !p.isBot,
+      isBot: !!p.isBot,
+      skill: p.skill,
+      stack: p.chips,
+    }));
+    const bigBlind = settings.pot;
+    const smallBlind = Math.max(1, Math.floor(settings.pot / 2));
+    // previous is whatever the room last dealt, which may be another game's state or
+    // nothing (a reset to the lobby); the room keeps the last Hold'em button for that.
+    const button = holdemEngine.nextButton(seats, previous?.game === 'holdem' ? previous.button : (lastHoldemButton ?? -1));
+    // createHand throws when fewer than two seats have chips; rooms.js isolates that.
+    const state = holdemEngine.createHand({ seed, players: seats, button, smallBlind, bigBlind });
+    // The engine keeps no ids; the room settles chips by id.
+    // dealtHuman: a seat dealt to a bot (its member was away) stays the house's for the hand,
+    // so a resume cannot hand the member the bot's stack or its purse's settlement.
+    players.forEach((p, seat) => {
+      state.players[seat].id = p.id;
+      state.players[seat].dealtHuman = !p.isBot;
+    });
+    return state;
+  },
+  seatOnTurn: (state) => state.turn,
+  isBotTurn: (state) => state.turn >= 0 && !!state.players[state.turn] && !state.players[state.turn].isHuman,
+  isFinished: (state) => state.phase === holdemEngine.Phase.FINISHED,
+  botTurn: (state, rng) => holdemBotTurn(state, rng),
+  seatView(state, seat) {
+    const view = holdemEngine.seatView(state, seat);
+    // A member resumed into a seat a bot was dealt holds no controls for the hand.
+    if (!state.players[seat].isHuman) view.legal = null;
+    return view;
+  },
+  isBot: (player) => !player.isHuman,
+  toBot(player, skill, name) {
+    if (!player.dealtHuman) return;
+    player.isHuman = false;
+    player.isBot = true;
+    player.skill = skill;
+    player.name = name;
+  },
+  toHuman(player, id, name) {
+    if (!player.dealtHuman) return;
+    player.isHuman = true;
+    player.isBot = false;
+    player.id = id;
+    player.name = name;
+  },
+  actions: {
+    [C2S.HOLDEM_ACT]: (state, seat, message) => holdemEngine.act(state, seat, {
+      type: String(message.action?.type ?? ''),
+      amount: Number(message.action?.amount),
+    }),
+  },
+  snapshot: () => null,
+  // The view carries the whole action log and HoldemView draws each seat's bubble from it.
+  describeAction: () => [],
+  settle(room) {
+    const { state } = room;
+    const { result } = state;
+    const rows = state.players.map((p, seat) => ({
+      seat,
+      name: p.name,
+      isBot: !p.isHuman,
+      delta: result.net[seat],
+      chips: p.stack,
+      won: result.net[seat] > 0,
+    }));
+    const changes = state.players.map((p) => [p.id, p.stack]);
+    return {
+      frame: { t: S2C.RESULT, game: 'texas', rows, pots: result.pots, uncontested: !!result.uncontested },
+      changes,
+    };
+  },
+};
+
+export const GAMES = { doudizhu, big2: bigTwo, blackjack, texas: holdem };
 
 /** An unknown id falls back to Dou Di Zhu, matching sanitiseSettings. */
 export function gameAdapter(id) {

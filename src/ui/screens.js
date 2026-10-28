@@ -13,7 +13,9 @@ import { ratingTitle } from '../core/elo.js';
 import { cardFromId } from '../core/cards.js';
 import { gameStats } from '../core/profile.js';
 import { GAMES, READY_GAMES, gameById } from '../games/registry.js';
+import { MAX_BUYIN_BB, minBuyIn, tableAccess } from '../games/holdem/tables.js';
 import { SKILLS } from '../games/doudizhu/ai.js';
+import { SKILLS as HOLDEM_SKILLS } from '../games/holdem/ai.js';
 import { clear, el } from './dom.js';
 
 // Static literal, no user data, so innerHTML is safe; el() only builds HTML-namespace nodes.
@@ -54,6 +56,7 @@ const TILE_FANS = {
   doudizhu: { ids: [53, 48], opts: { style: 'bold' } },
   big2: { ids: [48, 3], opts: { style: 'bold' } },
   blackjack: { ids: [44, 41], opts: {} },
+  texas: { ids: [44, 45], opts: { style: 'bold' } },
 };
 
 export function renderMenu(app, root) {
@@ -204,6 +207,7 @@ export function renderMode(app, root, gameId) {
 
 export function renderLobby(app, root, gameId, variant) {
   if (gameId === 'blackjack') return renderBlackjackScreen(app, root, (mod) => mod.renderBlackjackLobby(app, root, variant));
+  if (gameId === 'texas') return renderHoldemLobby(app, root);
   const game = gameById(gameId);
   const profile = app.profile;
   const isBig2 = gameId === 'big2';
@@ -281,6 +285,48 @@ export function renderLobby(app, root, gameId, variant) {
         el('ul.panel__list',
           ...(game.ruleNotes ?? []).map((note) => el('li', note)),
         ),
+      ),
+    ),
+  );
+}
+
+// Hold'em tables are priced by blinds, not by a pot, so they have their own picker.
+function renderHoldemLobby(app, root) {
+  const game = gameById('texas');
+  const profile = app.profile;
+  clear(root);
+  const grid = el('div.lobbies');
+  for (const { table, locked, reason } of tableAccess(profile.bankroll)) {
+    grid.append(el('button', {
+      class: 'lobby',
+      type: 'button',
+      disabled: locked,
+      onclick: () => app.go('table', { gameId: 'texas', lobbyId: table.id }),
+    },
+      el('div.lobby__pot', `${formatChips(table.sb, true)}/${formatChips(table.bb, true)}`, el('small', 'blinds')),
+      el('div.lobby__name', table.name),
+      el('div.lobby__meta',
+        el('span', `Bots: ${HOLDEM_SKILLS[table.skill]?.name ?? table.skill}`),
+        el('span', `Buy-in up to ${formatChips(table.bb * MAX_BUYIN_BB, true)}`),
+        el('span', `Min ${formatChips(minBuyIn(table), true)}`)),
+      el('p.lobby__blurb', table.blurb),
+      locked ? el('p.lobby__lock', reason) : null,
+    ));
+  }
+  root.append(
+    topbar(app),
+    el('main.page',
+      el('button.back-link', { type: 'button', onclick: () => app.go('menu') }, '← All games'),
+      el('div.page__head',
+        el('span.eyebrow', game.name),
+        el('h1.page__title', 'Choose a table'),
+        el('p.page__sub', `You sit down with up to ${MAX_BUYIN_BB} big blinds, or your whole bankroll if that is less. Whatever you win or lose over the session comes straight out of your chips, so a bust costs you the buy-in and nothing more.`),
+      ),
+      grid,
+      el('div.rule'),
+      el('div.card-panel',
+        el('h2.panel__title', 'House rules'),
+        el('ul.panel__list', ...(game.ruleNotes ?? []).map((note) => el('li', note))),
       ),
     ),
   );

@@ -78,9 +78,18 @@ export const GAMES = [
     name: "Texas Hold’em",
     tagline: 'No-limit poker',
     players: 6,
-    status: 'planned',
+    status: 'ready',
     accent: '#5b3fa8',
-    description: 'Two hole cards, five on the board, no-limit betting against the table.',
+    noElo: true,
+    online: true,
+    description: 'You and five bots, two hole cards each, five on the board. Buy in for up to 100 big blinds and bet it all if you dare.',
+    ruleNotes: [
+      'Best five-card hand wins, high to low: straight flush, four of a kind, full house, flush, straight, three of a kind, two pair, pair, high card.',
+      'No limit: bet or raise any amount from the minimum up to your whole stack. A raise must be at least as big as the last bet or raise on that street, and the minimum opening bet is the big blind.',
+      'Chips that other players cannot match go into side pots. Each pot is won only by the players who put chips into it.',
+      'The dealer button moves one seat every hand. The two seats after it post the small and big blinds; heads-up, the button posts the small blind.',
+      'Leaving mid-hand forfeits the chips you have already put in.',
+    ],
   },
 ];
 

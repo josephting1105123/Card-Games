@@ -113,6 +113,7 @@ export class LanClient {
   bjHit() { this.send({ t: C2S.BJ_HIT }); }
   bjStand() { this.send({ t: C2S.BJ_STAND }); }
   bjOpen(seat) { this.send({ t: C2S.BJ_OPEN, seat }); }
+  holdemAct(action) { this.send({ t: C2S.HOLDEM_ACT, action }); }
 
   close() {
     this.handlers.clear();
