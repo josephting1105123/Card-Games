@@ -149,8 +149,8 @@ export function renderMenu(app, root) {
       ),
       profile.rescueMode
         ? el('div.notice.notice--warn',
-            el('b', 'You are at the rescue table. '),
-            `Only the 400 pot is open, losses cannot take you below zero, and the normal rooms unlock again at ${formatChips(RESCUE_EXIT)}.`)
+            el('b', 'You are on rescue chips. '),
+            `Dou Di Zhu and Big Two are limited to the 400-pot rescue table, and Blackjack's rescue table takes bets with no chips, until you hold ${formatChips(RESCUE_EXIT)}.`)
         : null,
       tiles,
       record,

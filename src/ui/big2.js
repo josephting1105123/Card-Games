@@ -225,7 +225,7 @@ export class BigTwoGame {
       lines.splice(2, 0, `Loss capped at <span>${formatChips(Math.abs(settlement.delta))}</span> (gross ${formatChips(Math.abs(settlement.gross))})`);
     }
     if (bankrollChange.wentBankrupt) {
-      lines.push(`<span>Bankrupt.</span> You have been moved to the rescue table: 400 pot, no bankruptcy, until you hold <span>${formatChips(RESCUE_EXIT)}</span>.`);
+      lines.push(`<span>Under ${formatChips(RESCUE_EXIT)}.</span> The rescue table is open: 400 pot, no bankruptcy, until you hold <span>${formatChips(RESCUE_EXIT)}</span>.`);
     }
     if (bankrollChange.leftRescue) {
       lines.push('<span>Back in the game.</span> The normal tables are open again.');
@@ -233,6 +233,7 @@ export class BigTwoGame {
 
     const access = lobbyAccess(profile.bankroll, profile.rescueMode).find((a) => a.lobby.id === this.lobby.id);
     const canRepeat = access && !access.locked;
+    const toRescue = !canRepeat && profile.rescueMode;
     if (!canRepeat) lines.push(`You can no longer sit at this table: <span>${access?.reason ?? 'not available'}</span>`);
 
     this.view.showResult({
@@ -241,8 +242,12 @@ export class BigTwoGame {
       deltaText: `${settlement.delta >= 0 ? '+' : '−'}${formatChips(Math.abs(settlement.delta))}`,
       rows,
       lines,
-      againLabel: canRepeat ? 'Next hand' : 'Choose another table',
-      onAgain: () => (canRepeat ? this.newDeal() : this.app.go('lobby', { gameId: this.gameId })),
+      againLabel: canRepeat ? 'Next hand' : toRescue ? 'Go to the rescue table' : 'Choose another table',
+      onAgain: () => {
+        if (canRepeat) this.newDeal();
+        else if (toRescue) this.app.go('table', { gameId: this.gameId, lobbyId: 'rescue' });
+        else this.app.go('lobby', { gameId: this.gameId });
+      },
       onLeave: () => this.app.go('menu'),
     });
   }

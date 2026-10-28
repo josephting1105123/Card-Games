@@ -21,7 +21,7 @@
  * banner chrome and card art, never the American methods above it.
  */
 
-import { formatChips } from '../core/economy.js';
+import { RESCUE_EXIT, formatChips } from '../core/economy.js';
 import { blackjackSeatBots, gameStats, setBlackjackSeatBot } from '../core/profile.js';
 import { makeRng, randomSeed } from '../core/rng.js';
 import {
@@ -106,10 +106,11 @@ export function renderBlackjackLobby(app, root, variantParam) {
   const variant = variantParam === 'malaysian' ? 'malaysian' : 'american';
   const profile = app.profile;
   clear(root);
-  const access = tableAccess(profile.bankroll);
+  const access = tableAccess(profile.bankroll, profile.rescueMode);
   const grid = el('div.lobbies');
   for (const { table, locked, reason } of access) {
-    grid.append(el('button.lobby', {
+    if (table.rescue && !profile.rescueMode) continue;
+    grid.append(el(table.rescue ? 'button.lobby.lobby--rescue' : 'button.lobby', {
       type: 'button',
       disabled: locked,
       onclick: () => app.go('table', { gameId: 'blackjack', variant, lobbyId: table.id }),
@@ -119,7 +120,9 @@ export function renderBlackjackLobby(app, root, variantParam) {
       el('div.lobby__meta',
         el('span', `Min ${formatChips(table.min, true)}`),
         el('span', `Max ${formatChips(table.max, true)}`),
-        el('span', `Entry ${formatChips(tableEntry(table), true)}`),
+        ...(table.rescue
+          ? [el('span', 'No entry fee'), el('span', 'No bankruptcy')]
+          : [el('span', `Entry ${formatChips(tableEntry(table), true)}`)]),
       ),
       locked ? el('p.lobby__lock', reason) : null,
     ));
@@ -133,6 +136,11 @@ export function renderBlackjackLobby(app, root, variantParam) {
         el('h1.page__title', `${variantName(variant)} tables`),
         el('p.page__sub', 'One seat, against the house. A table is open once your bankroll can survive ten of its minimum bets.'),
       ),
+      profile.rescueMode
+        ? el('div.notice.notice--warn',
+            el('b', 'You are on rescue chips. '),
+            `Under ${formatChips(RESCUE_EXIT)} chips the rescue table is open: bets up to 400, and losses cannot take you below zero.`)
+        : null,
       grid,
     ),
   );
@@ -241,9 +249,27 @@ export class BlackjackGame {
 
   // --- betting -------------------------------------------------------------
 
+  /** At the rescue table you can bet with no chips; applyToBankroll floors the loss at zero. */
+  purse() {
+    return this.table.rescue && this.app.profile.rescueMode ? Infinity : this.app.profile.bankroll;
+  }
+
+  /** The rescue table closes behind a player who climbed out, as Dou Di Zhu's does. */
+  rescueClosed() {
+    return !!this.table.rescue && !this.app.profile.rescueMode;
+  }
+
+  /** What replaces the betting controls once the rescue table has closed. */
+  appendRescueClosed(host) {
+    host.append(
+      el('span.bj-hint', `Back over ${formatChips(RESCUE_EXIT)}: the rescue table is closed`),
+      el('button.btn.btn--primary', { type: 'button', onclick: () => this.leave() }, 'Choose another table'),
+    );
+  }
+
   canDeal() {
-    const bankroll = this.app.profile.bankroll;
-    return this.bet >= this.table.min && this.bet <= this.table.max && this.bet <= bankroll && this.bet > 0;
+    if (this.rescueClosed()) return false;
+    return this.bet >= this.table.min && this.bet <= this.table.max && this.bet <= this.purse() && this.bet > 0;
   }
 
   showRules() {
@@ -276,17 +302,17 @@ export class BlackjackGame {
     const n = this.nodes;
     clear(n.actions);
     n.actions.classList.add('is-betting');
-    const profile = this.app.profile;
+    if (this.rescueClosed()) { this.appendRescueClosed(n.actions); return; }
     const chips = chipDenominations(this.table);
-    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > profile.bankroll || this.lastBet < this.table.min;
+    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > this.purse() || this.lastBet < this.table.min;
 
     n.actions.append(
       el('div.bj-chip-row',
         el('div.bj-bet-live', el('span', 'Bet'), el('b', formatChips(this.bet))),
         ...chips.map((value) => el('button.btn.bj-chip', {
           type: 'button',
-          disabled: this.bet + value > this.table.max || this.bet + value > profile.bankroll,
-          onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, profile.bankroll); this.paintActions(); this.paintHud(); },
+          disabled: this.bet + value > this.table.max || this.bet + value > this.purse(),
+          onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, this.purse()); this.paintActions(); this.paintHud(); },
         }, formatChips(value, true))),
         el('button.btn', { type: 'button', onclick: () => { this.bet = 0; this.paintActions(); this.paintHud(); } }, 'Clear'),
         el('button.btn', { type: 'button', disabled: repeatDisabled, onclick: () => { this.bet = this.lastBet; this.paintActions(); this.paintHud(); } }, 'Repeat bet'),
@@ -320,7 +346,7 @@ export class BlackjackGame {
   }
 
   canAffordExtra(extra) {
-    return this.app.profile.bankroll - this.committed() >= extra;
+    return this.purse() - this.committed() >= extra;
   }
 
   // --- table shell -----------------------------------------------------------
@@ -704,13 +730,15 @@ export class BlackjackGame {
     // The running played/won/net line now lives in the betting controls
     // (paintBettingControls -> statsLine), not the banner, so the result
     // here is read for its bankroll side effect only.
-    recordBlackjackResult(this.app.profile, 'blackjack', net);
+    const { bankrollChange, applied } = recordBlackjackResult(this.app.profile, 'blackjack', net);
+    if (bankrollChange.wentBankrupt) this.showToast(`Under ${formatChips(RESCUE_EXIT)} chips: the rescue table is open`);
+    if (bankrollChange.leftRescue) this.showToast(`Back over ${formatChips(RESCUE_EXIT)}: off rescue chips`);
     this.roundFinished = true;
     this.paintDealer();
     this.paintHands();
     this.paintActions(); // roundFinished is true now — this paints the next bet's controls
     this.paintHud();
-    this.showBanner(net);
+    this.showBanner(net, applied);
   }
 
   /** A banner over the middle of the felt, not a modal: both hands stay
@@ -721,7 +749,9 @@ export class BlackjackGame {
    * flight measures real rects rather than trusting a CSS guess — the gap
    * between two rows of cards each a quarter of the screen tall is too thin
    * a margin to hit by centering in the felt as a whole. */
-  showBanner(net) {
+  showBanner(net, shown = net) {
+    // Win/loss stays decided by the round; only the amount shown follows what
+    // actually moved, since the rescue table floors a loss at zero.
     const win = net > 0;
     const push = net === 0;
     const hands = this.round.hands;
@@ -730,7 +760,7 @@ export class BlackjackGame {
     const reason = this.resultReason(hands, net, push);
     const banner = el('div.bj-banner',
       { class: cls },
-      el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
+      el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${shown >= 0 ? '+' : '−'}${formatChips(Math.abs(shown))}`)),
       reason ? el('div.bj-banner__reason', reason) : null,
     );
     const n = this.nodes;
@@ -1005,6 +1035,9 @@ export class BlackjackGame {
     let note = '';
     if (midRound) {
       note = 'Only between rounds';
+    } else if (this.rescueClosed()) {
+      disabled = true;
+      note = 'Rescue table closed';
     } else if (this.role === 'player') {
       const req = MY.bankRequirement(this.table, this.mFilledSeatCountAsBanker());
       if (this.app.profile.bankroll < req) { disabled = true; note = `Needs ${formatChips(req, true)} to bank`; }
@@ -1024,12 +1057,14 @@ export class BlackjackGame {
     this.paintMSwap();
 
     if (!this.mround || this.mFinished) {
-      if (this.role === 'player') {
+      if (this.rescueClosed()) {
+        this.appendRescueClosed(n.actions);
+      } else if (this.role === 'player') {
         this.paintMBettingControls();
       } else {
         const filled = this.mFilledSeatCountAsBanker();
         n.actions.append(el('button.btn.btn--primary', {
-          type: 'button', disabled: filled < 1, onclick: () => this.dealM(),
+          type: 'button', disabled: filled < 1 || this.rescueClosed(), onclick: () => this.dealM(),
         }, filled < 1 ? 'Add a bot to deal' : 'Deal'));
         // Visible, not just each blocked seat's own title — the bankroll
         // reason a touch device can never see on hover.
@@ -1080,16 +1115,15 @@ export class BlackjackGame {
   paintMBettingControls() {
     const n = this.mnodes;
     n.actions.classList.add('is-betting');
-    const profile = this.app.profile;
     const chips = chipDenominations(this.table);
-    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > profile.bankroll || this.lastBet < this.table.min;
+    const repeatDisabled = !this.lastBet || this.lastBet > this.table.max || this.lastBet > this.purse() || this.lastBet < this.table.min;
     n.actions.append(
       el('div.bj-chip-row',
         el('div.bj-bet-live', el('span', 'Bet'), el('b', formatChips(this.bet))),
         ...chips.map((value) => el('button.btn.bj-chip', {
           type: 'button',
-          disabled: this.bet + value > this.table.max || this.bet + value > profile.bankroll,
-          onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, profile.bankroll); this.paintMActions(); },
+          disabled: this.bet + value > this.table.max || this.bet + value > this.purse(),
+          onclick: () => { this.bet = Math.min(this.bet + value, this.table.max, this.purse()); this.paintMActions(); },
         }, formatChips(value, true))),
         el('button.btn', { type: 'button', onclick: () => { this.bet = 0; this.paintMActions(); } }, 'Clear'),
         el('button.btn', { type: 'button', disabled: repeatDisabled, onclick: () => { this.bet = this.lastBet; this.paintMActions(); } }, 'Repeat bet'),
@@ -1101,6 +1135,7 @@ export class BlackjackGame {
   // --- dealing ---------------------------------------------------------------
 
   async dealM() {
+    if (this.rescueClosed()) return;
     if (this.role === 'player') {
       if (!this.canDeal()) return;
       this.lastBet = this.bet;
@@ -1492,7 +1527,9 @@ export class BlackjackGame {
 
   finishMRound() {
     const net = MY.tableRoundNet(this.mround);
-    recordBlackjackResult(this.app.profile, 'blackjack', net);
+    const { bankrollChange, applied } = recordBlackjackResult(this.app.profile, 'blackjack', net);
+    if (bankrollChange.wentBankrupt) this.showToast(`Under ${formatChips(RESCUE_EXIT)} chips: the rescue table is open`);
+    if (bankrollChange.leftRescue) this.showToast(`Back over ${formatChips(RESCUE_EXIT)}: off rescue chips`);
     this.mFinished = true;
     this.mSettledAt = performance.now();
     this.clearMSeatHighlights();
@@ -1508,7 +1545,7 @@ export class BlackjackGame {
     // Every hand — the banker's included — stays on the table exactly as it
     // finished until Deal, Swap or a bot toggle changes it: the player has
     // to be able to see why they won or lost, not just the delta.
-    this.showMBanner(net);
+    this.showMBanner(net, applied);
     this.paintMSettled();
     this.paintMActions();
   }
@@ -1557,13 +1594,13 @@ export class BlackjackGame {
    * and the seat row by construction, and leaves swap fully live throughout.
    * restoreSwapSlot() removes the banner once Deal, Swap or a bot toggle
    * moves the table on. */
-  showMBanner(net) {
+  showMBanner(net, shown = net) {
     const win = net > 0;
     const push = net === 0;
     const cls = win ? 'is-win' : push ? 'is-push' : 'is-loss';
     const title = this.mResultTitle(net, push);
     const banner = el('div.bj-banner.bj-banner--inline', { class: cls },
-      el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${net >= 0 ? '+' : '−'}${formatChips(Math.abs(net))}`)),
+      el('div.bj-banner__main', el('span.bj-banner__title', title), el('span.bj-banner__delta', `${shown >= 0 ? '+' : '−'}${formatChips(Math.abs(shown))}`)),
     );
     const n = this.mnodes;
     this.restoreSwapSlot(); // never two banners stacked, if this is ever called twice running

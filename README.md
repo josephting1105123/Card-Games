@@ -105,7 +105,7 @@ ladder cannot drift out of step with itself:
 | A stack, and the opening purse | 25 | 25,000 |
 | Enough to sit down | 6 | 6,000 |
 | Leaving the rescue table | 6 | 6,000 |
-| Bankrupt below | 1 | 1,000 |
+| Rescue table opens below | 6 | 6,000 |
 
 The swing of a hand is therefore the same share of your money whichever table you
 sit at: a landlord at the base multiplier risks 4 pots, which is a sixth of a
@@ -154,12 +154,15 @@ have afforded to lose is the one worth having, so a landlord at ×16 collects al
 32 pots whatever their balance.
 
 **Bankruptcy is still reachable.** Two bad landlord hands from a fresh stack will
-do it. Below **1,000** — one pot at the cheapest table, so you can no longer play
-at all — you move to the **rescue table**: a 400 pot against the weakest bot,
-where a loss cannot take your balance below zero.
+do it. Below **6,000** — the starter table's entry, so you can no longer sit at
+any normal table — the **rescue table** opens: a 400 pot against the weakest bot.
+Blackjack has one too, taking bets of 100 to 400 with no chips needed. Losses
+there are capped at 75% of your balance, so a loss cannot take it below zero and
+a bomb hand cannot wipe you out.
 
-You leave it at **6,000**, which is not a round number picked for the feel of it:
-it is exactly the starter table's entry. Holding somebody in rescue past the
+You leave it at **6,000**, the same number it opens at, which is not a round
+number picked for the feel of it: it is exactly the starter table's entry, so
+there is no balance at which nothing is playable. Holding somebody in rescue past the
 point a normal table will have them is pointless, and releasing them before it
 only sends them back — the earlier threshold of 2,000 handed a player two pots,
 which one ordinary landlord hand took most of. Six pots is about a dozen net

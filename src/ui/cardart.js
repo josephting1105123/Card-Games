@@ -2,13 +2,14 @@
  * Card faces and backs, drawn as SVG at run time. No image files, so the whole
  * deck installs offline and stays crisp at any size.
  *
- * House style: the Chinese New Year lantern deck. Cream stock with a gold edge
- * and a gold inner rule, a gold cloud scroll in the top-right and bottom-left
- * corners, red and ink suits, and a red or ink paper lantern as the centrepiece
- * of every ace, court and joker (spot cards keep the traditional pip layouts).
+ * House style: the Chinese New Year deck. Cream stock with a gold edge and a
+ * gold inner rule, a gold cloud scroll in the top-right and bottom-left
+ * corners, and red and ink suits. The index sits top-left and bottom-right; the
+ * centre holds the traditional pip layouts for 2-10, one large pip for an ace,
+ * a letter over a pip for a court, and a crown or star for a joker.
  * The back is a deep-red field of gold dragon scales around a gold 龙 medallion.
- * Two index styles share that artwork: the default has a small standard corner
- * index, and the "bold" style below swaps it for an enlarged lantern seal.
+ * Two index styles share that artwork: the default has a standard corner
+ * index, and the "bold" style below enlarges it and empties the centre.
  * Every colour comes from a token in tokens.css, read through `style=` rather
  * than a presentation attribute so the custom property resolves inside the
  * <use> shadow tree. Suit shapes live in one hidden <svg> of <symbol>
@@ -43,9 +44,6 @@ const LAYOUTS = {
   10: [[0.3, 0.215], [0.7, 0.215], [0.5, 0.31], [0.3, 0.405], [0.7, 0.405], [0.3, 0.595, 1, true], [0.7, 0.595, 1, true], [0.5, 0.69, 1, true], [0.3, 0.785, 1, true], [0.7, 0.785, 1, true]],
 };
 
-/** Half a turn about the card's centre: the mirrored index and cloud corner. */
-const FLIP = `transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"`;
-
 /** Rank and letter glyphs are set in the display face at 800. */
 const RANK_FONT = 'font-family:var(--font-display);font-weight:800';
 
@@ -68,8 +66,11 @@ function faceBody() {
   return '<rect x="0.75" y="0.75" width="98.5" height="138.5" rx="7" style="fill:var(--face);stroke:var(--face-edge)" stroke-width="1.5"/>';
 }
 
-/** The gold inner rule and the cloud scroll in two opposite corners — the
- * corners the index does not occupy. Every face carries it, jokers included.
+/** Half a turn about the card's centre: the mirrored index and cloud corner. */
+const FLIP = `transform="rotate(180 ${VB_W / 2} ${VB_H / 2})"`;
+
+/** The gold inner rule and the cloud scroll in the top-right and bottom-left
+ * corners, the two the index does not occupy. Every face carries it, jokers included.
  * The scroll sits tight in the corner so its curl clears the top pip column of a 9 or 10. */
 function decor() {
   const cloud = '<path d="M74 11h9q7-1 7 6 0 5-5 5-4 0-4-4 0-3 3-3"fill="none" style="stroke:var(--card-gold)" stroke-width="1.3" stroke-linecap="round"/>';
@@ -85,8 +86,7 @@ function cardColour(card) {
 
 /** A card's ink: the red suits (and the big joker) take --suit-red, the black
  * suits (and the small joker) --suit-black. One flat colour per card, so the
- * indices, pips and court lanterns all agree; aces are the exception and
- * always take the red lantern (see centre()). */
+ * indices, pips, court letters and joker emblems all agree. */
 function inkColour(card) {
   return cardColour(card) === 'red' ? 'var(--suit-red)' : 'var(--suit-black)';
 }
@@ -95,18 +95,18 @@ function pip(suit, x, y, size, fillVar) {
   return `<use href="#cg-pip-${suit}" x="${x}" y="${y}" width="${size}" height="${size}" style="fill:${fillVar}"/>`;
 }
 
-/** One copy of the small corner index: rank above suit. Two-character ranks
+/** One copy of the corner index: rank above suit. Two-character ranks
  * ("10") are squeezed to the one-character width so they stay in the corner. */
 function standardIndexGlyphs(card) {
   const label = rankIndex(card.rank);
   const ink = inkColour(card);
   const long = label.length > 1;
   const fit = long ? ' textLength="17" lengthAdjust="spacingAndGlyphs"' : '';
-  return `<text x="13" y="25" text-anchor="middle" font-size="${long ? 16 : 19}"${fit} style="fill:${ink};${RANK_FONT}">${label}</text>`
-    + pip(card.suit, 7.5, 29, 11, ink);
+  return `<text x="15" y="28" text-anchor="middle" font-size="${long ? 20 : 24}"${fit} style="fill:${ink};${RANK_FONT}">${label}</text>`
+    + pip(card.suit, 8, 32, 14, ink);
 }
 
-/** The small index in the top-left, mirrored at the bottom-right. */
+/** The index in the top-left, mirrored at the bottom-right. */
 function standardIndex(card) {
   return standardIndexGlyphs(card) + `<g ${FLIP}>${standardIndexGlyphs(card)}</g>`;
 }
@@ -121,35 +121,23 @@ function jokerStandardIndex(card) {
   return jokerLetters(card) + `<g ${FLIP}>${jokerLetters(card)}</g>`;
 }
 
-/** The paper lantern: gold caps, a ribbed body in `fillVar`, a tassel, and
- * whatever `inner` draws on the body. */
-function lantern(fillVar, inner) {
-  return '<rect x="42" y="38" width="16" height="6" rx="1" style="fill:var(--card-gold)"/>'
-    + `<ellipse cx="50" cy="72" rx="26" ry="29" style="fill:${fillVar};stroke:var(--card-gold)" stroke-width="2"/>`
-    + '<path d="M34 52v40M66 52v40" style="stroke:var(--card-gold)" stroke-width="0.8"/>'
-    + '<rect x="42" y="100" width="16" height="6" rx="1" style="fill:var(--card-gold)"/>'
-    + '<path d="M50 106v8" style="stroke:var(--card-gold)" stroke-width="2.4"/>'
-    + inner;
-}
+const CROWN = (fill) => `<path d="M34 80 37 62 44 70 50 58 56 70 63 62 66 80z" style="fill:${fill}"/><rect x="34" y="80" width="32" height="4" rx="1" style="fill:${fill}"/>`;
+const STAR = (fill) => `<polygon points="50,56 54.5,67 66,67 57,74 60,86 50,79 40,86 43,74 34,67 45.5,67" style="fill:${fill}"/>`;
 
-const GOLD_LIGHT = 'var(--card-gold-light)';
-
-const CROWN = '<path d="M34 80 37 62 44 70 50 58 56 70 63 62 66 80z" style="fill:var(--card-gold-light)"/><rect x="34" y="80" width="32" height="4" rx="1" style="fill:var(--card-gold-light)"/>';
-const STAR = '<polygon points="50,56 54.5,67 66,67 57,74 60,86 50,79 40,86 43,74 34,67 45.5,67" style="fill:var(--card-gold-light)"/>';
-
-/** The centrepiece: lantern for aces, courts and jokers, pips for 2-10. */
+/** The centrepiece: a crown or star for jokers, one large pip for aces, a
+ * letter over a pip for courts, the traditional pip layouts for 2-10. */
 function centre(card) {
   const ink = inkColour(card);
-  if (isJoker(card)) return lantern(ink, card.rank === RANK_JOKER_BIG ? CROWN : STAR);
-  if (card.rank === 14) return lantern('var(--suit-red)', pip(card.suit, 35, 57, 30, GOLD_LIGHT));
+  if (isJoker(card)) return card.rank === RANK_JOKER_BIG ? CROWN(ink) : STAR(ink);
+  if (card.rank === 14) return pip(card.suit, 33, 53, 34, ink);
   if (card.rank >= 11 && card.rank <= 13) {
     const letter = rankIndex(card.rank);
-    return lantern(ink, `<text x="50" y="80" font-size="30" text-anchor="middle" style="fill:${GOLD_LIGHT};${RANK_FONT}">${letter}</text>`
-      + pip(card.suit, 45, 87, 10, GOLD_LIGHT));
+    return `<text x="50" y="74" font-size="44" text-anchor="middle" style="fill:${ink};${RANK_FONT}">${letter}</text>`
+      + pip(card.suit, 42, 82, 16, ink);
   }
   const layout = LAYOUTS[card.rank === RANK_TWO ? 2 : card.rank] ?? LAYOUTS[1];
   const uses = layout.map(([x, y, s = 1, flip = false]) => {
-    const size = 17 * s;
+    const size = 13 * s;
     const cx = x * VB_W, cy = y * VB_H;
     const transform = flip ? ` transform="rotate(180 ${cx} ${cy})"` : '';
     return `<use href="#cg-pip-${card.suit}" x="${(cx - size / 2).toFixed(2)}" y="${(cy - size / 2).toFixed(2)}" width="${size.toFixed(2)}" height="${size.toFixed(2)}" style="fill:${ink}"${transform}/>`;
@@ -240,13 +228,13 @@ export function cardAria(card) {
 /* ==========================================================================
  * The "bold" style — opt-in: the Dou Di Zhu and Big Two tables.
  *
- * The same lantern artwork as the default style, but the corner index becomes
- * an enlarged lantern seal. Shedding-game hands fan their cards so only the
- * left third of each one shows, and the default's small index is too little to
- * read there; the seal puts the rank large in that strip. Blackjack lays its
- * cards side by side with the whole face visible, so it keeps the standard
- * index. The centrepiece is drawn at 0.6 scale in the open space to the right
- * of the seal.
+ * The same stock, rule and cloud scroll as the default style, but the card
+ * carries only a large rank and suit in the top-left, mirrored at the
+ * bottom-right, with an empty middle. Shedding-game hands fan their cards so
+ * only the left third of each one shows. Bold has the larger pip (18 vs 14)
+ * and an empty centre, so that strip holds nothing but the index. Blackjack
+ * lays its cards side by side with the whole face visible, so it keeps the
+ * default style.
  *
  * Built in its own <symbol> sheet, installed lazily on first use, so a table
  * that never asks for `style: 'bold'` never pays for it and the default deck's
@@ -255,17 +243,13 @@ export function cardAria(card) {
 
 const BOLD_DEFS_ID = 'cg-card-bold-defs';
 
-/** The index lantern: rank reversed out of an ink seal, suit pip beneath. */
-function lanternSeal(ink, card) {
+/** One copy of the large index: rank above suit pip, in the card's ink. */
+function boldIndexGlyphs(card) {
+  const ink = inkColour(card);
   const label = rankIndex(card.rank);
   const fit = label.length > 1 ? ' textLength="21" lengthAdjust="spacingAndGlyphs"' : '';
-  return '<rect x="14" y="5" width="13" height="5" rx="1" style="fill:var(--card-gold)"/>'
-    + `<rect x="5" y="9" width="31" height="38" rx="15.5" style="fill:${ink}"/>`
-    + '<path d="M11 20v16M30 20v16" style="stroke:var(--card-gold)" stroke-width="0.7"/>'
-    + '<rect x="14" y="46" width="13" height="5" rx="1" style="fill:var(--card-gold)"/>'
-    + '<path d="M20.5 51v9" style="stroke:var(--card-gold)" stroke-width="2"/>'
-    + `<text x="20.5" y="37" font-size="25" text-anchor="middle"${fit} style="fill:var(--seal-text);${RANK_FONT}">${label}</text>`
-    + pip(card.suit, 11.5, 63, 18, ink);
+  return `<text x="16" y="34" font-size="25" text-anchor="middle"${fit} style="fill:${ink};${RANK_FONT}">${label}</text>`
+    + pip(card.suit, 7, 38, 18, ink);
 }
 
 function boldJokerIndex(ink) {
@@ -276,13 +260,10 @@ function boldJokerIndex(ink) {
 /** The bold face's inner markup (without the <svg> wrapper). */
 export function cardFaceBoldBody(card) {
   const ink = inkColour(card);
-  // Scaled to 0.55 and set at x 34 so the right pip column of a 4-10 ends at
-  // x ~77, clear of the mirrored corner suit that starts at x 81.5.
-  const small = `<g transform="translate(34 42) scale(0.55)">${centre(card)}</g>`;
   const index = isJoker(card)
     ? boldJokerIndex(ink)
-    : lanternSeal(ink, card) + `<g ${FLIP}>${standardIndexGlyphs(card)}</g>`;
-  return `<g data-colour="${cardColour(card)}">${faceBody()}${decor()}${index}${small}</g>`;
+    : boldIndexGlyphs(card) + `<g ${FLIP}>${boldIndexGlyphs(card)}</g>`;
+  return `<g data-colour="${cardColour(card)}">${faceBody()}${decor()}${index}</g>`;
 }
 
 /** The bold back: identical to the default style's back (see cardBackBody)

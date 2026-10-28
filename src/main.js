@@ -86,7 +86,8 @@ const app = {
         const gameId = this.params.gameId ?? 'doudizhu';
         if (gameId === 'blackjack') {
           const table = blackjackTableById(this.params.lobbyId);
-          if (!table) return this.replace('lobby', { gameId, variant: this.params.variant });
+          // Back/forward can land on a rescue table the player has already left.
+          if (!table || (table.rescue && !this.profile.rescueMode)) return this.replace('lobby', { gameId, variant: this.params.variant });
           mountTable(this, './ui/blackjack.js', (mod) => new mod.BlackjackGame(this, { table, variant: this.params.variant }));
           break;
         }
@@ -97,7 +98,7 @@ const app = {
           break;
         }
         const lobby = lobbyById(this.params.lobbyId);
-        if (!lobby) return this.replace('lobby', { gameId });
+        if (!lobby || (lobby.rescue && !this.profile.rescueMode)) return this.replace('lobby', { gameId });
         // Each table is its own module, so the menu never downloads the games it
         // did not open.
         if (gameId === 'big2') mountTable(this, './ui/big2.js', (mod) => new mod.BigTwoGame(this, { lobby, gameId }));
