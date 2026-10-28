@@ -197,8 +197,21 @@ test('access: the rescue table is the only door when bankrupt', () => {
   assert.equal(isBankrupt(BANKRUPT_THRESHOLD), false);
 });
 
-test('lossCap at the rescue table is simply the balance', () => {
-  assert.equal(lossCap(rescue, 750, true), 750);
+test('rescue mode starts below the Starter entry, with no dead zone', () => {
+  for (const bankroll of [1_000, 3_000, 5_999]) {
+    assert.equal(isBankrupt(bankroll), true, `${bankroll} is under the Starter entry`);
+  }
+  const dropped = applyToBankroll(6_500, -1_000, false);
+  assert.equal(dropped.rescueMode, true);
+  assert.equal(dropped.wentBankrupt, true);
+  for (const bankroll of [0, 999, 1_000, 5_999, 6_000, 6_001]) {
+    const open = lobbyAccess(bankroll, isBankrupt(bankroll)).filter((e) => !e.locked);
+    assert.ok(open.length > 0, `${bankroll} chips must leave a table to sit at`);
+  }
+});
+
+test('lossCap at the rescue table is the bankroll share, with no pot ceiling', () => {
+  assert.equal(lossCap(rescue, 750, true), 562);
   // At a fresh stack the bankroll share binds long before the 50-pot ceiling.
   assert.equal(lossCap(starter, 10_000, false), 7_500);
   assert.equal(lossCap(starter, 1_000_000, false), 100_000);
@@ -267,7 +280,7 @@ test('the swing of a hand is the same fraction of the stack at every table', () 
 });
 
 test('every threshold is counted in pots, not set by hand', () => {
-  assert.equal(BANKRUPT_THRESHOLD, STARTER_POT, 'bankrupt is one pot at the cheapest table');
+  assert.equal(BANKRUPT_THRESHOLD, RESCUE_EXIT, 'the rescue table opens exactly where the cheapest normal table closes');
   for (const lobby of LOBBIES) {
     assert.equal(lobby.entry, lobby.rescue ? 0 : lobby.pot * ENTRY_POTS, `${lobby.id} entry has drifted`);
   }
