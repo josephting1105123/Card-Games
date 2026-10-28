@@ -7,13 +7,17 @@
  * bankroll can survive ten minimum bets — the same "an ordinary loss should
  * not knock you off the table" idea economy.js uses for Dou Di Zhu's entry
  * fee, applied to Blackjack's own numbers.
+ *
+ * The rescue table is where a player under RESCUE_EXIT can keep betting even at
+ * 0 chips; losses there floor at zero via applyToBankroll's rescueMode.
  */
 
-import { formatChips } from '../../core/economy.js';
+import { RESCUE_EXIT, formatChips } from '../../core/economy.js';
 
 export const ENTRY_MULTIPLE = 10;
 
 export const TABLES = [
+  { id: 'rescue', name: 'Rescue Table', min: 100, max: 400, rescue: true },
   { id: 'low', name: 'Low Roller', min: 100, max: 1_000 },
   { id: 'club', name: 'Club Table', min: 1_000, max: 10_000 },
   { id: 'high', name: 'High Roller', min: 10_000, max: 100_000 },
@@ -26,11 +30,14 @@ export function tableById(id) {
 }
 
 export function tableEntry(table) {
-  return table.min * ENTRY_MULTIPLE;
+  return table.rescue ? 0 : table.min * ENTRY_MULTIPLE;
 }
 
-export function tableAccess(bankroll) {
+export function tableAccess(bankroll, rescueMode = false) {
   return TABLES.map((table) => {
+    if (table.rescue) {
+      return { table, locked: !rescueMode, reason: rescueMode ? '' : `Opens below ${formatChips(RESCUE_EXIT)}` };
+    }
     const entry = tableEntry(table);
     const locked = bankroll < entry;
     return { table, locked, reason: locked ? `Needs ${formatChips(entry)} to sit down` : '' };

@@ -7,6 +7,9 @@ import {
 } from '../src/games/blackjack/cards.js';
 import * as US from '../src/games/blackjack/american.js';
 import * as MY from '../src/games/blackjack/malaysian.js';
+import { TABLES, tableAccess, tableEntry } from '../src/games/blackjack/tables.js';
+import { recordBlackjackResult } from '../src/games/blackjack/stats.js';
+import { defaultProfile } from '../src/core/profile.js';
 
 // Ranks use core/cards.js's own numbering: 3..10 numeric, J=11, Q=12, K=13,
 // A=14, 2=15. Suit never matters to blackjack value, so every test card is a
@@ -760,4 +763,39 @@ test('malaysian: the bot banker draws below 16 and opens instead from 16, once a
   assert.equal(step.type, 'open', 'at 16 with a three-card seat waiting, it opens rather than drawing again');
   assert.equal(step.seatIndex, 0);
   assert.equal(round.phase, 'settled');
+});
+
+// ---------------------------------------------------------------------------
+// Table ladder and the rescue table
+// ---------------------------------------------------------------------------
+
+test('blackjack rescue table: first in the ladder, free to enter, closed unless in rescue mode', () => {
+  assert.equal(TABLES[0].id, 'rescue');
+  assert.equal(TABLES[0].rescue, true);
+  assert.equal(tableEntry(TABLES[0]), 0);
+  assert.equal(tableAccess(0, false)[0].locked, true);
+  assert.match(tableAccess(0, false)[0].reason, /^Opens below /);
+  assert.equal(tableAccess(0, true)[0].locked, false);
+  assert.equal(tableAccess(0)[0].locked, true, 'rescueMode defaults to off');
+});
+
+test('blackjack normal tables lock on bankroll alone, in or out of rescue mode', () => {
+  for (const bankroll of [0, 999, 1_000, 50_000, 5_000_000]) {
+    const off = tableAccess(bankroll, false).slice(1);
+    const on = tableAccess(bankroll, true).slice(1);
+    assert.deepEqual(on, off);
+    for (const { table, locked } of off) assert.equal(locked, bankroll < table.min * 10);
+  }
+});
+
+test('a loss the rescue table absorbs is not booked as a loss of chips', () => {
+  const profile = defaultProfile();
+  profile.bankroll = 0;
+  profile.rescueMode = true;
+  const { stats, applied } = recordBlackjackResult(profile, 'blackjack', -400);
+  assert.equal(profile.bankroll, 0);
+  assert.equal(stats.net, 0);
+  assert.equal(stats.biggestLoss, 0);
+  assert.equal(applied, 0);
+  assert.equal(stats.lost, 1, 'it still counts as a lost round');
 });

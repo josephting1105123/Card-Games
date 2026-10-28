@@ -38,14 +38,15 @@
  *    the win worth having.
  *
  * 4. Bankruptcy is still reachable, because a run of capped losses grinds the
- *    bankroll below the cheapest normal lobby. At that point the player is moved
- *    to the rescue table: a 400 pot against the weakest bot, where losses cannot
- *    take the balance below zero, until the balance reaches RESCUE_EXIT.
+ *    bankroll below the cheapest normal lobby. The moment the balance drops
+ *    under RESCUE_EXIT (the Starter entry) the player is moved to the rescue
+ *    table: a 400 pot against the weakest bot, where losses cannot take the
+ *    balance below zero, until the balance climbs back to RESCUE_EXIT.
  *
  * 5. Every threshold is counted in pots rather than set by hand, so the ladder
  *    stays in step with itself: a stack is STARTING_STACK_MULTIPLE pots, sitting
- *    down needs ENTRY_POTS of them, and the rescue table releases you at exactly
- *    the point the cheapest normal table will have you.
+ *    down needs ENTRY_POTS of them, and the rescue table opens and releases you
+ *    at exactly the point the cheapest normal table will have you.
  */
 
 import { SOLO_CURRENCY, formatMoney, suggestedPot } from './currency.js';
@@ -89,9 +90,6 @@ export const MAX_LOSS_FRACTION = 0.75;
  */
 export const ENTRY_POTS = 6;
 
-/** Below one pot at the cheapest table you cannot play at all: bankrupt. */
-export const BANKRUPT_THRESHOLD = STARTER_POT;
-
 /**
  * Leave the rescue table at exactly the point you can sit at the cheapest
  * normal one. Holding anybody in rescue past that is pointless, and releasing
@@ -101,6 +99,14 @@ export const BANKRUPT_THRESHOLD = STARTER_POT;
  * sentence.
  */
 export const RESCUE_EXIT = STARTER_POT * ENTRY_POTS;
+
+/**
+ * The rescue table opens the moment the balance falls below what the cheapest
+ * normal table asks for, and closes at the same number. Any lower and there is
+ * a dead zone (above the old one-pot line, below the Starter entry) where no
+ * table is playable at all.
+ */
+export const BANKRUPT_THRESHOLD = RESCUE_EXIT;
 
 /**
  * The most one hand can move, as a multiple of the pot, win or lose. Uniform
@@ -131,7 +137,7 @@ export const HAND_CAP_FACTOR = 100;
 /** @type {Omit<Lobby, 'entry'>[]} */
 const LOBBY_DEFS = [
   { id: 'rescue', name: 'Rescue Table', short: '400', pot: 400, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'novice', botElo: 800, rescue: true,
-    blurb: 'No entry fee, no bankruptcy. Grind back to 2,000 and you are out of here.' },
+    blurb: 'No entry fee, no bankruptcy. Grind back to 6,000 and you are out of here.' },
   { id: 'starter', name: 'Starter Room', short: '1K', pot: STARTER_POT, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'casual', botElo: 1_000,
     blurb: 'The default table. Bots play a loose social game.' },
   { id: 'bronze', name: 'Bronze Hall', short: '10K', pot: 10_000, baseMultiplier: 2, capFactor: HAND_CAP_FACTOR, skill: 'steady', botElo: 1_200,
@@ -184,7 +190,7 @@ export function lobbyAccess(bankroll, rescueMode) {
     lobby,
     locked: lobby.rescue ? bankroll >= BANKRUPT_THRESHOLD : bankroll < lobby.entry,
     reason: lobby.rescue
-      ? 'Only open when you are bankrupt'
+      ? `Opens below ${formatChips(BANKRUPT_THRESHOLD)}`
       : bankroll < lobby.entry
         ? `Needs ${formatChips(lobby.entry)} to sit down`
         : '',
@@ -272,13 +278,14 @@ export function handCap(lobby) {
 }
 
 /**
- * The most a player can lose in one game. At the rescue table the only limit is
- * the balance itself, which is what "unlimited money" means there: you can keep
- * sitting down, you just cannot go negative.
+ * The most a player can lose in one game. At the rescue table only the bankroll
+ * share applies, not the pot ceiling: rescue now covers any balance under
+ * RESCUE_EXIT, so a bomb hand must not wipe a player out, and the cap still
+ * keeps the balance from going negative.
  */
 export function lossCap(lobby, bankroll, rescueMode) {
-  if (rescueMode || lobby.rescue) return Math.max(0, bankroll);
   const byBankroll = Math.floor(Math.max(0, bankroll) * MAX_LOSS_FRACTION);
+  if (rescueMode || lobby.rescue) return byBankroll;
   return Math.max(0, Math.min(handCap(lobby), byBankroll));
 }
 
