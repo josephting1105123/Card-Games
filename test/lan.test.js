@@ -954,6 +954,141 @@ function big2Autopilot(client) {
   return () => { stopped = true; };
 }
 
+/** Hold'em autopilot: check when free, otherwise call. */
+function holdemAutopilot(client) {
+  const act = (view) => {
+    if (view.phase === 'finished' || view.turn !== view.seat || !view.legal) return;
+    client.send({ t: C2S.HOLDEM_ACT, action: { type: view.legal.canCheck ? 'check' : 'call' } });
+  };
+  client.socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    if (message.t === S2C.VIEW) act(message.view);
+  });
+  const latest = client.log.findLast((m) => m.t === S2C.VIEW);
+  if (latest) act(latest.view);
+}
+
+test('a Texas Hold\'em room seats six, plays a hand with four bots, and settles to zero', async (t) => {
+  const host = await startHub();
+  t.after(() => host.stop());
+  const { alice, bob, created } = await twoPlayerRoom(host, { game: 'texas', pot: 100, startingChips: 10_000, botSkill: 'casual' });
+  assert.equal(created.room.settings.game, 'texas');
+  assert.equal(created.room.seats.length, 6);
+
+  holdemAutopilot(alice);
+  holdemAutopilot(bob);
+  alice.send({ t: 'start' });
+  const result = await alice.next(S2C.RESULT, 60_000);
+
+  assert.equal(result.game, 'texas');
+  assert.equal(result.rows.length, 6);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.delta, 0), 0);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.chips, 0), 6 * 10_000);
+  for (const row of result.rows) assert.equal(row.chips, 10_000 + row.delta);
+  assert.ok(result.rows.some((row) => row.won), 'someone wins the pot');
+  assert.ok(Array.isArray(result.pots) && result.pots.length > 0);
+
+  const views = alice.log.filter((m) => m.t === S2C.VIEW).map((m) => m.view);
+  const first = views[0];
+  assert.equal(first.players.length, 6);
+  assert.equal(first.players[first.seat].hole.length, 2, 'you see your own cards');
+  assert.ok(first.players.every((p) => p.seat === first.seat || p.hole === null), 'no one else\'s cards before the showdown');
+  assert.equal(views.at(-1).phase, 'finished');
+  alice.close();
+  bob.close();
+});
+
+/** A RoomHub driven without sockets: each fake connection records what it was sent. */
+function directHub() {
+  const hub = new RoomHub({ botStepMs: 1, dealGraceMs: 0 });
+  let n = 0;
+  const conn = () => {
+    const c = {
+      id: `d${++n}`, data: {}, sent: [], on() {}, close() {},
+      sendJson(m) { c.sent.push(m); c.onmsg?.(m); },
+      send(text) { const m = JSON.parse(text); c.sent.push(m); c.onmsg?.(m); },
+    };
+    return c;
+  };
+  const finished = (room) => new Promise((resolve) => {
+    const timer = setInterval(() => { if (room.phase === 'finished') { clearInterval(timer); resolve(); } }, 2);
+  });
+  return { hub, conn, finished };
+}
+
+test('a Hold\'em member who resumes into a seat dealt to a bot gets no chips from it and no moves', async (t) => {
+  const { hub, conn, finished } = directHub();
+  t.after(() => hub.close());
+  const alice = conn();
+  hub.handle(alice, { t: 'create', name: 'Alice', settings: { game: 'texas', pot: 100, startingChips: 10_000, humanSeats: 2 } });
+  const room = hub.rooms.get(alice.data.room);
+  const bob = conn();
+  hub.handle(bob, { t: 'join', code: room.code, name: 'Bob' });
+  const bobId = bob.data.member;
+  room.chips.set(bobId, 1_000);
+  hub.disconnect(bob);
+  const calls = (c) => {
+    c.onmsg = (m) => {
+      const v = m.t === S2C.VIEW ? m.view : null;
+      if (!v || v.phase === 'finished' || v.turn !== v.seat || !v.legal) return;
+      setTimeout(() => hub.handle(c, { t: C2S.HOLDEM_ACT, action: { type: v.legal.canCheck ? 'check' : 'call' } }), 0);
+    };
+  };
+  calls(alice);
+  hub.handle(alice, { t: 'start' });
+  assert.equal(room.state.players[1].id, 'bot-1', 'Bob\'s seat was dealt to a bot');
+  const bob2 = conn();
+  calls(bob2);
+  hub.handle(bob2, { t: 'resume', code: room.code, token: room.members.get(bobId).token });
+  assert.equal(room.state.players[1].id, 'bot-1', 'the seat stays the house\'s for the hand');
+  assert.equal(room.state.players[1].isHuman, false);
+  const mid = bob2.sent.filter((m) => m.t === S2C.VIEW).at(-1);
+  assert.equal(mid?.view.legal, null, 'a resumed member holds no controls in a bot\'s seat');
+  await finished(room);
+  assert.equal(room.chips.get(bobId), 1_000, 'Bob\'s purse is untouched');
+  const total = [...room.chips.values()].reduce((sum, chips) => sum + chips, 0);
+  assert.equal(total, 10_000 + 1_000 + 5 * 10_000, 'no chips are minted or lost');
+});
+
+test('a Hold\'em seat taken after the hand does not show that seat\'s mucked cards', async (t) => {
+  const { hub, conn, finished } = directHub();
+  t.after(() => hub.close());
+  let checked = false;
+  for (let attempt = 0; attempt < 20 && !checked; attempt++) {
+    const alice = conn();
+    hub.handle(alice, { t: 'create', name: 'Alice', settings: { game: 'texas', pot: 100, startingChips: 10_000, humanSeats: 1 } });
+    const room = hub.rooms.get(alice.data.room);
+    alice.onmsg = (m) => {
+      const v = m.t === S2C.VIEW ? m.view : null;
+      if (!v || v.phase === 'finished' || v.turn !== v.seat || !v.legal) return;
+      setTimeout(() => hub.handle(alice, { t: C2S.HOLDEM_ACT, action: { type: 'fold' } }), 0);
+    };
+    hub.handle(alice, { t: 'start' });
+    await finished(room);
+    const shown = room.state.result.shown;
+    const mucked = room.state.players.find((p) => p.seat !== 0 && !shown.includes(p.seat));
+    if (mucked) {
+      const carol = conn();
+      hub.handle(carol, { t: 'join', code: room.code, name: 'Carol' });
+      hub.handle(carol, { t: 'sit', seat: mucked.seat });
+      const dave = conn();
+      hub.handle(dave, { t: 'join', code: room.code, name: 'Dave' });
+      hub.disconnect(dave); // a plain drop re-broadcasts views
+      assert.equal(carol.data.seat, mucked.seat);
+      assert.equal(carol.sent.filter((m) => m.t === S2C.VIEW).length, 0, 'no view of a hand she was not dealt into');
+      checked = true;
+    }
+    hub.handle(alice, { t: 'leave' });
+  }
+  assert.ok(checked, 'a hand with a mucked seat came up');
+});
+
+test('Hold\'em cannot be dealt with fewer than two funded players', () => {
+  const { canDeal } = gameAdapter('texas');
+  assert.equal(canDeal([{ chips: 0 }, { chips: 500 }, { chips: 0 }]), false);
+  assert.equal(canDeal([{ chips: 10 }, { chips: 500 }]), true);
+});
+
 test('a Dou Di Zhu hand reveals all three hands in the last view, and not before', async (t) => {
   const host = await startHub();
   t.after(() => host.stop());

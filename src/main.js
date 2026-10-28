@@ -9,6 +9,7 @@
 import { lobbyById } from './core/economy.js';
 import { loadProfile, reconcileRescue, saveProfile } from './core/profile.js';
 import { tableById as blackjackTableById } from './games/blackjack/tables.js';
+import { tableById as holdemTableById } from './games/holdem/tables.js';
 import { clear, el } from './ui/dom.js';
 import { renderLobby, renderMenu, renderMode } from './ui/screens.js';
 
@@ -88,6 +89,12 @@ const app = {
           // Back/forward can land on a rescue table the player has already left.
           if (!table || (table.rescue && !this.profile.rescueMode)) return this.replace('lobby', { gameId, variant: this.params.variant });
           mountTable(this, './ui/blackjack.js', (mod) => new mod.BlackjackGame(this, { table, variant: this.params.variant }));
+          break;
+        }
+        if (gameId === 'texas') {
+          const table = holdemTableById(this.params.lobbyId);
+          if (!table) return this.replace('lobby', { gameId });
+          mountTable(this, './ui/holdem.js', (mod) => new mod.HoldemGame(this, { table }));
           break;
         }
         const lobby = lobbyById(this.params.lobbyId);

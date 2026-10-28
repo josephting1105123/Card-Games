@@ -1,0 +1,279 @@
+/* ==========================================================================
+   holdem.css — the Texas Hold'em table. Six seats around an oval rail (you at
+   the bottom, whose big cards sit in the dock), the board and pot in the
+   middle, and a dock that holds your hole cards, the betting controls and,
+   after a hand, the result bar, so nothing ever covers the felt. A separate
+   implementation from big2.css and table.css: only the tokens and the bare
+   .card box are shared. Sizes are vh-driven so a phone's browser bar (844x390)
+   shrinks the whole table together instead of clipping it; every class is
+   prefixed he- so nothing here collides with the other tables.
+   ========================================================================== */
+
+.he-table {
+  position: fixed; inset: 0; display: grid; overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  --card-w: clamp(36px, 6vw, 70px);
+  --he-seat-card: clamp(18px, 5.2vh, 36px);
+  --he-seat-face: clamp(26px, 7.4vh, 50px);
+  --he-board-card: clamp(30px, 8.8vh, 70px);
+  --he-hole-card: clamp(38px, 11.5vh, 82px);
+  --he-fs: clamp(10px, 2.7vh, 14px);
+  background: var(--table-surface);
+  box-shadow: var(--table-vignette);
+}
+
+/* --- head-up display ------------------------------------------------------- */
+
+.he-hud {
+  display: flex; align-items: center; gap: clamp(8px, 1.6vw, 18px);
+  padding: 6px clamp(10px, 2vw, 22px);
+  font-size: clamp(11px, 1.5vw, 14px);
+}
+.he-hud__spacer { flex: 1; }
+.he-hud__pill {
+  display: flex; align-items: baseline; gap: 6px; white-space: nowrap;
+  padding: 4px 10px; border-radius: var(--r-pill);
+  border: 1px solid var(--hairline); background: var(--pill-bg);
+  box-shadow: var(--shadow-1);
+  color: var(--text); font-family: var(--font-display); font-weight: 700;
+}
+.he-hud__pill b { font-size: 1.2em; font-weight: 700; color: var(--red-deep); font-variant-numeric: lining-nums tabular-nums; }
+.he-hud__pill--table b { color: var(--text); }
+.he-hud__pill small { font-size: 0.9em; font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); }
+.he-hud__pill--table small { margin-left: 4px; }
+@media (max-width: 700px) { .he-hud__pill:not(.he-hud__pill--table) small { display: none; } }
+.he-hud .back-link {
+  font-size: 1.25em; padding: 2px 8px; line-height: 1;
+  color: var(--text); background: var(--stock); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
+}
+.he-hud .back-link:hover { color: var(--red-hover); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--red); }
+
+/* --- the felt ---------------------------------------------------------------
+   Seats are pinned by slot: top and self to the felt's own edges, the four
+   side seats to a point in the felt and centred on it. Bets sit between a
+   seat and the middle. All of it is positioned in the felt's box, which is
+   what keeps every piece apart as the viewport changes. */
+
+.he-felt {
+  position: relative; min-height: 0; margin: 0 clamp(8px, 2vw, 24px);
+  font-size: var(--he-fs);
+}
+.he-rail {
+  position: absolute; inset: 7% 7% 9% 7%; border-radius: 50%;
+  background: color-mix(in srgb, var(--leaf) 20%, var(--cloth));
+  border: clamp(3px, 0.7vh, 6px) solid var(--stock);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline-strong);
+}
+
+.he-seats { position: absolute; inset: 0; pointer-events: none; }
+
+.he-seat { position: absolute; display: flex; flex-direction: column; align-items: center; }
+.he-seat--self { left: 50%; bottom: 0; transform: translateX(-50%); }
+.he-seat--top { left: 50%; top: 0; transform: translateX(-50%); }
+.he-seat--tl { left: 12%; top: 30%; transform: translate(-50%, -50%); }
+.he-seat--tr { left: 88%; top: 30%; transform: translate(-50%, -50%); }
+.he-seat--bl { left: 12%; top: 70%; transform: translate(-50%, -50%); }
+.he-seat--br { left: 88%; top: 70%; transform: translate(-50%, -50%); }
+
+/* The row is reserved even when empty (a folded seat, a face-down hand) so a
+   seat never changes height and the plate under it stays where it is. */
+.he-seat__cards {
+  display: flex; align-items: flex-end; justify-content: center;
+  min-height: calc(var(--he-seat-face) * 1.4);
+}
+.he-seat--self .he-seat__cards { display: none; }
+.he-seat__cards .card { --card-w: var(--he-seat-card); }
+.he-seat__cards .card + .card { margin-left: calc(var(--he-seat-card) * -0.3); }
+.he-seat__cards .card--bold:not(.card--bold-down) { --card-w: var(--he-seat-face); }
+.he-seat__cards .card--bold:not(.card--bold-down) + .card { margin-left: calc(var(--he-seat-face) * 0.06); }
+
+.he-seat__plate {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 0.4em;
+  margin-top: calc(var(--he-seat-face) * -0.5);
+  min-width: 7.2em; padding: 0.25em 0.7em 0.25em 0.3em;
+  background: var(--plate-bg); border: 1px solid var(--hairline); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-1);
+  font-family: var(--font-display);
+}
+.he-seat--self .he-seat__plate { margin-top: 0; }
+.he-seat__avatar {
+  flex: none; width: 1.9em; height: 1.9em; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--red); color: var(--on-red); font-weight: 800;
+}
+.he-seat__avatar[data-tone='1'] { background: var(--leaf-ink); }
+.he-seat__avatar[data-tone='2'] { background: var(--coin-edge); }
+.he-seat__avatar[data-tone='3'] { background: var(--text-secondary); }
+.he-seat__avatar[data-tone='4'] { background: var(--red-deep); }
+.he-seat__text { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+.he-seat__name { max-width: 6.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: var(--text); }
+.he-seat__stack { font-weight: 600; color: var(--text-tertiary); font-variant-numeric: lining-nums tabular-nums; white-space: nowrap; }
+.he-seat__tag {
+  font-size: 0.8em; font-weight: 800; line-height: 1.4; padding: 0 0.45em; border-radius: var(--r-pill);
+  background: var(--red-tint); color: var(--red-deep);
+}
+.he-seat__tag[hidden], .he-dealer[hidden], .he-bubble[hidden], .he-bet[hidden] { display: none; }
+.he-dealer {
+  position: absolute; right: -0.55em; top: -0.7em;
+  width: 1.6em; height: 1.6em; border-radius: 50%; display: grid; place-items: center;
+  background: var(--white); color: var(--text); border: 1.5px solid var(--text);
+  font-size: 0.85em; font-weight: 800; box-shadow: var(--shadow-1);
+}
+
+.he-seat.is-folded .he-seat__plate { opacity: 0.45; }
+.he-seat.is-turn .he-seat__plate { box-shadow: 0 0 0 2px var(--red), var(--shadow-1); }
+.he-seat.is-winner .he-seat__plate { box-shadow: 0 0 0 2px var(--coin), 0 0 0 4px var(--coin-edge), var(--shadow-1); }
+
+.he-bubble {
+  position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); z-index: 2;
+  white-space: nowrap; padding: 0.1em 0.7em; border-radius: var(--r-pill);
+  background: var(--stock); border: 1px solid var(--hairline); box-shadow: var(--shadow-1);
+  font-family: var(--font-display); font-size: 0.92em; font-weight: 700; color: var(--red-deep);
+}
+.he-bubble.is-thinking { color: var(--text-tertiary); font-weight: 600; font-style: italic; }
+.he-seat--self .he-bubble { top: auto; bottom: calc(100% + 3px); }
+
+.he-bet {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 0.35em; white-space: nowrap;
+  padding: 0.05em 0.6em 0.05em 0.3em; border-radius: var(--r-pill);
+  background: var(--controls-bg); border: 1px solid var(--hairline);
+  font-family: var(--font-display); font-weight: 700; color: var(--text);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.he-coin {
+  flex: none; width: 1em; height: 1em; border-radius: 50%;
+  background: var(--coin); box-shadow: inset 0 0 0 0.18em var(--coin-edge);
+}
+.he-bet--top { left: 50%; top: 33%; }
+.he-bet--tl { left: 25%; top: 38%; }
+.he-bet--tr { left: 75%; top: 38%; }
+.he-bet--bl { left: 25%; top: 64%; }
+.he-bet--br { left: 75%; top: 64%; }
+.he-bet--self { left: 64%; top: 80%; }
+
+/* --- the middle --------------------------------------------------------------- */
+
+.he-center {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center;
+}
+.he-board { display: flex; gap: clamp(3px, 0.5vw, 8px); }
+.he-slot { position: relative; width: var(--he-board-card); aspect-ratio: 100 / 140; }
+.he-slot::before {
+  content: ''; position: absolute; inset: 0; border-radius: var(--card-radius);
+  border: 1.5px dashed var(--hairline-strong);
+  background: color-mix(in srgb, var(--stock) 30%, transparent);
+}
+.he-slot .card { --card-w: var(--he-board-card); position: relative; }
+.he-potline {
+  margin-top: 0.4em; padding: 0.1em 0.9em; border-radius: var(--r-pill);
+  background: var(--pill-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-1);
+  font-family: var(--font-display); font-weight: 700; color: var(--red-deep);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.he-potline[hidden] { display: none; }
+.he-lines {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  margin-top: 0.4em; width: max-content; max-width: 64vw;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.he-line {
+  padding: 0.05em 0.9em; border-radius: var(--r-pill); white-space: nowrap;
+  background: var(--controls-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-1);
+  font-family: var(--font-display); font-weight: 700; color: var(--text);
+}
+.he-line--note { font-weight: 600; color: var(--text-tertiary); }
+
+.he-caption {
+  position: absolute; left: 1%; top: 1%; z-index: 3; max-width: 26%;
+  padding: 0.15em 0.8em; border-radius: var(--r-pill);
+  background: var(--stock); border: 1px solid var(--hairline); box-shadow: var(--shadow-1);
+  font-family: var(--font-display); font-weight: 600; font-style: italic; color: var(--text-secondary);
+  opacity: 0; transition: opacity var(--dur-slow) var(--ease-std); pointer-events: none;
+}
+.he-caption.is-on { opacity: 1; }
+
+/* --- cards: deal, flip, showdown ------------------------------------------------ */
+
+@keyframes he-deal {
+  from { opacity: 0; transform: translateY(-18px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes he-flip {
+  from { transform: scaleX(0.15); }
+  to { transform: none; }
+}
+.card.he-deal { animation: he-deal 250ms var(--ease) both; animation-delay: var(--he-delay, 0ms); }
+.card.he-flip { animation: he-flip 250ms var(--ease) both; }
+.he-board .card.is-win, .he-hole .card.is-win, .he-seat__cards .card.is-win {
+  box-shadow: 0 0 0 2px var(--coin), 0 0 0 3.5px var(--coin-edge), var(--card-shadow);
+}
+.he-board .card.is-dim, .he-hole .card.is-dim, .he-seat__cards .card.is-dim { opacity: 0.5; }
+
+/* --- the dock ------------------------------------------------------------------ */
+
+.he-dock {
+  display: flex; align-items: center; gap: clamp(8px, 1.6vw, 20px);
+  padding: 6px clamp(10px, 2vw, 24px) 8px;
+  background: var(--controls-bg); border-top: 1px solid var(--hairline);
+}
+.he-hole { display: flex; gap: 4px; flex: none; }
+.he-hole .card { --card-w: var(--he-hole-card); }
+.he-hole.is-folded { opacity: 0.5; }
+.he-hand { flex: 0 0 clamp(84px, 13vw, 150px); min-width: 0; font-family: var(--font-display); }
+.he-hand small { display: block; font-size: 0.78em; font-weight: 600; color: var(--text-tertiary); }
+.he-hand b { display: block; font-size: clamp(11px, 3vh, 16px); line-height: 1.15; color: var(--red-deep); }
+.he-hand b.is-error { color: var(--danger); }
+
+.he-controls { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: clamp(3px, 0.9vh, 6px); }
+.he-controls[hidden], .he-result[hidden] { display: none; }
+.he-row { display: flex; align-items: center; gap: clamp(4px, 0.8vw, 8px); }
+.he-dock .btn {
+  padding: 0.35em 0.7em; min-height: 0; border-radius: var(--r-md);
+  font-size: clamp(11px, 2.9vh, 16px); line-height: 1.2; white-space: nowrap;
+}
+.he-row--act .btn { flex: 1 1 0; }
+.he-row--act .btn--primary { flex: 1.7 1 0; }
+.he-row--size .he-preset { flex: none; }
+.he-slider { flex: 1 1 60px; min-width: 60px; accent-color: var(--red); }
+.he-amount {
+  min-width: 5em; text-align: right; font-family: var(--font-display); color: var(--red-deep);
+  font-size: clamp(11px, 3vh, 16px); font-variant-numeric: lining-nums tabular-nums;
+}
+.he-row.is-off, .btn.is-off { visibility: hidden; }
+.he-row[hidden], .he-status[hidden], .he-hud__pill[hidden] { display: none; }
+.he-status {
+  display: flex; align-items: center; min-height: 2.4em;
+  font-family: var(--font-display); font-weight: 700; font-size: clamp(13px, 3.4vh, 18px); color: var(--text-secondary);
+}
+
+.he-result { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: clamp(10px, 2vw, 24px); }
+.he-result__net {
+  font-family: var(--font-display); font-weight: 800; font-size: clamp(18px, 5.4vh, 32px);
+  font-variant-numeric: lining-nums tabular-nums; white-space: nowrap;
+}
+.he-result__net.is-win { color: var(--leaf-ink); }
+.he-result__net.is-loss { color: var(--danger); }
+.he-result__net.is-even { color: var(--text-tertiary); }
+.he-result__hand { flex: 1; min-width: 0; font-family: var(--font-display); font-weight: 700; font-size: clamp(11px, 3vh, 16px); color: var(--text-secondary); }
+.he-result__btns { display: flex; gap: 8px; flex: none; }
+
+/* --- portrait guard, same idea as big2.css ------------------------------------------ */
+
+.he-rotate-gate { display: none; }
+@media (orientation: portrait) and (max-width: 960px) {
+  .he-rotate-gate {
+    position: fixed; inset: 0; z-index: var(--z-rotate-gate); display: grid; place-items: center; text-align: center;
+    padding: 30px; background: var(--panel-solid); color: var(--text);
+  }
+  .he-rotate-gate__icon { font-size: 46px; margin-bottom: 14px; color: var(--red); }
+  .he-rotate-gate h2 { margin: 0 0 8px; font-size: 25px; font-weight: 800; color: var(--red-deep); }
+  .he-rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
+}
+
+@media (orientation: landscape) and (max-height: 460px) {
+  .he-hud { padding-top: 3px; padding-bottom: 3px; }
+  .he-dock { padding-top: 4px; padding-bottom: 5px; }
+}

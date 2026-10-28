@@ -34,6 +34,7 @@ export const C2S = {
   BJ_HIT: 'bj_hit',         // a player's hit on their turn, or the banker's draw in the banker phase
   BJ_STAND: 'bj_stand',
   BJ_OPEN: 'bj_open',       // the banker opens a player's hand ({seat}: room seat 1-4)
+  HOLDEM_ACT: 'holdem_act', // a Hold'em move ({action: {type, amount?}})
 };
 
 export const S2C = {
@@ -47,7 +48,7 @@ export const S2C = {
 };
 
 /** Seats at the table, per game. The host can switch a room's game between hands (SET_GAME). */
-export const SEATS_BY_GAME = { doudizhu: 3, big2: 4, blackjack: 5 };
+export const SEATS_BY_GAME = { doudizhu: 3, big2: 4, blackjack: 5, texas: 6 };
 
 /**
  * Seated players plus spectators in one room. Spectators cost the server a socket
@@ -62,11 +63,16 @@ export const MAX_MEMBERS = 8;
  */
 export const BIG2_MIN_STACK = 100;
 
+/** Smallest Hold'em stack: a big blind is a hundredth of it and never under 2. */
+export const TEXAS_MIN_STACK = 200;
+
 /**
  * The pot a room should play for after a game switch, keeping its stack worth the
  * same number of pots. Big Two stakes move in tens; Dou Di Zhu's in ones.
  */
 export function potForStack(game, stack) {
+  // Hold'em's pot is the big blind, kept even so the small blind is exactly half: a stack of about 100 big blinds.
+  if (game === 'texas') return Math.max(2, Math.round(stack / 200) * 2);
   return game === 'big2'
     ? Math.max(10, Math.round(stack / (STARTING_STACK_MULTIPLE * 10)) * 10)
     : Math.max(1, Math.round(stack / STARTING_STACK_MULTIPLE));
