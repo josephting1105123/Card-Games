@@ -1,6 +1,6 @@
 {
   "name": "card-games",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "description": "A collection of classic card games. Dou Di Zhu first, more to follow. Zero dependencies, installable as a PWA, with LAN multiplayer.",
   "type": "module",
   "private": true,

@@ -17,7 +17,7 @@
  * fan cheap to build and repaint.
  */
 
-import { JOKER_COLOUR, RANK_JOKER_BIG, RANK_TWO, SUIT_COLOUR, cardFromId, isJoker, rankIndex, rankLabel } from '../core/cards.js';
+import { JOKER_COLOUR, RANK_JOKER_BIG, RANK_JOKER_SMALL, RANK_TWO, SUIT_COLOUR, cardFromId, countByRank, isJoker, rankIndex, rankLabel } from '../core/cards.js';
 
 const VB_W = 100;
 const VB_H = 140;
@@ -231,10 +231,12 @@ export function cardAria(card) {
  * The same stock, rule and cloud scroll as the default style, but the card
  * carries only a large rank and suit in the top-left, mirrored at the
  * bottom-right, with an empty middle. Shedding-game hands fan their cards so
- * only the left third of each one shows. Bold has the larger pip (18 vs 14)
- * and an empty centre, so that strip holds nothing but the index. Blackjack
- * lays its cards side by side with the whole face visible, so it keeps the
- * default style.
+ * only the left half of each one shows (a little under it once a 20-card hand
+ * tightens). Bold sets the rank at 41 units, a cap height of about 21% of the
+ * card, over a 22-unit pip (the default is 24 over 14), and leaves the centre
+ * empty, so that strip holds nothing but the index and stays inside x < 40.
+ * Blackjack lays its cards side by side with the whole face visible, so it
+ * keeps the default style.
  *
  * Built in its own <symbol> sheet, installed lazily on first use, so a table
  * that never asks for `style: 'bold'` never pays for it and the default deck's
@@ -243,18 +245,24 @@ export function cardAria(card) {
 
 const BOLD_DEFS_ID = 'cg-card-bold-defs';
 
-/** One copy of the large index: rank above suit pip, in the card's ink. */
+/** One copy of the large index: rank above suit pip, in the card's ink. "10" is
+ * squeezed to 30 units and nudged right to x=22.5, so its "1" starts at x=7.5:
+ * centred on 21 at 33 wide it began at 4.5 and sat on the gold rule at x=5. */
 function boldIndexGlyphs(card) {
   const ink = inkColour(card);
   const label = rankIndex(card.rank);
-  const fit = label.length > 1 ? ' textLength="21" lengthAdjust="spacingAndGlyphs"' : '';
-  return `<text x="16" y="34" font-size="25" text-anchor="middle"${fit} style="fill:${ink};${RANK_FONT}">${label}</text>`
-    + pip(card.suit, 7, 38, 18, ink);
+  const long = label.length > 1;
+  const fit = long ? ' textLength="30" lengthAdjust="spacingAndGlyphs"' : '';
+  return `<text x="${long ? 22.5 : 21}" y="46" font-size="41" text-anchor="middle"${fit} style="fill:${ink};${RANK_FONT}">${label}</text>`
+    + pip(card.suit, 10, 52, 22, ink);
 }
 
+/** The tile ends at y=77, 55% of the card: the bomb badge that a hand pins on a
+ * joker (the rocket) starts at 57%, so a taller tile would lose its last letters
+ * behind it. */
 function boldJokerIndex(ink) {
-  const letters = 'JOKER'.split('').map((ch, i) => `<text x="21" y="${27 + i * 12}" text-anchor="middle" font-size="10" style="fill:var(--seal-text);${RANK_FONT}">${ch}</text>`).join('');
-  return `<rect x="10" y="11" width="22" height="72" rx="4" style="fill:${ink}"/>${letters}`;
+  const letters = 'JOKER'.split('').map((ch, i) => `<text x="21.5" y="${23.5 + i * 12}" text-anchor="middle" font-size="13" style="fill:var(--seal-text);${RANK_FONT}">${ch}</text>`).join('');
+  return `<rect x="8" y="9" width="27" height="68" rx="5" style="fill:${ink}"/>${letters}`;
 }
 
 /** The bold face's inner markup (without the <svg> wrapper). */
@@ -332,4 +340,54 @@ export function cardElement(card, opts = {}) {
     el.dataset.rank = String(card.rank);
   }
   return el;
+}
+
+/* ==========================================================================
+ * Bombs in the player's hand. In Dou Di Zhu a quad or the two jokers beat
+ * anything that is not a higher bomb; in Big Two a quad is the core of the
+ * second-strongest five-card hand. Either way it is easy to miss one in a
+ * long fan.
+ * ========================================================================== */
+
+/** Ids of the cards in `hand` that form a bomb: every rank held four times,
+ * plus both jokers when `rocket` is set (Dou Di Zhu's 王炸).
+ * @param {{id: number, rank: number}[]} hand
+ * @param {{rocket?: boolean}} [opts]
+ * @returns {Set<number>}
+ */
+export function bombCardIds(hand, { rocket = false } = {}) {
+  const ids = new Set();
+  const plain = hand.filter((card) => !isJoker(card));
+  const counts = countByRank(plain);
+  for (const card of plain) {
+    if (counts.get(card.rank) === 4) ids.add(card.id);
+  }
+  if (rocket) {
+    const small = hand.find((card) => card.rank === RANK_JOKER_SMALL);
+    const big = hand.find((card) => card.rank === RANK_JOKER_BIG);
+    if (small && big) {
+      ids.add(small.id);
+      ids.add(big.id);
+    }
+  }
+  return ids;
+}
+
+/** A black bomb with a gold fuse and a spark, drawn to sit on a red disc. */
+const BOMB_GLYPH = '<svg viewBox="0 0 24 24">'
+  + '<circle cx="10.5" cy="14" r="7.5" style="fill:var(--bomb-body)"/>'
+  + '<path d="M15.6 8.9Q18.8 8.2 19.2 5.6" style="stroke:var(--bomb-fuse);fill:none" stroke-width="1.8" stroke-linecap="round"/>'
+  + '<polygon points="19.5,1.3 20.3,3.7 22.7,4.5 20.3,5.3 19.5,7.7 18.7,5.3 16.3,4.5 18.7,3.7" style="fill:var(--bomb-spark)"/>'
+  + '<circle cx="8" cy="11.5" r="2" style="fill:var(--bomb-shine)"/>'
+  + '</svg>';
+
+/** Gild a hand card that is part of a bomb and pin the bomb badge on it.
+ * @param {HTMLElement} el a card from cardElement()
+ * @param {'bomb'|'rocket'} kind
+ */
+export function markBomb(el, kind = 'bomb') {
+  el.classList.add('is-bomb');
+  el.insertAdjacentHTML('beforeend', `<span class="card__bomb" aria-hidden="true">${BOMB_GLYPH}</span>`);
+  const label = el.getAttribute('aria-label');
+  if (label) el.setAttribute('aria-label', `${label}, ${kind}`);
 }

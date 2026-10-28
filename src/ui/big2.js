@@ -22,7 +22,7 @@ import { skillByName } from '../games/big2/ai.js';
 import { botTurn } from '../games/big2/match.js';
 import { beats, classify, comboName, describeCombo, cardValue, SUIT_ORDER } from '../games/big2/rules.js';
 import { findHints } from '../games/big2/moves.js';
-import { cardElement, installCardDefs } from './cardart.js';
+import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 
@@ -518,9 +518,12 @@ export class Big2View {
     inner.style.width = `${width + step * Math.max(0, hand.length - 1)}px`;
     inner.style.setProperty('--step', `${step}px`);
 
+    // Big Two has no jokers, so a bomb here is only ever a quad.
+    const bombs = bombCardIds(hand);
     hand.forEach((card, index) => {
       const node = cardElement(card, { selectable: true, ...BOLD });
       node.style.setProperty('--i', String(index));
+      if (bombs.has(card.id)) markBomb(node, 'bomb');
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.setAttribute('aria-pressed', this.selected.has(card.id) ? 'true' : 'false');
       node.addEventListener('click', () => this.toggle(card.id));
@@ -531,8 +534,11 @@ export class Big2View {
   cardWidth() {
     const probe = this.nodes.handInner.querySelector('.card');
     if (probe) return probe.getBoundingClientRect().width || 60;
+    // Mirrors .b2-hand .card's --card-w in big2.css, which is Dou Di Zhu's
+    // (table.css): a card height of 28.7% of the viewport, clamped to
+    // 100.8-207.2px, width = height/1.4.
     const vh = this.root.clientHeight || 390;
-    return Math.min(120, Math.max(56, vh * 0.175));
+    return Math.min(148, Math.max(72, vh * 0.205));
   }
 
   toggle(cardId) {
