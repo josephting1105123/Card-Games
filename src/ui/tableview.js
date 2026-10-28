@@ -8,14 +8,14 @@
  * Callbacks out: onBid(points), onPlay(cards), onPass(), onLeave().
  */
 
-import { cardsToString, sortCards } from '../core/cards.js';
+import { cardsToString, isJoker, sortCards } from '../core/cards.js';
 import { SOLO_CURRENCY, currencyLabel, formatAmount, formatMoney } from '../core/currency.js';
 import { HAND_CAP_FACTOR } from '../core/economy.js';
 import { livePotDdz } from '../core/livepot.js';
 import { Phase } from '../games/doudizhu/engine.js';
 import { beats, classify, comboName, describeCombo } from '../games/doudizhu/rules.js';
 import { findHint, legalPlays } from '../games/doudizhu/moves.js';
-import { cardElement, installCardDefs } from './cardart.js';
+import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 
@@ -666,9 +666,11 @@ export class TableView {
     inner.style.width = `${width + step * Math.max(0, hand.length - 1)}px`;
     inner.style.setProperty('--step', `${step}px`);
 
+    const bombs = bombCardIds(hand, { rocket: true });
     hand.forEach((card, index) => {
       const node = cardElement(card, { selectable: true, ...BOLD });
       node.style.setProperty('--i', String(index));
+      if (bombs.has(card.id)) markBomb(node, isJoker(card) ? 'rocket' : 'bomb');
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.classList.toggle('is-hinted', this.hinted.has(card.id));
       if (this.stuck) node.disabled = true;

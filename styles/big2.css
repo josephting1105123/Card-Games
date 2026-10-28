@@ -1,7 +1,7 @@
 /* ==========================================================================
    big2.css — the Big Two table. Four seats (you at the bottom, opponents
-   left/top/right), a played-card zone per seat, and a hand that must stay
-   entirely on screen (no edge-clipping — see .b2-hand below). A separate
+   left/top/right), a played-card zone per seat, and a hand sized and placed
+   exactly like Dou Di Zhu's (see .b2-hand below). A separate
    implementation from table.css's three-seat Dou Di Zhu table: nothing here
    is shared with .table/.felt/.seat/.play, only the tokens both read and the
    bare .card box table.css defines (width/aspect-ratio/colour), which every
@@ -15,6 +15,10 @@
   position: fixed; inset: 0; display: grid; overflow: hidden;
   grid-template-rows: auto 1fr auto;
   --card-w: clamp(36px, 6vw, 70px);
+  /* Declared here, not on .b2-hand, because .b2-controls (a sibling of the dock)
+     needs it too: it clears the raised card by a share of this height. Same
+     clamp as table.css's --hand-card-h, so the two tables' hands match. */
+  --b2-hand-h: clamp(100.8px, 28.7vh, 207.2px);
   /* The cloth, veiled so cards read over the print (same recipe as table.css). */
   background: var(--table-surface);
   box-shadow: var(--table-vignette);
@@ -180,7 +184,11 @@
    element at 844x330. */
 
 .b2-controls {
-  margin-bottom: 2px; z-index: 4; flex-shrink: 0; /* see .b2-seat--top's comment */
+  /* A selected card ends up 4% of its height above the hand box (it rises 22%,
+     the run-off below pushed it 18% down), and the dock's 2px top padding
+     already counts toward the gap, so this leaves the same >=2px of daylight
+     above the red ring the old headroom did. */
+  margin-bottom: calc(var(--b2-hand-h) * 0.04 + 2px); z-index: 4; flex-shrink: 0; /* see .b2-seat--top's comment */
   display: flex; align-items: center; justify-content: center; gap: clamp(5px, 1vw, 12px); flex-wrap: nowrap;
   max-width: 96%; padding: 5px clamp(8px, 1.4vw, 14px); border-radius: var(--r-ui);
   background: var(--controls-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-paper);
@@ -191,33 +199,31 @@
 .b2-controls__label { font-size: clamp(11px, 1.4vw, 13.5px); color: var(--text-secondary); font-family: var(--font-display); font-weight: 700; white-space: nowrap; max-width: 30vw; overflow: hidden; text-overflow: ellipsis; }
 
 /* --- your hand --------------------------------------------------------------
-   Unlike Dou Di Zhu's fan, the whole card — including its bottom edge — must
-   stay on screen (F4: "the DDZ LAN table currently clips 20px, do not repeat
-   that"), so .b2-hand reserves real height for it instead of letting it run
-   off the row, and .b2-dock gets no extra bottom padding to eat into. */
+   The same rule as Dou Di Zhu's fan (table.css .hand): the hand hugs the bottom
+   edge and the lowest 18% of every card runs off the screen. The index sits in
+   the top 53% of a card and the bomb badge ends at about 80%, so nothing a
+   player reads is lost, and the cards stay as large as that table's. This
+   replaces the earlier keep-the-whole-card-on-screen rule, which left the fan
+   at about 60% of Dou Di Zhu's size. */
 
 .b2-dock {
   display: flex; flex-direction: column; align-items: center;
-  padding: 2px clamp(10px, 2vw, 22px) 4px;
+  /* No bottom padding: the run-off has to reach the screen edge, which
+     .b2-table's overflow:hidden then crops. */
+  padding: 2px clamp(10px, 2vw, 22px) 0;
   background: var(--scrim-light);
 }
 
 .b2-hand {
-  --b2-hand-h: clamp(62px, 21vh, 118px);
   position: relative; height: var(--b2-hand-h);
   margin: 0 auto; width: 100%;
 }
-/* Card height comes from --b2-hand-h minus a reserved headroom, not the box's
-   full height: a card sitting bottom:0 and exactly as tall as the box (the
-   original formula) has nowhere to go when raised on hover/select below, so
-   the raise reached straight into .b2-controls floating just above — F4
-   audit measured up to 13px of overlap. (var(--b2-hand-h) * 0.19 + 2px)
-   clears the larger, .22-selected raise with >=2px still spare at every
-   viewport this table supports: the raise and the headroom are both a fixed
-   proportion of --b2-hand-h, so the margin between them holds as that
-   variable scales (checked at 844x330, 844x390 and 1280x720). */
-.b2-hand .card { --card-w: calc((var(--b2-hand-h) - (var(--b2-hand-h) * 0.19 + 2px)) / 1.4); }
-.b2-hand__inner { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); height: 100%; }
+.b2-hand .card { --card-w: calc(var(--b2-hand-h) / 1.4); }
+/* 18% of one card's height, taken off --b2-hand-h as table.css does. */
+.b2-hand__inner {
+  position: absolute; left: 50%; bottom: 0; height: 100%;
+  transform: translate(-50%, calc(var(--b2-hand-h) * 0.18));
+}
 
 .b2-hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
@@ -411,19 +417,26 @@
   .b2-rotate-gate p { margin: 0; max-width: 34ch; color: var(--text-tertiary); line-height: 1.6; }
 }
 
-/* Short landscape (phone browser bar): every size below is already vh-driven
-   (seat backs, play cards, the hand), so it shrinks on its own — only the HUD
-   padding needs trimming to give that shrunk table a little more of the height back. */
+/* Short landscape (phone browser bar). The hand is now Dou Di Zhu's 28.7vh,
+   a bigger share of a short screen than the 21vh it used to be, and it takes
+   its height out of the felt above it. A trick showing both north and south
+   fills that whole column: the spacer reaches zero and the controls are pushed
+   down onto the raised card. So what sits above the hand gives the room back,
+   in two steps, each checked with both plays showing and a card selected. The
+   first is what 844x390 needs. */
 @media (orientation: landscape) and (max-height: 460px) {
   .b2-hud { padding-top: 3px; padding-bottom: 3px; }
-}
-
-/* At the shortest phone heights, a hand with plays showing both north and
-   south fills the whole column, the spacer reaches zero and the controls
-   are pushed down into the hand's raise headroom. Trimming the controls'
-   padding and the play cards frees the ~15px that squeeze needs. */
-@media (orientation: landscape) and (max-height: 350px) {
   .b2-controls { padding-top: 2px; padding-bottom: 2px; }
   .b2-controls .btn { padding-top: 3px; padding-bottom: 3px; }
-  .b2-play__cards .card { --card-w: clamp(22px, 7vh, 58px); }
+  .b2-play__cards .card { --card-w: clamp(22px, 7.5vh, 58px); }
+}
+
+/* Below ~385px the squeeze is worse than step one covers: the hand sits at its
+   100.8px floor while the screen keeps shrinking. */
+@media (orientation: landscape) and (max-height: 385px) {
+  .b2-felt { gap: 1px; }
+  .b2-hud { padding-top: 1px; padding-bottom: 1px; }
+  .b2-hud__pill { padding-top: 2px; padding-bottom: 2px; }
+  .b2-seat__backs .card { --card-w: clamp(17px, 4.6vh, 32px); }
+  .b2-play__cards .card { --card-w: clamp(18px, 6vh, 58px); }
 }

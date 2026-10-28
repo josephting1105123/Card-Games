@@ -386,6 +386,38 @@
 }
 .card-svg, .cg-card-svg { width: 100%; height: 100%; display: block; }
 
+/* A bomb in a hand (cardart.js markBomb): the lower half gilded, a badge pinned
+   under the index. Hand cards only — they are position:absolute, so both the
+   wash and the badge anchor to the card. The wash is multiplied into the stock
+   so the ink index and pip stay dark through it. isolation keeps that blend and
+   the badge's z-index inside this one card, so the neighbour that overlaps it
+   in the fan still covers both. Big Two's hand shares the rules. */
+.hand .card.is-bomb,
+.b2-hand .card.is-bomb { isolation: isolate; }
+.hand .card.is-bomb::after,
+.b2-hand .card.is-bomb::after {
+  /* Starts just under the suit pip (it ends at 53%) and is nearly solid at once:
+     a hand shows only the top ~82% of a card, so a long fade left the visible
+     part reading as cream. */
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; top: 52%;
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
+  background: linear-gradient(to bottom, var(--bomb-gold-top) 0%, var(--bomb-gold-mid) 6%, var(--bomb-gold-low) 100%);
+  mix-blend-mode: multiply; pointer-events: none;
+}
+/* Centred under the index (x = 21 of 100, the rank's own centre) and inside the
+   strip a 20-card fan leaves showing, which can shrink to 0.376 of the card at
+   1280 wide. Its bottom (about 80% of the card) clears the 18% the hand runs off
+   the screen. Percentages here resolve against the card box, which is what is
+   wanted; the no-percentage rule is about fan margins. */
+.card__bomb {
+  position: absolute; z-index: 1; pointer-events: none;
+  left: 5%; top: 57%; width: 32%; aspect-ratio: 1;
+  border-radius: 50%; background: var(--bomb-badge);
+  box-shadow: 0 0 0 1.5px var(--bomb-badge-ring), 0 1px 3px rgba(60, 20, 20, 0.4);
+  display: grid; place-items: center;
+}
+.card__bomb svg { width: 78%; height: 78%; display: block; }
+
 .hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
   transition: transform var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);

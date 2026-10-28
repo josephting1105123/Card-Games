@@ -188,6 +188,19 @@
   --back-line: #E8C55A;       /* scale pattern and emblem ring */
   --card-shadow: 0 3px 6px -3px rgba(60, 20, 20, 0.35);
 
+  /* Bomb cards in a hand: a gold wash over the lower half of the face (multiplied
+     into the stock, so the index stays ink) and a red badge carrying a black bomb.
+     Gold, not red, so it cannot be read as the selected or hinted state. */
+  --bomb-gold-top: rgba(244, 210, 122, 0);   /* gild fades in just under the suit pip */
+  --bomb-gold-mid: #F5C842;  /* saturated: multiplied over cream it still has to read as gold */
+  --bomb-gold-low: #E39B1E;
+  --bomb-badge: #9E1328;     /* badge disc */
+  --bomb-badge-ring: #F4D27A;
+  --bomb-body: #2B2622;
+  --bomb-fuse: #C9A227;
+  --bomb-spark: #FFB703;
+  --bomb-shine: rgba(255, 246, 229, 0.7);
+
   color-scheme: light;
 }
 
