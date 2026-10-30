@@ -92,15 +92,23 @@ test('straight vs straight of the same sequence position ties on the suit of the
   assert.equal(beats(fiveSpade, fiveClub), true, "A2345 ties are broken on the suit of the '5', the notated top card");
 });
 
-test('flush vs flush by highest card value, rank then suit', () => {
+test('flush vs flush: suit first, then the highest number', () => {
   const lowFlush = c([[3, 'diamond'], [4, 'diamond'], [6, 'diamond'], [8, 'diamond'], [10, 'diamond']]);
   const highFlush = c([[3, 'spade'], [4, 'spade'], [6, 'spade'], [8, 'spade'], ['J', 'spade']]);
   assert.equal(lowFlush.type, Combo.FLUSH);
-  assert.equal(beats(highFlush, lowFlush), true, 'J high beats 10 high');
-  // Same top rank, different suit: suit breaks the tie.
-  const kingDiamondFlush = c([[3, 'diamond'], [5, 'diamond'], [7, 'diamond'], [9, 'diamond'], ['K', 'diamond']]);
-  const kingHeartFlush = c([[3, 'heart'], [5, 'heart'], [7, 'heart'], [9, 'heart'], ['K', 'heart']]);
-  assert.equal(beats(kingHeartFlush, kingDiamondFlush), true, 'both K high, heart outranks diamond');
+  assert.equal(beats(highFlush, lowFlush), true, 'spade flush beats diamond flush');
+  // Suit beats number: a heart flush topped by a 9 outranks a diamond flush topped by an ace.
+  const heartNine = c([[3, 'heart'], [5, 'heart'], [6, 'heart'], [7, 'heart'], [9, 'heart']]);
+  const diamondAce = c([[3, 'diamond'], [5, 'diamond'], [7, 'diamond'], [9, 'diamond'], ['A', 'diamond']]);
+  assert.equal(heartNine.type, Combo.FLUSH);
+  assert.equal(diamondAce.type, Combo.FLUSH);
+  assert.equal(beats(heartNine, diamondAce), true, 'heart 9-high beats diamond A-high');
+  assert.equal(beats(diamondAce, heartNine), false, 'low suit with the higher number does not beat the higher suit');
+  // Same suit: the highest number decides.
+  const clubKing = c([[3, 'club'], [5, 'club'], [7, 'club'], [9, 'club'], ['K', 'club']]);
+  const clubTen = c([[3, 'club'], [5, 'club'], [7, 'club'], [8, 'club'], [10, 'club']]);
+  assert.equal(beats(clubKing, clubTen), true, 'same suit, K high beats 10 high');
+  assert.equal(beats(clubTen, clubKing), false, 'same suit, 10 high does not beat K high');
 });
 
 test('full house by the triple\'s rank, four of a kind by the quad\'s rank', () => {

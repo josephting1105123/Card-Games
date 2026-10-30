@@ -167,7 +167,9 @@ export function classify(input) {
     }
     if (isFlush) {
       const topCard = highestCard(cards);
-      return make(Combo.FLUSH, topCard.rank, 5, cards, cardValue(topCard));
+      // Suit decides first (diamond < club < heart < spade), then the number of
+      // the highest card. Ranks top out at 15, so a base of 16 keeps suit dominant.
+      return make(Combo.FLUSH, topCard.rank, 5, cards, SUIT_ORDER.indexOf(topCard.suit) * 16 + topCard.rank);
     }
     return null;
   }

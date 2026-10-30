@@ -391,11 +391,9 @@
    wash and the badge anchor to the card. The wash is multiplied into the stock
    so the ink index and pip stay dark through it. isolation keeps that blend and
    the badge's z-index inside this one card, so the neighbour that overlaps it
-   in the fan still covers both. Big Two's hand shares the rules. */
-.hand .card.is-bomb,
-.b2-hand .card.is-bomb { isolation: isolate; }
-.hand .card.is-bomb::after,
-.b2-hand .card.is-bomb::after {
+   in the fan still covers both. */
+.hand .card.is-bomb { isolation: isolate; }
+.hand .card.is-bomb::after {
   /* Starts just under the suit pip (it ends at 53%) and is nearly solid at once:
      a hand shows only the top ~82% of a card, so a long fade left the visible
      part reading as cream. */
@@ -420,14 +418,35 @@
 
 .hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
-  transition: transform var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
+  /* Sideways travel while the hand is being rearranged (handdrag.js sets --dx).
+     It rides on `translate`, not `transform`, so it stacks with the hover and
+     selected lift below instead of replacing it. */
+  translate: var(--dx, 0px) 0;
+  transition: transform var(--dur-fast) var(--ease-std), translate var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
   cursor: pointer; border-radius: var(--card-radius);
+  /* A drag along the fan has to arrive as pointer events, not as a scroll or a
+     pinch of the page; select: none keeps the press from highlighting text. */
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
 /* ~22% of card height, per spec. */
 .hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 0 0 2px var(--red), var(--shadow-paper); }
 .hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--red); outline-offset: -2px; border-radius: var(--card-radius); }
 .hand .card:focus-visible { outline: var(--focus-outline); outline-offset: 3px; }
+/* Being dragged: lifted about 12% of its height (a selected card, already up
+   22%, goes further) and above the fan. Its own `translate` has no transition so
+   it tracks the pointer exactly; the cards it passes slide aside on the ordinary
+   one. On release the transition returns and it eases into its slot. */
+.hand .card.is-dragging {
+  z-index: 10; cursor: grabbing; box-shadow: var(--shadow-paper);
+  transform: translateY(calc(var(--card-w) * 1.4 * -0.12));
+  transition: transform var(--dur-fast) var(--ease-std);
+}
+.hand .card.is-dragging.is-selected {
+  transform: translateY(calc(var(--card-w) * 1.4 * -0.28));
+  box-shadow: 0 0 0 2px var(--red), var(--shadow-paper);
+}
+.hand .card.is-dropping { z-index: 10; }
 
 /* No legal answer: the whole fan greys and stops responding, so Pass is plainly
    the only move left. Said without a sentence. */
