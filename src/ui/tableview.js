@@ -19,6 +19,7 @@ import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.j
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 import { createTurnCue } from './turncue.js';
+import { arrangeHand, enableHandDrag, handReplaced } from './handdrag.js';
 
 // Every card on this table uses the "bold" style (spec: cardElement(card, {
 // style: 'bold' })) — Dou Di Zhu is the only table built on it so far.
@@ -67,6 +68,11 @@ export class TableView {
     this.selected = new Set();
     this.view = null;
     this.hinted = new Set();
+    // Card ids in the order the player dragged them into, or null for the
+    // default sort. Lives here rather than in SoloGame so a LAN seat, which
+    // builds this same view, gets it too.
+    this.customOrder = null;
+    this.handDirty = false;
     this.build();
   }
 
@@ -114,11 +120,14 @@ export class TableView {
     // reference floats its Fight/Skip buttons — a row of its own under the
     // hand is exactly the height that stops the fan being big enough to read.
     n.comboLabel = el('span.controls__you', '');
+    // Only there once the player has arranged the hand themselves: it hands the
+    // fan back to the default sort.
+    n.sortBtn = el('button.btn', { type: 'button', hidden: true, onclick: () => this.resetOrder() }, 'Sort');
     n.hintBtn = el('button.btn', { type: 'button', onclick: () => this.showHint() }, 'Hint');
     n.passBtn = el('button.btn', { type: 'button', onclick: () => this.handlers.onPass?.() }, 'Pass');
     n.playBtn = el('button.btn.btn--primary', { type: 'button', onclick: () => this.playSelection() }, 'Play');
     n.role = el('span.controls__you', '');
-    n.controls = el('div.controls', n.role, n.hintBtn, n.passBtn, n.playBtn, n.comboLabel);
+    n.controls = el('div.controls', n.role, n.sortBtn, n.hintBtn, n.passBtn, n.playBtn, n.comboLabel);
 
     n.felt = el('div.felt', n.leftSeat.wrap, n.rightSeat.wrap, n.bottom,
       n.plays.left, n.plays.right, n.plays.self, n.bidPanel, n.controls);
@@ -128,6 +137,11 @@ export class TableView {
     n.dock = el('div.dock', n.hand);
 
     n.table = el('div.table', hud, n.felt, n.dock);
+    this.handDrag = enableHandDrag(n.handInner, {
+      // The flyers stand in for the hand until the deal lands.
+      canDrag: () => !n.table.classList.contains('is-dealing-self'),
+      onDrop: (ids) => this.dropped(ids),
+    });
     // The hand deliberately runs 18% off the bottom edge (spec 2), and a card
     // is a <button>: focusing one that is partly outside .table's own
     // overflow:hidden box makes the browser auto-scroll .table to reveal it,
@@ -170,6 +184,15 @@ export class TableView {
     this.view = view;
     const handIds = new Set(view.you.hand.map((c) => c.id));
     for (const id of [...this.selected]) if (!handIds.has(id)) this.selected.delete(id);
+    // Card ids are reused from deal to deal, so an order from the last deal
+    // would shuffle this one. A hand only ever loses cards or (the landlord)
+    // gains the bottom three, which the order copes with; anything else is new.
+    // The previous deal's finish is checked too because a winner's empty hand
+    // looks like a subset of whatever comes next.
+    if (!previous || (previous.phase === Phase.FINISHED && view.phase !== Phase.FINISHED)
+      || handReplaced(previous.you.hand, view.you.hand)) {
+      this.customOrder = null;
+    }
     // seatView sends playedCards, never `plays` — reading the wrong field here
     // meant the comparison was undefined !== undefined and the hint highlight
     // stayed lit into the next trick.
@@ -402,7 +425,8 @@ export class TableView {
     const handCards = [...this.nodes.handInner.children]; // real, hidden, already sorted left-to-right
     const handSlots = handCards.map((c) => c.getBoundingClientRect());
     const handCardWidth = (handCards[0] ?? this.nodes.handInner).getBoundingClientRect().width || deckCardWidth;
-    const sortedHand = sortCards(view.you.hand);
+    // The slots the real hand was built in, whatever order that is.
+    const sortedHand = this.orderedHand();
     const sortedIndexById = new Map(sortedHand.map((c, i) => [c.id, i]));
     const shuffledHand = [...view.you.hand].sort(() => Math.random() - 0.5);
 
@@ -732,12 +756,25 @@ export class TableView {
     panel.append(row);
   }
 
+  /** The hand as shown, left to right: the player's own order, else the default sort. */
+  orderedHand() {
+    return arrangeHand(sortCards(this.view.you.hand), this.customOrder);
+  }
+
   renderHand() {
+    // A rebuild would pull the card out from under a finger mid-drag; the
+    // gesture's onDrop catches the fan up afterwards.
+    if (this.handDrag.busy) {
+      this.handDirty = true;
+      return;
+    }
+    this.handDirty = false;
     const view = this.view;
-    const hand = sortCards(view.you.hand);
+    const hand = this.orderedHand();
     // Rebuilding twenty cards costs real time on a phone, and most updates do
     // not touch the hand at all: a bot playing a card used to re-make the whole
-    // fan. Skip when nothing that affects it has moved.
+    // fan. Skip when nothing that affects it has moved. The ids are joined in
+    // display order, so a reorder alone is enough to change the signature.
     const signature = [
       hand.map((c) => c.id).join(','),
       [...this.selected].sort().join(','),
@@ -785,6 +822,25 @@ export class TableView {
     return Math.min(148, Math.max(72, vh * 0.205));
   }
 
+  /** A drag finished: `ids` is the new order, or null if the hand is as it was. */
+  dropped(ids) {
+    if (ids) {
+      this.customOrder = ids;
+    } else if (!this.handDirty) {
+      return;
+    }
+    this.handSignature = null;
+    this.renderHand();
+    this.renderControls();
+  }
+
+  resetOrder() {
+    this.customOrder = null;
+    this.handSignature = null;
+    this.renderHand();
+    this.renderControls();
+  }
+
   toggle(cardId) {
     if (!this.isYourPlayTurn() || this.stuck) return;
     if (this.selected.has(cardId)) this.selected.delete(cardId);
@@ -824,6 +880,7 @@ export class TableView {
     // ended up overlapping.
     n.controls.classList.toggle('is-hidden', view.phase === Phase.BIDDING);
     n.controls.classList.toggle('is-ended', view.phase === Phase.FINISHED);
+    n.sortBtn.hidden = !this.customOrder;
     if (view.phase === Phase.BIDDING) return;
     const yours = this.isYourPlayTurn();
     const cards = this.selectionCards();
@@ -890,6 +947,7 @@ export class TableView {
 
   destroy() {
     clearTimeout(this.resultTimer);
+    this.handDrag?.destroy();
     this.dealSkip?.cancel();
     this.dealer?.remove();
     this.dealer = null;

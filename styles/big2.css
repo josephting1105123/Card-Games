@@ -221,10 +221,9 @@
 /* --- your hand --------------------------------------------------------------
    The same rule as Dou Di Zhu's fan (table.css .hand): the hand hugs the bottom
    edge and the lowest 18% of every card runs off the screen. The index sits in
-   the top 53% of a card and the bomb badge ends at about 80%, so nothing a
-   player reads is lost, and the cards stay as large as that table's. This
-   replaces the earlier keep-the-whole-card-on-screen rule, which left the fan
-   at about 60% of Dou Di Zhu's size. */
+   the top 53% of a card, so nothing a player reads is lost, and the cards stay
+   as large as that table's. This replaces the earlier keep-the-whole-card-on-
+   screen rule, which left the fan at about 60% of Dou Di Zhu's size. */
 
 .b2-dock {
   display: flex; flex-direction: column; align-items: center;
@@ -257,12 +256,26 @@
 
 .b2-hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
-  transition: transform 120ms var(--ease-std), filter 120ms var(--ease-std);
+  /* Rearranging the hand (handdrag.js sets --dx): see table.css .hand .card. */
+  translate: var(--dx, 0px) 0;
+  transition: transform var(--dur-fast) var(--ease-std), translate var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
   cursor: pointer; border-radius: var(--card-radius);
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .b2-hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
 .b2-hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 0 0 2px var(--red), var(--shadow-paper); }
 .b2-hand .card:focus-visible { outline: var(--focus-outline); outline-offset: 3px; }
+/* Dragged and dropped states: the same as table.css .hand .card.is-dragging. */
+.b2-hand .card.is-dragging {
+  z-index: 10; cursor: grabbing; box-shadow: var(--shadow-paper);
+  transform: translateY(calc(var(--card-w) * 1.4 * -0.12));
+  transition: transform var(--dur-fast) var(--ease-std);
+}
+.b2-hand .card.is-dragging.is-selected {
+  transform: translateY(calc(var(--card-w) * 1.4 * -0.28));
+  box-shadow: 0 0 0 2px var(--red), var(--shadow-paper);
+}
+.b2-hand .card.is-dropping { z-index: 10; }
 
 /* --- shuffle and deal -------------------------------------------------------
    Transform and opacity only. One flight leg (b2-fly) is reused for every
