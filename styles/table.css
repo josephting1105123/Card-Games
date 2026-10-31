@@ -96,10 +96,26 @@
   background: var(--plate-bg); box-shadow: var(--shadow-1);
   color: var(--text); font-family: var(--font-display); font-weight: 700;
   font-size: clamp(12px, 1.5vw, 14.5px); max-width: 100%;
+  position: relative; /* anchors the turn glow below */
 }
 /* The ring's second pixel is a shadow, so the plate keeps its 1px border and
    its box. */
 .seat__plate.is-turn { border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
+/* The glow is its own layer so that only its opacity pulses; animating the
+   plate's box-shadow would repaint it every frame. An outer box-shadow is
+   clipped to outside the border box, so the plate's contents stay clean. */
+.seat__plate.is-turn::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--red) 55%, transparent);
+  animation: cg-turn-glow 1.2s ease-in-out infinite alternate;
+}
+@keyframes cg-turn-glow {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat__plate.is-turn::after { animation: none; opacity: 0.7; }
+}
 .seat__avatar {
   width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none;
   font-size: 14px; font-weight: 700; color: var(--text);
@@ -355,7 +371,17 @@
   --hand-card-h: clamp(100.8px, 28.7vh, 207.2px);
   position: relative; height: var(--hand-card-h);
   margin: 0 auto; width: 100%;
+  transition: transform var(--dur-slow) var(--ease-std), opacity var(--dur-slow) var(--ease-std);
 }
+/* Whose move it is, said by the fan itself: it rises 5% of a card when it is
+   yours and sits back a little when it is not. The lift is on this wrapper
+   because .hand__inner below already owns a transform. */
+.hand.is-mine { transform: translateY(calc(var(--hand-card-h) * -0.05)); }
+.hand.is-waiting { opacity: 0.82; }
+/* dealIn hides the hand when the deal starts and un-hides it in the step that
+   removes the flyers; a fade at either end would show the real hand half-
+   visible for 220ms (tableview.js snapHand). */
+.hand.is-snap { transition: none; }
 .hand .card { --card-w: calc(var(--hand-card-h) / 1.4); }
 /* The hand hugs the bottom edge and is let run off it: up to 18% of every
    card's height, but never the top-left index, which sits in the top 30%. A
@@ -391,11 +417,9 @@
    wash and the badge anchor to the card. The wash is multiplied into the stock
    so the ink index and pip stay dark through it. isolation keeps that blend and
    the badge's z-index inside this one card, so the neighbour that overlaps it
-   in the fan still covers both. Big Two's hand shares the rules. */
-.hand .card.is-bomb,
-.b2-hand .card.is-bomb { isolation: isolate; }
-.hand .card.is-bomb::after,
-.b2-hand .card.is-bomb::after {
+   in the fan still covers both. */
+.hand .card.is-bomb { isolation: isolate; }
+.hand .card.is-bomb::after {
   /* Starts just under the suit pip (it ends at 53%) and is nearly solid at once:
      a hand shows only the top ~82% of a card, so a long fade left the visible
      part reading as cream. */
@@ -420,14 +444,35 @@
 
 .hand .card {
   position: absolute; bottom: 0; left: calc(var(--i) * var(--step));
-  transition: transform var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
+  /* Sideways travel while the hand is being rearranged (handdrag.js sets --dx).
+     It rides on `translate`, not `transform`, so it stacks with the hover and
+     selected lift below instead of replacing it. */
+  translate: var(--dx, 0px) 0;
+  transition: transform var(--dur-fast) var(--ease-std), translate var(--dur-fast) var(--ease-std), filter var(--dur-fast) var(--ease-std);
   cursor: pointer; border-radius: var(--card-radius);
+  /* A drag along the fan has to arrive as pointer events, not as a scroll or a
+     pinch of the page; select: none keeps the press from highlighting text. */
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .hand .card:hover { transform: translateY(calc(var(--card-w) * 1.4 * -0.08)); }
 /* ~22% of card height, per spec. */
 .hand .card.is-selected { transform: translateY(calc(var(--card-w) * 1.4 * -0.22)); box-shadow: 0 0 0 2px var(--red), var(--shadow-paper); }
 .hand .card.is-hinted .cg-card-svg { outline: 2px solid var(--red); outline-offset: -2px; border-radius: var(--card-radius); }
 .hand .card:focus-visible { outline: var(--focus-outline); outline-offset: 3px; }
+/* Being dragged: lifted about 12% of its height (a selected card, already up
+   22%, goes further) and above the fan. Its own `translate` has no transition so
+   it tracks the pointer exactly; the cards it passes slide aside on the ordinary
+   one. On release the transition returns and it eases into its slot. */
+.hand .card.is-dragging {
+  z-index: 10; cursor: grabbing; box-shadow: var(--shadow-paper);
+  transform: translateY(calc(var(--card-w) * 1.4 * -0.12));
+  transition: transform var(--dur-fast) var(--ease-std);
+}
+.hand .card.is-dragging.is-selected {
+  transform: translateY(calc(var(--card-w) * 1.4 * -0.28));
+  box-shadow: 0 0 0 2px var(--red), var(--shadow-paper);
+}
+.hand .card.is-dropping { z-index: 10; }
 
 /* No legal answer: the whole fan greys and stops responding, so Pass is plainly
    the only move left. Said without a sentence. */
@@ -437,10 +482,20 @@
 /* Floats over the cloth, just above the hand, instead of costing the dock a
    row of its own — the reference does the same with its Fight/Skip buttons. */
 .controls {
-  position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); z-index: 4;
+  position: absolute; left: 50%; bottom: 2px; z-index: 4;
+  /* Settled down and dim until it is your move (.is-mine); the buttons are
+     already disabled by then, this just stops the bar looking live. */
+  transform: translate(-50%, 6px); opacity: 0.55;
+  transition: transform var(--dur-med) var(--ease-std), opacity var(--dur-med) var(--ease-std);
   display: flex; align-items: center; justify-content: center; gap: clamp(6px, 1.2vw, 14px); flex-wrap: nowrap;
   max-width: 94%; padding: 6px clamp(10px, 1.6vw, 16px); border-radius: var(--r-ui);
   background: var(--controls-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-paper);
+}
+.controls.is-mine { transform: translate(-50%, 0); opacity: 1; }
+/* Reduced motion keeps the dim and drops the lift and the settle. */
+@media (prefers-reduced-motion: reduce) {
+  .hand.is-mine { transform: none; }
+  .controls, .controls.is-mine { transform: translate(-50%, 0); }
 }
 .controls__you {
   font-size: clamp(12px, 1.6vw, 14.5px); color: var(--text-secondary); white-space: nowrap;

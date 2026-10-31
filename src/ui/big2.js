@@ -22,9 +22,11 @@ import { skillByName } from '../games/big2/ai.js';
 import { botTurn } from '../games/big2/match.js';
 import { beats, classify, comboName, describeCombo, cardValue, SUIT_ORDER } from '../games/big2/rules.js';
 import { findHints } from '../games/big2/moves.js';
-import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.js';
+import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
+import { createTurnCue } from './turncue.js';
+import { arrangeHand, enableHandDrag, handReplaced } from './handdrag.js';
 
 const CAPTION_MS = 2600;
 // The reveal gets a second on its own before the result sheet covers it.
@@ -261,6 +263,11 @@ export class Big2View {
     this.handlers = handlers;
     this.selected = new Set();
     this.sortMode = 'rank';
+    // Card ids in the order the player dragged them into, or null while one of
+    // the sorts is in charge. Kept on the view, not BigTwoGame, so a LAN seat
+    // (which builds this same view) gets it too.
+    this.customOrder = null;
+    this.handDirty = false;
     this.trickEntries = new Map(); // seat -> {pass:true} | {combo,cards}
     this.trickToken = 0;
     this.trickFading = false;
@@ -322,6 +329,11 @@ export class Big2View {
     n.dock = el('div.b2-dock', n.hand);
 
     n.table = el('div.b2-table', hud, n.felt, n.dock);
+    this.handDrag = enableHandDrag(n.handInner, {
+      // The flyers stand in for the hand until the deal lands.
+      canDrag: () => !n.table.classList.contains('is-dealing'),
+      onDrop: (ids) => this.dropped(ids),
+    });
     n.table.addEventListener('scroll', () => { n.table.scrollTop = 0; n.table.scrollLeft = 0; });
 
     this.root.append(
@@ -335,6 +347,9 @@ export class Big2View {
       ),
     );
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    // The felt is position:relative, so the banner centres on the cloth and
+    // stays clear of the hand, which sits in the dock below it.
+    this.cue = createTurnCue({ host: n.felt, online: !!this.meta.online });
   }
 
   buildSeat(side) {
@@ -349,15 +364,42 @@ export class Big2View {
 
   /** Replace the whole displayed state. */
   update(view) {
+    const previous = this.view;
     this.view = view;
     const handIds = new Set(view.you.hand.map((c) => c.id));
     for (const id of [...this.selected]) if (!handIds.has(id)) this.selected.delete(id);
+    // Card ids are reused from deal to deal, so an order from the last deal
+    // would shuffle this one. A hand only ever loses cards while it is played;
+    // anything else is a new deal. The previous deal's finish is checked too
+    // because a winner's empty hand looks like a subset of whatever comes next.
+    if (!previous || (previous.phase === Phase.FINISHED && view.phase !== Phase.FINISHED)
+      || handReplaced(previous.you.hand, view.you.hand)) {
+      this.customOrder = null;
+    }
 
     this.renderSeats();
     this.renderPlays();
     this.renderHand();
     this.renderControls();
     this.renderHud();
+    // Deferred so a first update() that dealIn() follows in the same tick sees
+    // is-dealing first; otherwise "Your lead" would flash under the flying cards
+    // and be gone before the hand appears. dealIn() calls this again when it ends.
+    queueMicrotask(() => this.syncTurn());
+  }
+
+  /** Lift, dim and flash according to whose turn it is; safe to call at any time. */
+  syncTurn() {
+    const view = this.view;
+    if (!view || !this.cue) return;
+    if (this.nodes.table.classList.contains('is-dealing')) return;
+    const playing = view.phase === Phase.PLAYING;
+    const mine = this.isYourTurn();
+    // Between hands both classes are off, so the reveal sits at full strength.
+    this.nodes.hand.classList.toggle('is-mine', mine);
+    this.nodes.hand.classList.toggle('is-waiting', playing && !mine);
+    this.nodes.controls.classList.toggle('is-waiting', playing && !mine);
+    this.cue.set(mine, view.trick ? 'Your turn' : 'Your lead');
   }
 
   /** Solo tables pass no currency and keep the chip format; a room passes its coin. */
@@ -499,9 +541,21 @@ export class Big2View {
     return view.phase === Phase.PLAYING && view.turn === view.seat && !view.trick && view.leadMustInclude != null;
   }
 
+  /** The hand as shown, left to right: the player's own order, else the chosen sort. */
+  orderedHand() {
+    return arrangeHand(sortHand(this.view.you.hand, this.sortMode), this.customOrder);
+  }
+
   renderHand() {
-    const view = this.view;
-    const hand = sortHand(view.you.hand, this.sortMode);
+    // A rebuild would pull the card out from under a finger mid-drag; the
+    // gesture's onDrop catches the fan up afterwards.
+    if (this.handDrag.busy) {
+      this.handDirty = true;
+      return;
+    }
+    this.handDirty = false;
+    const hand = this.orderedHand();
+    // The ids are joined in display order, so a reorder alone changes the signature.
     const signature = [
       hand.map((c) => c.id).join(','),
       [...this.selected].sort().join(','),
@@ -518,12 +572,9 @@ export class Big2View {
     inner.style.width = `${width + step * Math.max(0, hand.length - 1)}px`;
     inner.style.setProperty('--step', `${step}px`);
 
-    // Big Two has no jokers, so a bomb here is only ever a quad.
-    const bombs = bombCardIds(hand);
     hand.forEach((card, index) => {
       const node = cardElement(card, { selectable: true, ...BOLD });
       node.style.setProperty('--i', String(index));
-      if (bombs.has(card.id)) markBomb(node, 'bomb');
       node.classList.toggle('is-selected', this.selected.has(card.id));
       node.setAttribute('aria-pressed', this.selected.has(card.id) ? 'true' : 'false');
       node.addEventListener('click', () => this.toggle(card.id));
@@ -584,7 +635,7 @@ export class Big2View {
     const { legal, needsThreeDiamond } = this.legalityOf(combo);
 
     n.controls.classList.toggle('is-ended', view.phase === Phase.FINISHED);
-    n.sortBtn.textContent = `Sort: ${this.sortMode === 'rank' ? 'Rank' : 'Suit'}`;
+    n.sortBtn.textContent = this.customOrder ? 'Sort: Custom' : `Sort: ${this.sortMode === 'rank' ? 'Rank' : 'Suit'}`;
     n.playBtn.disabled = !yours || !legal;
     n.passBtn.disabled = !yours || !view.trick;
     n.hintBtn.disabled = !yours;
@@ -644,8 +695,27 @@ export class Big2View {
   }
 
   toggleSort() {
-    this.sortMode = this.sortMode === 'rank' ? 'suit' : 'rank';
+    // From a hand the player arranged, the button's one job is to take it back
+    // to Rank; it only cycles Rank and Suit once the sort is in charge again.
+    if (this.customOrder) {
+      this.customOrder = null;
+      this.sortMode = 'rank';
+    } else {
+      this.sortMode = this.sortMode === 'rank' ? 'suit' : 'rank';
+    }
     this.handSignature = null; // force a rebuild even though the card set is unchanged
+    this.renderHand();
+    this.renderControls();
+  }
+
+  /** A drag finished: `ids` is the new order, or null if the hand is as it was. */
+  dropped(ids) {
+    if (ids) {
+      this.customOrder = ids;
+    } else if (!this.handDirty) {
+      return;
+    }
+    this.handSignature = null;
     this.renderHand();
     this.renderControls();
   }
@@ -677,7 +747,13 @@ export class Big2View {
     const priorDisabled = controlButtons.map((b) => b.disabled);
     for (const b of controlButtons) b.disabled = true;
 
+    // The new hand is already in the DOM, so the hide has to be instant or the
+    // freshly dealt cards would show for a fade before the flyers start.
+    const fading = [this.nodes.hand, this.nodes.controls];
+    for (const node of fading) node.style.transition = 'none';
     table.classList.add('is-dealing');
+    void table.offsetWidth;
+    for (const node of fading) node.style.transition = '';
 
     let skipped = false;
     let resolveSkip;
@@ -695,7 +771,14 @@ export class Big2View {
     const finish = () => {
       table.removeEventListener('pointerdown', onTap, { capture: true });
       dealer.remove();
+      // The flyers vanish the instant the hand returns, so its opacity has to
+      // snap rather than fade in under them; only the lift is allowed to ease.
+      const hand = this.nodes.hand;
+      hand.style.transitionProperty = 'transform';
       table.classList.remove('is-dealing');
+      this.syncTurn();
+      void hand.offsetWidth;
+      hand.style.transitionProperty = '';
       controlButtons.forEach((b, i) => { b.disabled = priorDisabled[i]; });
       for (const seatNode of [this.nodes.seatTop, this.nodes.seatLeft, this.nodes.seatRight]) {
         for (const child of seatNode.backs.children) child.style.opacity = '';
@@ -708,7 +791,8 @@ export class Big2View {
     const deckWidth = stack.getBoundingClientRect().width;
     const offsetOf = (rect) => ({ tx: rect.left + rect.width / 2 - anchorX, ty: rect.top + rect.height / 2 - anchorY });
 
-    const handCards = [...this.nodes.handInner.children]; // real, hidden, already sorted
+    const handCards = [...this.nodes.handInner.children]; // real, hidden, already in display order
+    const shown = this.orderedHand();
     const handWidth = (handCards[0] ?? this.nodes.handInner).getBoundingClientRect().width || deckWidth;
     const handRects = handCards.map((c) => c.getBoundingClientRect());
     const handRowRect = this.nodes.handInner.getBoundingClientRect();
@@ -754,7 +838,8 @@ export class Big2View {
       const seat = order[i];
       if (seat === 'self') {
         const slot = selfCount; selfCount++;
-        const flyer = cardElement(view.you.hand[slot % view.you.hand.length], BOLD);
+        // Slot i of the fan, so the card that lands there is the card it is.
+        const flyer = cardElement(shown[slot % shown.length], BOLD);
         flyer.classList.add('b2-dealer__flyer');
         dealer.append(flyer);
         gatherFlyers.push(flyer);
@@ -847,6 +932,8 @@ export class Big2View {
   destroy() {
     clearTimeout(this.resultTimer);
     clearTimeout(this.captionTimer);
+    this.cue?.destroy();
+    this.handDrag?.destroy();
     this.teardownFullscreen?.();
     clear(this.root);
   }

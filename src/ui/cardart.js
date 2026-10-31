@@ -344,9 +344,9 @@ export function cardElement(card, opts = {}) {
 
 /* ==========================================================================
  * Bombs in the player's hand. In Dou Di Zhu a quad or the two jokers beat
- * anything that is not a higher bomb; in Big Two a quad is the core of the
- * second-strongest five-card hand. Either way it is easy to miss one in a
- * long fan.
+ * anything that is not a higher bomb, and are easy to miss in a long fan. Only
+ * that table marks them: Big Two has no bombs, a quad there is just the core
+ * of a five-card hand, and gilding it would promise a power it does not have.
  * ========================================================================== */
 
 /** Ids of the cards in `hand` that form a bomb: every rank held four times,

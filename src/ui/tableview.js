@@ -18,6 +18,8 @@ import { findHint, legalPlays } from '../games/doudizhu/moves.js';
 import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
+import { createTurnCue } from './turncue.js';
+import { arrangeHand, enableHandDrag, handReplaced } from './handdrag.js';
 
 // Every card on this table uses the "bold" style (spec: cardElement(card, {
 // style: 'bold' })) — Dou Di Zhu is the only table built on it so far.
@@ -66,10 +68,16 @@ export class TableView {
     this.selected = new Set();
     this.view = null;
     this.hinted = new Set();
+    // Card ids in the order the player dragged them into, or null for the
+    // default sort. Lives here rather than in SoloGame so a LAN seat, which
+    // builds this same view, gets it too.
+    this.customOrder = null;
+    this.handDirty = false;
     this.build();
   }
 
   build() {
+    this.cue?.destroy();
     clear(this.root);
     this.nodes = {};
     const n = this.nodes;
@@ -112,11 +120,14 @@ export class TableView {
     // reference floats its Fight/Skip buttons — a row of its own under the
     // hand is exactly the height that stops the fan being big enough to read.
     n.comboLabel = el('span.controls__you', '');
+    // Only there once the player has arranged the hand themselves: it hands the
+    // fan back to the default sort.
+    n.sortBtn = el('button.btn', { type: 'button', hidden: true, onclick: () => this.resetOrder() }, 'Sort');
     n.hintBtn = el('button.btn', { type: 'button', onclick: () => this.showHint() }, 'Hint');
     n.passBtn = el('button.btn', { type: 'button', onclick: () => this.handlers.onPass?.() }, 'Pass');
     n.playBtn = el('button.btn.btn--primary', { type: 'button', onclick: () => this.playSelection() }, 'Play');
     n.role = el('span.controls__you', '');
-    n.controls = el('div.controls', n.role, n.hintBtn, n.passBtn, n.playBtn, n.comboLabel);
+    n.controls = el('div.controls', n.role, n.sortBtn, n.hintBtn, n.passBtn, n.playBtn, n.comboLabel);
 
     n.felt = el('div.felt', n.leftSeat.wrap, n.rightSeat.wrap, n.bottom,
       n.plays.left, n.plays.right, n.plays.self, n.bidPanel, n.controls);
@@ -126,6 +137,11 @@ export class TableView {
     n.dock = el('div.dock', n.hand);
 
     n.table = el('div.table', hud, n.felt, n.dock);
+    this.handDrag = enableHandDrag(n.handInner, {
+      // The flyers stand in for the hand until the deal lands.
+      canDrag: () => !n.table.classList.contains('is-dealing-self'),
+      onDrop: (ids) => this.dropped(ids),
+    });
     // The hand deliberately runs 18% off the bottom edge (spec 2), and a card
     // is a <button>: focusing one that is partly outside .table's own
     // overflow:hidden box makes the browser auto-scroll .table to reveal it,
@@ -146,6 +162,8 @@ export class TableView {
       ),
     );
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    this.cue = createTurnCue({ host: n.felt, online: !!this.meta.online });
+    this.cueWasMine = false;
   }
 
   buildSeat(side) {
@@ -166,6 +184,15 @@ export class TableView {
     this.view = view;
     const handIds = new Set(view.you.hand.map((c) => c.id));
     for (const id of [...this.selected]) if (!handIds.has(id)) this.selected.delete(id);
+    // Card ids are reused from deal to deal, so an order from the last deal
+    // would shuffle this one. A hand only ever loses cards or (the landlord)
+    // gains the bottom three, which the order copes with; anything else is new.
+    // The previous deal's finish is checked too because a winner's empty hand
+    // looks like a subset of whatever comes next.
+    if (!previous || (previous.phase === Phase.FINISHED && view.phase !== Phase.FINISHED)
+      || handReplaced(previous.you.hand, view.you.hand)) {
+      this.customOrder = null;
+    }
     // seatView sends playedCards, never `plays` — reading the wrong field here
     // meant the comparison was undefined !== undefined and the hint highlight
     // stayed lit into the next trick.
@@ -187,7 +214,77 @@ export class TableView {
     this.renderBidding();
     this.renderHand();
     this.renderControls();
+    this.renderTurn();
     this.renderHud();
+    // Callers update() and then dealIn() in the same tick, and dealIn is what
+    // raises `dealing`. Looking at it a microtask later is what lets the
+    // banner wait for the cards to land instead of flashing over the shuffle.
+    queueMicrotask(() => this.syncTurnCue());
+  }
+
+  /** Hand and controls say whose move it is; the banner is syncTurnCue's. */
+  renderTurn() {
+    const mine = this.isYourTurn();
+    const { hand, controls } = this.nodes;
+    hand.classList.toggle('is-mine', mine);
+    // A finished hand is neither waiting nor yours: full opacity, no lift.
+    hand.classList.toggle('is-waiting', !mine && this.view.phase !== Phase.FINISHED);
+    controls.classList.toggle('is-mine', mine);
+  }
+
+  syncTurnCue() {
+    if (!this.cue || this.dealing || !this.view) return;
+    const view = this.view;
+    const bidding = view.phase === Phase.BIDDING;
+    const mine = this.isYourTurn();
+    const edge = mine && !this.cueWasMine;
+    this.cueWasMine = mine;
+    this.cue.set(mine, bidding ? 'Your call' : view.trick ? 'Your turn' : 'Your lead');
+    // Only a fresh banner is placed, so a live one never slides mid-flash. This
+    // runs after set() because the banner's own height decides where it fits;
+    // the node is laid out at the next paint, so nothing shows in between.
+    if (!edge) return;
+    if (bidding) this.placeBidBanner();
+    else this.nodes.felt.style.removeProperty('--turncue-top');
+  }
+
+  /**
+   * The bid panel owns the middle of the felt, so the banner goes in the clear
+   * band under it, above the hand, where it covers nothing. On a short phone
+   * that band is too thin, so it goes above the panel: in the gap under the
+   * landlord's three if there is one, else above the three, in the empty middle
+   * of the HUD bar.
+   */
+  placeBidBanner() {
+    const { felt, bidPanel, hand, handInner } = this.nodes;
+    const banner = felt.querySelector('.turncue');
+    if (!banner || bidPanel.hidden) {
+      felt.style.removeProperty('--turncue-top');
+      return;
+    }
+    // 3px each side is enough to clear the panel's edge and the card tops; the
+    // 844x390 band is 47.9px against a 40.3px banner, so a wider margin would
+    // push it above the panel, onto the landlord's three.
+    const gap = 3;
+    const bannerH = banner.offsetHeight;
+    const panel = bidPanel.getBoundingClientRect();
+    // The card tops are the hand's visible edge; the wrapper's own box starts
+    // above them. The fan is only just starting its rise on the update that
+    // hands over the turn, so measure where it will rest, not where it is.
+    const card = handInner.querySelector('.card');
+    const cardRect = (card ?? hand).getBoundingClientRect();
+    const rise = new DOMMatrixReadOnly(getComputedStyle(hand).transform).m42;
+    const restingLift = hand.classList.contains('is-mine') && card ? -0.05 * cardRect.height : 0;
+    const handTop = cardRect.top - rise + restingLift;
+
+    const three = this.nodes.bottom.getBoundingClientRect();
+    const roomBelow = handTop - panel.bottom;
+    const roomAbove = panel.top - three.bottom;
+    let centre;
+    if (roomBelow >= bannerH + gap * 2) centre = panel.bottom + roomBelow / 2;
+    else if (roomAbove >= bannerH + gap * 2) centre = three.bottom + roomAbove / 2;
+    else centre = Math.min(panel.top, three.top) - gap - bannerH / 2;
+    felt.style.setProperty('--turncue-top', `${(centre - felt.getBoundingClientRect().top).toFixed(1)}px`);
   }
 
   setBankroll(value) {
@@ -253,7 +350,10 @@ export class TableView {
     const felt = this.nodes.felt;
     const N = view.you.hand.length; // 17, pre-bid — the round-robin's per-seat count
 
-    table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+    this.snapHand(() => {
+      table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+    });
+    this.dealing = true;
 
     let skipped = false;
     let resolveSkip;
@@ -273,7 +373,11 @@ export class TableView {
       table.removeEventListener('pointerdown', onTap, { capture: true });
       dealer.remove();
       if (this.dealer === dealer) this.dealer = null;
-      table.classList.remove('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+      this.snapHand(() => {
+        table.classList.remove('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+      });
+      this.dealing = false;
+      this.syncTurnCue();
       // Belt and suspenders: a fire-and-forget landing callback (below) can
       // still fire after this runs. Clearing the inline opacity it set is
       // harmless either way, since the class that hid these is already gone.
@@ -321,7 +425,8 @@ export class TableView {
     const handCards = [...this.nodes.handInner.children]; // real, hidden, already sorted left-to-right
     const handSlots = handCards.map((c) => c.getBoundingClientRect());
     const handCardWidth = (handCards[0] ?? this.nodes.handInner).getBoundingClientRect().width || deckCardWidth;
-    const sortedHand = sortCards(view.you.hand);
+    // The slots the real hand was built in, whatever order that is.
+    const sortedHand = this.orderedHand();
     const sortedIndexById = new Map(sortedHand.map((c, i) => [c.id, i]));
     const shuffledHand = [...view.you.hand].sort(() => Math.random() - 0.5);
 
@@ -436,6 +541,21 @@ export class TableView {
 
     // --- done: reveal everything, remove every flyer, in one step ---------
     finish();
+  }
+
+  /**
+   * Run `change` with the hand's fades switched off. The hand now fades between
+   * its turn states, so hiding it for the deal (or un-hiding it as the flyers
+   * are removed) would otherwise fade over 220ms instead of landing on the
+   * frame it should. The forced flush is what makes the change commit while
+   * transitions are off; they come back before the next frame.
+   */
+  snapHand(change) {
+    const hand = this.nodes.hand;
+    hand.classList.add('is-snap');
+    change();
+    void hand.offsetWidth;
+    hand.classList.remove('is-snap');
   }
 
   clearSpeech() {
@@ -636,12 +756,25 @@ export class TableView {
     panel.append(row);
   }
 
+  /** The hand as shown, left to right: the player's own order, else the default sort. */
+  orderedHand() {
+    return arrangeHand(sortCards(this.view.you.hand), this.customOrder);
+  }
+
   renderHand() {
+    // A rebuild would pull the card out from under a finger mid-drag; the
+    // gesture's onDrop catches the fan up afterwards.
+    if (this.handDrag.busy) {
+      this.handDirty = true;
+      return;
+    }
+    this.handDirty = false;
     const view = this.view;
-    const hand = sortCards(view.you.hand);
+    const hand = this.orderedHand();
     // Rebuilding twenty cards costs real time on a phone, and most updates do
     // not touch the hand at all: a bot playing a card used to re-make the whole
-    // fan. Skip when nothing that affects it has moved.
+    // fan. Skip when nothing that affects it has moved. The ids are joined in
+    // display order, so a reorder alone is enough to change the signature.
     const signature = [
       hand.map((c) => c.id).join(','),
       [...this.selected].sort().join(','),
@@ -689,6 +822,25 @@ export class TableView {
     return Math.min(148, Math.max(72, vh * 0.205));
   }
 
+  /** A drag finished: `ids` is the new order, or null if the hand is as it was. */
+  dropped(ids) {
+    if (ids) {
+      this.customOrder = ids;
+    } else if (!this.handDirty) {
+      return;
+    }
+    this.handSignature = null;
+    this.renderHand();
+    this.renderControls();
+  }
+
+  resetOrder() {
+    this.customOrder = null;
+    this.handSignature = null;
+    this.renderHand();
+    this.renderControls();
+  }
+
   toggle(cardId) {
     if (!this.isYourPlayTurn() || this.stuck) return;
     if (this.selected.has(cardId)) this.selected.delete(cardId);
@@ -708,6 +860,13 @@ export class TableView {
     return this.view?.phase === Phase.PLAYING && this.view.turn === this.view.seat;
   }
 
+  /** Your move, whether that is a call or a play. */
+  isYourTurn() {
+    const view = this.view;
+    if (view?.phase === Phase.BIDDING) return view.bidding?.turn === view.seat;
+    return this.isYourPlayTurn();
+  }
+
   selectionCards() {
     const byId = new Map(this.view.you.hand.map((c) => [c.id, c]));
     return [...this.selected].map((id) => byId.get(id)).filter(Boolean);
@@ -721,6 +880,7 @@ export class TableView {
     // ended up overlapping.
     n.controls.classList.toggle('is-hidden', view.phase === Phase.BIDDING);
     n.controls.classList.toggle('is-ended', view.phase === Phase.FINISHED);
+    n.sortBtn.hidden = !this.customOrder;
     if (view.phase === Phase.BIDDING) return;
     const yours = this.isYourPlayTurn();
     const cards = this.selectionCards();
@@ -787,10 +947,13 @@ export class TableView {
 
   destroy() {
     clearTimeout(this.resultTimer);
+    this.handDrag?.destroy();
     this.dealSkip?.cancel();
     this.dealer?.remove();
     this.dealer = null;
     this.teardownFullscreen?.();
+    this.cue?.destroy();
+    this.cue = null;
     clear(this.root);
   }
 }

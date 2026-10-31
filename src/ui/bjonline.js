@@ -12,6 +12,7 @@ import { chipDenominations } from '../games/blackjack/tables.js';
 import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
+import { createTurnCue } from './turncue.js';
 
 // The banker opens hands one at a time; give the last flip a moment to land
 // before the sheet covers the felt.
@@ -118,6 +119,7 @@ export class BjOnlineView {
     this.resultTimer = null;
     this.betStepper = null;
     this.teardownFullscreen = null;
+    this.turnCue = null;
     this.nodes = {};
     installCardDefs();
     this.build();
@@ -176,6 +178,8 @@ export class BjOnlineView {
     );
     this.teardownFullscreen?.();
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    this.turnCue?.destroy();
+    this.turnCue = createTurnCue({ host: n.felt, online: !!this.meta.online });
   }
 
   animationsOn() {
@@ -196,6 +200,7 @@ export class BjOnlineView {
     (view.seats ?? []).slice(0, 4).forEach((s, i) => this.paintSeat(i, s ?? null, view));
     for (let i = (view.seats ?? []).length; i < 4; i += 1) this.paintSeat(i, null, view);
     this.paintActions(view);
+    this.paintTurn(view);
     this.painted = true;
     this.paintStatus();
   }
@@ -274,6 +279,39 @@ export class BjOnlineView {
     show(n.standBtn, myTurn);
     n.hitBtn.disabled = myTurn ? !you.canHit : !you.canBankerHit;
     n.standBtn.disabled = !you.canStand;
+  }
+
+  /**
+   * Lift, dim and banner for the viewer. "Mine" needs a move to make, not just
+   * the seat number: a member resumed into a seat dealt to a bot is on turn by
+   * the numbers but only watches, and gets no buttons.
+   */
+  paintTurn(view) {
+    const n = this.nodes;
+    const you = view.you ?? {};
+    const seatTurn = view.phase === 'players' && view.seat >= 1 && view.activeSeat === view.seat
+      && !!(you.canHit || you.canStand || you.canRun);
+    const bankerTurn = view.phase === 'banker' && view.seat === 0
+      && !!(you.canBankerHit || you.openable?.length);
+    const mine = seatTurn || bankerTurn;
+    const inRound = view.phase === 'players' || view.phase === 'banker';
+    const waiting = inRound && !mine;
+
+    n.table.classList.toggle('is-still', !this.animationsOn());
+    const yours = view.seat === 0 ? n.banker : n.seats[view.seat - 1];
+    for (const box of [n.banker, ...n.seats]) {
+      box.box.classList.toggle('is-mine', box === yours && mine);
+      box.box.classList.toggle('is-waiting', box === yours && waiting);
+    }
+    n.actions.classList.toggle('is-waiting', waiting);
+    const flashed = this.turnCue?.set(mine, bankerTurn ? 'Your call' : 'Your turn');
+    if (flashed) {
+      // Between the banker's box and the seat row, where it covers the least.
+      // Measured once per banner so a reflow does not move a live one.
+      const feltTop = n.felt.getBoundingClientRect().top;
+      const gap = (n.banker.box.getBoundingClientRect().bottom + n.seats[0].box.getBoundingClientRect().top) / 2;
+      n.felt.style.setProperty('--turncue-top', `${gap - feltTop}px`);
+    }
   }
 
   /** The caption saying who is acting, restored after any flash. */
@@ -391,6 +429,8 @@ export class BjOnlineView {
     clearTimeout(this.flashTimer);
     this.teardownFullscreen?.();
     this.teardownFullscreen = null;
+    this.turnCue?.destroy();
+    this.turnCue = null;
     clear(this.root);
   }
 }

@@ -296,10 +296,11 @@ function fiveCardBeatable(unseen, combo) {
       if (!STRAIGHT_WINDOWS[p].ranks.every((r) => held.has(r))) continue;
       if (strength < 4 || p * 4 + s > combo.key) return true;
     }
-    // Any flush beats a straight; against another flush the highest card decides.
+    // Any flush beats a straight; against another flush the suit decides first,
+    // then the number of the highest card (same key as rules.js classify()).
     // (A suit that makes a straight flush is stronger still, so the answer holds.)
     if (strength < 1) return true;
-    if (strength === 1 && Math.max(...list.map((c) => VALUE[c.id])) > combo.key) return true;
+    if (strength === 1 && s * 16 + Math.max(...list.map((c) => c.rank)) > combo.key) return true;
   }
 
   let bestTriple = -1;

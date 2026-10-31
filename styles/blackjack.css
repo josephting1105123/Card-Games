@@ -124,15 +124,24 @@
 .bj-dealer__cards .card { margin-left: calc(var(--card-w) * -0.42); }
 .bj-dealer__cards .card:first-child { margin-left: 0; }
 
-.bj-hands { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: clamp(8px, 1.8vw, 18px); max-width: 100%; }
+.bj-hands {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: clamp(8px, 1.8vw, 18px); max-width: 100%;
+  transition: transform var(--dur-slow) var(--ease-std), opacity var(--dur-slow) var(--ease-std);
+}
 .bj-hand {
+  position: relative; /* anchors the turn glow */
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 6px 10px; border-radius: var(--r-md); border: 1px solid transparent;
-  transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std);
+  transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std), transform var(--dur-slow) var(--ease-std);
 }
+/* Whose turn: your hand rises by 5% of a card's height (1.4 x --card-w) while
+   Hit/Stand are yours, and sits at 0.82 while the dealer plays. Split hands
+   lift one at a time instead (.is-active below), so the row stays put. */
+.bj-hands.is-mine:not(.has-split) { transform: translateY(calc(var(--card-w) * -0.07)); }
+.bj-hands.is-waiting { opacity: 0.82; }
 /* Only ever applied with more than one hand on the cloth (see paintHands) —
    with a single hand there is nothing for a ring to distinguish it from. */
-.bj-hand.is-active { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+.bj-hand.is-active { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); transform: translateY(calc(var(--card-w) * -0.07)); }
 .bj-hand__cards { display: flex; min-height: calc(var(--card-w) * 1.4); }
 .bj-hand__cards .card { margin-left: calc(var(--card-w) * -0.38); }
 .bj-hand__cards .card:first-child { margin-left: 0; }
@@ -168,6 +177,7 @@
 .bj-seatrow > .bj-box { flex: 1 1 0; }
 
 .bj-box {
+  position: relative; /* anchors the turn glow */
   flex: 0 1 auto; min-width: 0;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 5px 6px; border-radius: var(--r-lg); border: 1px solid var(--hairline);
@@ -175,7 +185,8 @@
   /* A real touchstart on a seat must never be swallowed by Chromium's
      default double-tap-to-zoom delay. */
   touch-action: manipulation;
-  transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std);
+  transition: border-color var(--dur-med) var(--ease-std), box-shadow var(--dur-med) var(--ease-std),
+    transform var(--dur-slow) var(--ease-std), opacity var(--dur-slow) var(--ease-std);
 }
 .bj-box:disabled { cursor: default; }
 button.bj-box:not(:disabled) { cursor: pointer; }
@@ -186,9 +197,40 @@ button.bj-box:not(:disabled) { cursor: pointer; }
 /* Tappable only once the banker is at 16+ and this seat is still pending
    (see enableOpenableMSeats in ui/blackjack.js). */
 .bj-box.is-openable { cursor: pointer; border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
-/* Whose turn it is, seat or banker — ink instead of red, so it never reads as
-   "you"/"openable" when the active seat is also yours. */
-.bj-box.is-active { border-color: var(--text-secondary); box-shadow: 0 0 0 1px var(--text-secondary), var(--shadow-1); }
+/* Whose turn it is, seat or banker. Ink on everyone else's box, so it never
+   reads as "openable" (red); on your own box the ring is red, the same colour
+   your box wears all round, and the glow below is what says it is live.
+   is-flash is the half-second mark on a seat the banker just opened: the same
+   ink ring, with no glow and never red. */
+.bj-box.is-active, .bj-box.is-flash { border-color: var(--text-secondary); box-shadow: 0 0 0 1px var(--text-secondary), var(--shadow-1); }
+.bj-box--you.is-active { border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
+
+/* The glow is its own layer so only its opacity pulses; animating the box's
+   box-shadow would repaint it every frame. An outer box-shadow is clipped to
+   outside the border box, so the box's contents stay clean. An openable seat
+   already has its own marker and is never on turn at the same time. */
+.bj-box.is-active:not(.is-openable)::after, .bj-hand.is-active::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  animation: bj-turn-glow 1.2s ease-in-out infinite alternate;
+}
+.bj-box--you.is-active:not(.is-openable)::after, .bj-hand.is-active::after {
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--red) 55%, transparent);
+}
+@keyframes bj-turn-glow {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bj-box.is-active:not(.is-openable)::after, .bj-hand.is-active::after { animation: none; opacity: 0.7; }
+}
+
+/* Your own box rises by 5% of a card's height on your turn and sits at 0.82 while
+   anyone else plays. The whole plate moves, so the name and total stay with the
+   fan instead of the cards sliding up over the label. --you-card-w is the fan's
+   own card width (set per viewport below), the lift's reference. */
+.bj-box.is-mine { transform: translateY(calc(var(--you-card-w) * -0.07)); }
+.bj-box.is-waiting { opacity: 0.82; }
 
 .bj-box__row { display: flex; align-items: baseline; gap: 6px; max-width: 100%; }
 .bj-box__name { font-size: clamp(11px, 1.4vw, 13px); font-family: var(--font-display); font-weight: 700; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -209,7 +251,8 @@ button.bj-box:not(:disabled) { cursor: pointer; }
    capped for the same reason as the small size above, just at a size a
    5-card hand still clears the spec's percentage floors comfortably at
    (see the measured table in the PR description). */
-.bj-box--you .bj-box__cards { --card-w: clamp(56px, 20vh, 110px); }
+.bj-box--you { --you-card-w: clamp(56px, 20vh, 110px); }
+.bj-box--you .bj-box__cards { --card-w: var(--you-card-w); }
 
 .bj-box__total { font-size: clamp(11px, 1.4vw, 13px); font-family: var(--font-display); font-weight: 700; color: var(--red-deep); min-height: 1.2em; font-variant-numeric: lining-nums tabular-nums; }
 .bj-box__result { font-size: clamp(10.5px, 1.3vw, 12.5px); min-height: 1.2em; text-align: center; }
@@ -265,8 +308,25 @@ button.bj-box:not(:disabled) { cursor: pointer; }
      pixel to the bar's height. */
   background: var(--controls-bg); border-radius: var(--r-ui) var(--r-ui) 0 0;
   box-shadow: inset 0 1px 0 var(--hairline), var(--shadow-paper);
+  transition: opacity var(--dur-med) var(--ease-std), transform var(--dur-med) var(--ease-std);
 }
 .bj-actions .btn { padding: 9px 16px; font-size: clamp(14px, 1.8vw, 16px); }
+/* Not your turn: the bar steps back. Betting and the insurance prompt are never
+   waiting (they are the player's to act on), so only a round in someone else's
+   hands dims it. The caption goes to full ink so what is left of it, "Bot is
+   playing" or the hint, still reads at 0.55. */
+.bj-actions.is-waiting { opacity: 0.55; transform: translateY(6px); }
+/* Reduced motion keeps the dim and drops the lift and the settle. */
+@media (prefers-reduced-motion: reduce) {
+  .bj-hands.is-mine:not(.has-split), .bj-box.is-mine { transform: none; }
+  .bj-actions.is-waiting { transform: none; }
+}
+.bj-actions.is-waiting .bj-hint, .bj-actions.is-waiting .bj-actions__label { color: var(--text); }
+
+/* Animations off in the profile: the lift and the dim land at once. The
+   American banner measures the hand's rect right after the dealer's last
+   card, which a lift still easing back would skew. */
+.bj-table.is-still .bj-hands, .bj-table.is-still .bj-hand, .bj-table.is-still .bj-box, .bj-table.is-still .bj-actions { transition: none; }
 
 /* --- betting controls: bet readout, chips, Clear, Repeat bet and Deal, all
    one row in the action row, whenever there is no round in progress. One row
@@ -378,7 +438,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
      = 21.7% of 390) with room for the row to actually fit under the hud and
      the action bar — 19vh (the un-scoped preferred value) was sized before
      the cloth's real hud/action budget at this height was measured. */
-  .bj-box--you .bj-box__cards { --card-w: clamp(52px, 15.5vh, 100px); }
+  .bj-box--you { --you-card-w: clamp(52px, 15.5vh, 100px); }
   /* Icon only: the "Swap" caption is the first thing to give way at this
      height, same as the banner's reason line below — the circular badge
      alone is still a clear, discoverable affordance. The note stays
@@ -431,7 +491,7 @@ button.bj-box:not(:disabled) { cursor: pointer; }
   /* Still clears the >=18%-of-viewport-height floor at 844x330 (14vh*1.4 =
      19.6% of 330) — 17.6vh (matching --card-w's own reduction above) left
      the row taller than this height's real hud/action budget allows. */
-  .bj-box--you .bj-box__cards { --card-w: clamp(48px, 14vh, 90px); }
+  .bj-box--you { --you-card-w: clamp(48px, 14vh, 90px); }
   .bj-swap__icon { width: clamp(24px, 4vh, 32px); height: clamp(24px, 4vh, 32px); }
   .bj-actions { min-height: 22px; padding: 1px 8px 2px; gap: 5px; }
   .bj-actions .btn { padding: 3px 8px; font-size: 11px; }

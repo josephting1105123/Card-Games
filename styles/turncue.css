@@ -1,0 +1,46 @@
+/* ==========================================================================
+   turncue.css — the "your turn" banner from src/ui/turncue.js. One pill that
+   flashes over the felt for about a second when the turn comes round to you.
+   Shared by every table, so it takes its position from --turncue-top on the
+   host (default 56%) rather than from any one game's layout.
+   ========================================================================== */
+
+.turncue {
+  position: absolute; left: 50%; top: var(--turncue-top, 56%);
+  /* Above cards and controls (z-index up to 6 inside the tables), below the
+     modal overlays. */
+  z-index: calc(var(--z-overlay) - 1);
+  transform: translate(-50%, -50%);
+  padding: 8px 20px; border-radius: var(--r-pill);
+  background: var(--red); color: var(--on-red);
+  font-family: var(--font-display); font-weight: 700;
+  font-size: clamp(15px, 2.4vw, 22px); line-height: 1.2; white-space: nowrap;
+  box-shadow: var(--shadow-1);
+  pointer-events: none;
+  /* backwards, not forwards: once the entrance is over the rule above is the
+     resting state, which lets .is-leaving fade it with a plain transition. */
+  animation: turncue-in var(--dur-slow) var(--ease) backwards;
+  transition: opacity var(--dur-slow) var(--ease-std);
+}
+.turncue.is-leaving { opacity: 0; }
+/* The turn passed on while the banner was up. animation: none hands the fade
+   to the transition even if the entrance is still running, which would
+   otherwise hold opacity until it ended. */
+.turncue.is-dismissed {
+  opacity: 0; animation: none;
+  transition-duration: var(--dur-med);
+}
+
+@keyframes turncue-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes turncue-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turncue { animation-name: turncue-fade; }
+}
