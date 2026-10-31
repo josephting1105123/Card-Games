@@ -58,6 +58,9 @@
 .he-felt {
   position: relative; min-height: 0; margin: 0 clamp(8px, 2vw, 24px);
   font-size: var(--he-fs);
+  /* The default 56% lands on the pot line under the board. 74% is the clear band
+     between the pot and your plate at every size from 667x375 to 1920x1080. */
+  --turncue-top: 74%;
 }
 .he-rail {
   position: absolute; inset: 7% 7% 9% 7%; border-radius: 50%;
@@ -123,6 +126,22 @@
 
 .he-seat.is-folded .he-seat__plate { opacity: 0.45; }
 .he-seat.is-turn .he-seat__plate { box-shadow: 0 0 0 2px var(--red), var(--shadow-1); }
+/* The glow is its own layer so only opacity animates. z-index -1 keeps it under
+   the plate's text and the dealer disc; the plate already makes a stacking
+   context (position + z-index), so it cannot slip behind the felt. */
+.he-seat__plate::after {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--red) 60%, transparent);
+  opacity: 0; pointer-events: none;
+}
+.he-seat.is-turn .he-seat__plate::after { animation: he-turn-glow 1.2s ease-in-out infinite alternate; }
+@keyframes he-turn-glow {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .he-seat.is-turn .he-seat__plate::after { animation: none; opacity: 0.7; }
+}
 .he-seat.is-winner .he-seat__plate { box-shadow: 0 0 0 2px var(--coin), 0 0 0 4px var(--coin-edge), var(--shadow-1); }
 
 .he-bubble {
@@ -219,15 +238,33 @@
   padding: 6px clamp(10px, 2vw, 24px) 8px;
   background: var(--controls-bg); border-top: 1px solid var(--hairline);
 }
-.he-hole { display: flex; gap: 4px; flex: none; }
+/* --he-hole-lift is 5% of a card's height (cards are 100:140), so the hand
+   rises with the card size rather than by a fixed pixel count. The wrapper
+   carries the lift because the cards themselves run the he-deal animation. */
+.he-hole {
+  --he-hole-lift: calc(var(--he-hole-card) * 1.4 * 0.05);
+  display: flex; gap: 4px; flex: none;
+  transition: transform var(--dur-slow) var(--ease-std), opacity var(--dur-slow) var(--ease-std);
+}
 .he-hole .card { --card-w: var(--he-hole-card); }
+.he-hole.is-mine { transform: translateY(calc(var(--he-hole-lift) * -1)); }
+.he-hole.is-waiting { opacity: 0.82; }
 .he-hole.is-folded { opacity: 0.5; }
 .he-hand { flex: 0 0 clamp(84px, 13vw, 150px); min-width: 0; font-family: var(--font-display); }
 .he-hand small { display: block; font-size: 0.78em; font-weight: 600; color: var(--text-tertiary); }
 .he-hand b { display: block; font-size: clamp(11px, 3vh, 16px); line-height: 1.15; color: var(--red-deep); }
 .he-hand b.is-error { color: var(--danger); }
 
-.he-controls { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: clamp(3px, 0.9vh, 6px); }
+.he-controls {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: clamp(3px, 0.9vh, 6px);
+  transition: opacity var(--dur-med) var(--ease-std), transform var(--dur-med) var(--ease-std);
+}
+.he-controls.is-waiting { opacity: 0.55; transform: translateY(6px); }
+/* Reduced motion keeps the dim and drops the lift and the settle. */
+@media (prefers-reduced-motion: reduce) {
+  .he-hole.is-mine { transform: none; }
+  .he-controls.is-waiting { transform: none; }
+}
 .he-controls[hidden], .he-result[hidden] { display: none; }
 .he-row { display: flex; align-items: center; gap: clamp(4px, 0.8vw, 8px); }
 .he-dock .btn {

@@ -25,6 +25,7 @@ import { MAX_BUYIN_BB, buyIn, minBuyIn } from '../games/holdem/tables.js';
 import { cardElement, installCardDefs } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
+import { createTurnCue } from './turncue.js';
 
 const CAPTION_MS = 2600;
 // The reveal gets a second on its own before the result bar takes the dock.
@@ -317,6 +318,7 @@ export class HoldemView {
     this.legalKey = '';
     this.raiseTo = 0;
     this.controlsOn = false;
+    this.mine = false;
     this.seatNodes = [];
     this.build();
     this.onKey = (event) => this.handleKey(event);
@@ -355,6 +357,7 @@ export class HoldemView {
     n.caption = el('div.he-caption', { 'aria-hidden': 'true' });
     n.layer = el('div.he-seats');
     n.felt = el('div.he-felt', el('div.he-rail'), n.center, n.layer, n.caption);
+    this.cue = createTurnCue({ host: n.felt, online: !!this.meta.online });
 
     n.holeCards = el('div.he-hole');
     n.handLabel = el('small', 'Your hand');
@@ -453,6 +456,11 @@ export class HoldemView {
     this.boardCount = Math.min(opts.boardCount ?? sv.board.length, sv.board.length);
     this.reveal = !!opts.reveal && !!sv.result;
     this.winners = this.computeWinners();
+    // The seat ring follows the engine's turn; the banner, the lift and the
+    // controls wait until the board has landed and the buttons are live, so the
+    // cue never fires while there is still nothing to press.
+    this.mine = this.boardCount === sv.board.length && sv.phase !== Phase.FINISHED
+      && sv.turn === sv.seat && opts.controls !== false;
     this.ensureSeats();
     this.renderHud();
     this.renderSeats();
@@ -460,6 +468,7 @@ export class HoldemView {
     this.renderCenter();
     this.renderDock();
     this.renderControls();
+    this.cue.set(this.mine, 'Your action');
   }
 
   /** Who won a pot, and which of their cards made the hand. */
@@ -695,6 +704,9 @@ export class HoldemView {
       node.classList.toggle('is-dim', decided && !mine?.has(id));
     }
     n.holeCards.classList.toggle('is-folded', sv.players[sv.seat].folded);
+    n.holeCards.classList.toggle('is-mine', this.mine);
+    // Dim only while a hand is being played; the result screen shows them at full strength.
+    n.holeCards.classList.toggle('is-waiting', !this.mine && sv.phase !== Phase.FINISHED);
     this.renderHandName();
   }
 
@@ -724,6 +736,8 @@ export class HoldemView {
     const status = me0.folded ? 'You folded' : me0.allIn ? 'You’re all-in' : '';
     n.status.textContent = status;
     n.status.hidden = !status;
+    // A status line is text, not buttons waiting their turn: keep it legible.
+    n.controls.classList.toggle('is-waiting', !this.mine && !status);
     n.actRow.hidden = !!status;
     n.sizeRow.hidden = !!status;
     if (status) return;
@@ -837,6 +851,7 @@ export class HoldemView {
 
   destroy() {
     document.removeEventListener('keydown', this.onKey);
+    this.cue.destroy();
     clearTimeout(this.captionTimer);
     clearTimeout(this.errorTimer);
     this.teardownFullscreen?.();

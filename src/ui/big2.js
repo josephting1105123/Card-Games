@@ -25,6 +25,7 @@ import { findHints } from '../games/big2/moves.js';
 import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
+import { createTurnCue } from './turncue.js';
 
 const CAPTION_MS = 2600;
 // The reveal gets a second on its own before the result sheet covers it.
@@ -335,6 +336,9 @@ export class Big2View {
       ),
     );
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    // The felt is position:relative, so the banner centres on the cloth and
+    // stays clear of the hand, which sits in the dock below it.
+    this.cue = createTurnCue({ host: n.felt, online: !!this.meta.online });
   }
 
   buildSeat(side) {
@@ -358,6 +362,24 @@ export class Big2View {
     this.renderHand();
     this.renderControls();
     this.renderHud();
+    // Deferred so a first update() that dealIn() follows in the same tick sees
+    // is-dealing first; otherwise "Your lead" would flash under the flying cards
+    // and be gone before the hand appears. dealIn() calls this again when it ends.
+    queueMicrotask(() => this.syncTurn());
+  }
+
+  /** Lift, dim and flash according to whose turn it is; safe to call at any time. */
+  syncTurn() {
+    const view = this.view;
+    if (!view || !this.cue) return;
+    if (this.nodes.table.classList.contains('is-dealing')) return;
+    const playing = view.phase === Phase.PLAYING;
+    const mine = this.isYourTurn();
+    // Between hands both classes are off, so the reveal sits at full strength.
+    this.nodes.hand.classList.toggle('is-mine', mine);
+    this.nodes.hand.classList.toggle('is-waiting', playing && !mine);
+    this.nodes.controls.classList.toggle('is-waiting', playing && !mine);
+    this.cue.set(mine, view.trick ? 'Your turn' : 'Your lead');
   }
 
   /** Solo tables pass no currency and keep the chip format; a room passes its coin. */
@@ -677,7 +699,13 @@ export class Big2View {
     const priorDisabled = controlButtons.map((b) => b.disabled);
     for (const b of controlButtons) b.disabled = true;
 
+    // The new hand is already in the DOM, so the hide has to be instant or the
+    // freshly dealt cards would show for a fade before the flyers start.
+    const fading = [this.nodes.hand, this.nodes.controls];
+    for (const node of fading) node.style.transition = 'none';
     table.classList.add('is-dealing');
+    void table.offsetWidth;
+    for (const node of fading) node.style.transition = '';
 
     let skipped = false;
     let resolveSkip;
@@ -695,7 +723,14 @@ export class Big2View {
     const finish = () => {
       table.removeEventListener('pointerdown', onTap, { capture: true });
       dealer.remove();
+      // The flyers vanish the instant the hand returns, so its opacity has to
+      // snap rather than fade in under them; only the lift is allowed to ease.
+      const hand = this.nodes.hand;
+      hand.style.transitionProperty = 'transform';
       table.classList.remove('is-dealing');
+      this.syncTurn();
+      void hand.offsetWidth;
+      hand.style.transitionProperty = '';
       controlButtons.forEach((b, i) => { b.disabled = priorDisabled[i]; });
       for (const seatNode of [this.nodes.seatTop, this.nodes.seatLeft, this.nodes.seatRight]) {
         for (const child of seatNode.backs.children) child.style.opacity = '';
@@ -847,6 +882,7 @@ export class Big2View {
   destroy() {
     clearTimeout(this.resultTimer);
     clearTimeout(this.captionTimer);
+    this.cue?.destroy();
     this.teardownFullscreen?.();
     clear(this.root);
   }

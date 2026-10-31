@@ -18,6 +18,7 @@ import { findHint, legalPlays } from '../games/doudizhu/moves.js';
 import { bombCardIds, cardElement, installCardDefs, markBomb } from './cardart.js';
 import { announce, clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
+import { createTurnCue } from './turncue.js';
 
 // Every card on this table uses the "bold" style (spec: cardElement(card, {
 // style: 'bold' })) — Dou Di Zhu is the only table built on it so far.
@@ -70,6 +71,7 @@ export class TableView {
   }
 
   build() {
+    this.cue?.destroy();
     clear(this.root);
     this.nodes = {};
     const n = this.nodes;
@@ -146,6 +148,8 @@ export class TableView {
       ),
     );
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    this.cue = createTurnCue({ host: n.felt, online: !!this.meta.online });
+    this.cueWasMine = false;
   }
 
   buildSeat(side) {
@@ -187,7 +191,77 @@ export class TableView {
     this.renderBidding();
     this.renderHand();
     this.renderControls();
+    this.renderTurn();
     this.renderHud();
+    // Callers update() and then dealIn() in the same tick, and dealIn is what
+    // raises `dealing`. Looking at it a microtask later is what lets the
+    // banner wait for the cards to land instead of flashing over the shuffle.
+    queueMicrotask(() => this.syncTurnCue());
+  }
+
+  /** Hand and controls say whose move it is; the banner is syncTurnCue's. */
+  renderTurn() {
+    const mine = this.isYourTurn();
+    const { hand, controls } = this.nodes;
+    hand.classList.toggle('is-mine', mine);
+    // A finished hand is neither waiting nor yours: full opacity, no lift.
+    hand.classList.toggle('is-waiting', !mine && this.view.phase !== Phase.FINISHED);
+    controls.classList.toggle('is-mine', mine);
+  }
+
+  syncTurnCue() {
+    if (!this.cue || this.dealing || !this.view) return;
+    const view = this.view;
+    const bidding = view.phase === Phase.BIDDING;
+    const mine = this.isYourTurn();
+    const edge = mine && !this.cueWasMine;
+    this.cueWasMine = mine;
+    this.cue.set(mine, bidding ? 'Your call' : view.trick ? 'Your turn' : 'Your lead');
+    // Only a fresh banner is placed, so a live one never slides mid-flash. This
+    // runs after set() because the banner's own height decides where it fits;
+    // the node is laid out at the next paint, so nothing shows in between.
+    if (!edge) return;
+    if (bidding) this.placeBidBanner();
+    else this.nodes.felt.style.removeProperty('--turncue-top');
+  }
+
+  /**
+   * The bid panel owns the middle of the felt, so the banner goes in the clear
+   * band under it, above the hand, where it covers nothing. On a short phone
+   * that band is too thin, so it goes above the panel: in the gap under the
+   * landlord's three if there is one, else above the three, in the empty middle
+   * of the HUD bar.
+   */
+  placeBidBanner() {
+    const { felt, bidPanel, hand, handInner } = this.nodes;
+    const banner = felt.querySelector('.turncue');
+    if (!banner || bidPanel.hidden) {
+      felt.style.removeProperty('--turncue-top');
+      return;
+    }
+    // 3px each side is enough to clear the panel's edge and the card tops; the
+    // 844x390 band is 47.9px against a 40.3px banner, so a wider margin would
+    // push it above the panel, onto the landlord's three.
+    const gap = 3;
+    const bannerH = banner.offsetHeight;
+    const panel = bidPanel.getBoundingClientRect();
+    // The card tops are the hand's visible edge; the wrapper's own box starts
+    // above them. The fan is only just starting its rise on the update that
+    // hands over the turn, so measure where it will rest, not where it is.
+    const card = handInner.querySelector('.card');
+    const cardRect = (card ?? hand).getBoundingClientRect();
+    const rise = new DOMMatrixReadOnly(getComputedStyle(hand).transform).m42;
+    const restingLift = hand.classList.contains('is-mine') && card ? -0.05 * cardRect.height : 0;
+    const handTop = cardRect.top - rise + restingLift;
+
+    const three = this.nodes.bottom.getBoundingClientRect();
+    const roomBelow = handTop - panel.bottom;
+    const roomAbove = panel.top - three.bottom;
+    let centre;
+    if (roomBelow >= bannerH + gap * 2) centre = panel.bottom + roomBelow / 2;
+    else if (roomAbove >= bannerH + gap * 2) centre = three.bottom + roomAbove / 2;
+    else centre = Math.min(panel.top, three.top) - gap - bannerH / 2;
+    felt.style.setProperty('--turncue-top', `${(centre - felt.getBoundingClientRect().top).toFixed(1)}px`);
   }
 
   setBankroll(value) {
@@ -253,7 +327,10 @@ export class TableView {
     const felt = this.nodes.felt;
     const N = view.you.hand.length; // 17, pre-bid — the round-robin's per-seat count
 
-    table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+    this.snapHand(() => {
+      table.classList.add('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+    });
+    this.dealing = true;
 
     let skipped = false;
     let resolveSkip;
@@ -273,7 +350,11 @@ export class TableView {
       table.removeEventListener('pointerdown', onTap, { capture: true });
       dealer.remove();
       if (this.dealer === dealer) this.dealer = null;
-      table.classList.remove('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+      this.snapHand(() => {
+        table.classList.remove('is-dealing-left', 'is-dealing-right', 'is-dealing-self', 'is-dealing-bottom', 'is-dealing-bid');
+      });
+      this.dealing = false;
+      this.syncTurnCue();
       // Belt and suspenders: a fire-and-forget landing callback (below) can
       // still fire after this runs. Clearing the inline opacity it set is
       // harmless either way, since the class that hid these is already gone.
@@ -436,6 +517,21 @@ export class TableView {
 
     // --- done: reveal everything, remove every flyer, in one step ---------
     finish();
+  }
+
+  /**
+   * Run `change` with the hand's fades switched off. The hand now fades between
+   * its turn states, so hiding it for the deal (or un-hiding it as the flyers
+   * are removed) would otherwise fade over 220ms instead of landing on the
+   * frame it should. The forced flush is what makes the change commit while
+   * transitions are off; they come back before the next frame.
+   */
+  snapHand(change) {
+    const hand = this.nodes.hand;
+    hand.classList.add('is-snap');
+    change();
+    void hand.offsetWidth;
+    hand.classList.remove('is-snap');
   }
 
   clearSpeech() {
@@ -708,6 +804,13 @@ export class TableView {
     return this.view?.phase === Phase.PLAYING && this.view.turn === this.view.seat;
   }
 
+  /** Your move, whether that is a call or a play. */
+  isYourTurn() {
+    const view = this.view;
+    if (view?.phase === Phase.BIDDING) return view.bidding?.turn === view.seat;
+    return this.isYourPlayTurn();
+  }
+
   selectionCards() {
     const byId = new Map(this.view.you.hand.map((c) => [c.id, c]));
     return [...this.selected].map((id) => byId.get(id)).filter(Boolean);
@@ -791,6 +894,8 @@ export class TableView {
     this.dealer?.remove();
     this.dealer = null;
     this.teardownFullscreen?.();
+    this.cue?.destroy();
+    this.cue = null;
     clear(this.root);
   }
 }

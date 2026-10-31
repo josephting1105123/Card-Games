@@ -1329,6 +1329,7 @@ class LanScreens {
       this.table = new Big2View({
         root: this.root,
         meta: {
+          online: true,
           lobbyName: `Room ${this.room?.code ?? ''}`,
           rateLabel: `Per card ${formatMoney(settings.pot / 10, settings.currency, true)}`,
           rate: settings.pot / 10,
@@ -1348,6 +1349,7 @@ class LanScreens {
       this.table = new HoldemView({
         root: this.root,
         meta: {
+          online: true,
           tableName: `Room ${this.room?.code ?? ''}`,
           blinds: `${formatMoney(blinds.small, settings.currency, true)}/${formatMoney(blinds.big, settings.currency, true)}`,
           currency: settings.currency,
@@ -1364,6 +1366,7 @@ class LanScreens {
       this.table = new BjOnlineView({
         root: this.root,
         meta: {
+          online: true,
           lobbyName: `Room ${this.room?.code ?? ''}`,
           currency: settings.currency,
           bankroll: mine?.chips ?? settings.startingChips,
@@ -1382,6 +1385,7 @@ class LanScreens {
       this.table = new TableView({
         root: this.root,
         meta: {
+          online: true,
           lobbyName: `Room ${this.room?.code ?? ''}`,
           potLabel: formatMoney(settings.pot, settings.currency, true),
           bankroll: mine?.chips ?? settings.startingChips,

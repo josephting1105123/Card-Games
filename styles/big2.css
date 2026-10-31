@@ -91,9 +91,24 @@
   color: var(--text); font-family: var(--font-display); font-weight: 700;
   font-size: clamp(11px, 1.4vw, 13.5px); max-width: 100%;
 }
-/* The ring's second pixel is a shadow, so the plate keeps its 1px border and
-   its box. */
-.b2-seat__plate.is-turn { border-color: var(--red); box-shadow: 0 0 0 1px var(--red), var(--shadow-1); }
+/* The ring beyond the 1px border is a shadow, so the plate keeps its box. The
+   glow is a pseudo-element so only its opacity pulses: animating box-shadow
+   itself would repaint the plate every frame. */
+.b2-seat__plate { position: relative; }
+.b2-seat__plate::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--red) 55%, transparent);
+  opacity: 0; pointer-events: none;
+}
+.b2-seat__plate.is-turn { border-color: var(--red); box-shadow: 0 0 0 2px var(--red), var(--shadow-1); }
+.b2-seat__plate.is-turn::after { animation: b2-turn-glow 1.2s ease-in-out infinite alternate; }
+@keyframes b2-turn-glow {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .b2-seat__plate.is-turn::after { animation: none; opacity: 0.7; }
+}
 .b2-seat__avatar {
   width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none;
   font-size: 12px; font-weight: 700; color: var(--text);
@@ -187,12 +202,17 @@
   /* A selected card ends up 4% of its height above the hand box (it rises 22%,
      the run-off below pushed it 18% down), and the dock's 2px top padding
      already counts toward the gap, so this leaves the same >=2px of daylight
-     above the red ring the old headroom did. */
-  margin-bottom: calc(var(--b2-hand-h) * 0.04 + 2px); z-index: 4; flex-shrink: 0; /* see .b2-seat--top's comment */
+     above the red ring the old headroom did. Plus the 5% the hand lifts on your
+     turn (.b2-hand.is-mine), which otherwise eats that daylight. */
+  margin-bottom: calc(var(--b2-hand-h) * 0.09 + 2px); z-index: 4; flex-shrink: 0; /* see .b2-seat--top's comment */
   display: flex; align-items: center; justify-content: center; gap: clamp(5px, 1vw, 12px); flex-wrap: nowrap;
   max-width: 96%; padding: 5px clamp(8px, 1.4vw, 14px); border-radius: var(--r-ui);
   background: var(--controls-bg); border: 1px solid var(--hairline); box-shadow: var(--shadow-paper);
+  transition: opacity var(--dur-med) var(--ease-std), transform var(--dur-med) var(--ease-std);
 }
+/* Off your turn the bar recedes; JS only sets this while a hand is in play, so
+   the result reveal and the deal keep their own rules. */
+.b2-controls.is-waiting { opacity: 0.55; transform: translateY(6px); }
 /* Hand over: hidden during the reveal, but in flow so nothing shifts. */
 .b2-controls.is-ended { visibility: hidden; }
 .b2-controls .btn { padding: clamp(5px, 0.9vh, 8px) clamp(8px, 1.6vw, 16px); font-size: clamp(12px, 1.5vw, 15px); }
@@ -217,6 +237,16 @@
 .b2-hand {
   position: relative; height: var(--b2-hand-h);
   margin: 0 auto; width: 100%;
+  transition: transform var(--dur-slow) var(--ease-std), opacity var(--dur-slow) var(--ease-std);
+}
+/* The lift goes on this wrapper because .b2-hand__inner already carries the
+   18% run-off transform. 5% of a card's height, and a card is --b2-hand-h tall. */
+.b2-hand.is-mine { transform: translateY(calc(var(--b2-hand-h) * -0.05)); }
+.b2-hand.is-waiting { opacity: 0.82; }
+/* Reduced motion keeps the dim and drops the lift and the settle. */
+@media (prefers-reduced-motion: reduce) {
+  .b2-hand.is-mine { transform: none; }
+  .b2-controls.is-waiting { transform: none; }
 }
 .b2-hand .card { --card-w: calc(var(--b2-hand-h) / 1.4); }
 /* 18% of one card's height, taken off --b2-hand-h as table.css does. */

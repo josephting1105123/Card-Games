@@ -36,6 +36,7 @@ import { cardElement, installCardDefs } from './cardart.js';
 import { clear, el, wait } from './dom.js';
 import { enableTableFullscreen } from './fullscreen.js';
 import { topbar } from './screens.js';
+import { createTurnCue } from './turncue.js';
 
 const RULES_TEXT = {
   american: [
@@ -202,6 +203,7 @@ export class BlackjackGame {
     this.dealerRevealed = false;
     this.roundFinished = false;
     this.teardownFullscreen = null;
+    this.turnCue = null;
     this.rng = makeRng(randomSeed());
 
     // Malaysian only, from here down. `role` is which of the five boxes the
@@ -245,6 +247,8 @@ export class BlackjackGame {
   unmount() {
     this.stopped = true;
     this.teardownFullscreen?.();
+    this.turnCue?.destroy();
+    this.turnCue = null;
   }
 
   // --- betting -------------------------------------------------------------
@@ -425,6 +429,10 @@ export class BlackjackGame {
     // detached nodes each round.
     this.teardownFullscreen?.();
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    // The felt is rebuilt every deal, so the cue is too; a fresh one starts
+    // "not your turn", which is what the new round is until the deal lands.
+    this.turnCue?.destroy();
+    this.turnCue = createTurnCue({ host: n.felt });
 
     this.paintDealer();
     this.paintHands();
@@ -498,8 +506,42 @@ export class BlackjackGame {
     this.paintHud();
   }
 
+  /** Where the round stands for the player: 'mine' while Hit/Stand are theirs,
+   * 'wait' while the dealer plays out, '' when there is nothing to act on or
+   * wait for (betting, the insurance prompt, a finished round). */
+  turnState() {
+    const r = this.round;
+    if (!r || this.roundFinished) return '';
+    if (r.phase === 'player') return 'mine';
+    return r.phase === 'insurance' ? '' : 'wait';
+  }
+
+  /** Lift, dim and the turn banner all follow turnState(). Called from
+   * paintActions, which runs once the deal has landed and after every action,
+   * so nothing lifts while the deal flight is still measuring its targets. */
+  paintTurn() {
+    const n = this.nodes;
+    const state = this.turnState();
+    const mine = state === 'mine';
+    n.table.classList.toggle('is-still', !this.animationsOn());
+    n.handsRow.classList.toggle('is-mine', mine);
+    n.handsRow.classList.toggle('is-waiting', state === 'wait');
+    n.handsRow.classList.toggle('has-split', (this.round?.hands.length ?? 0) > 1);
+    n.actions.classList.toggle('is-waiting', state === 'wait');
+    const flashed = this.turnCue?.set(mine, 'Your turn');
+    if (flashed) {
+      // The banner sits in the gap between the dealer's cards and the hand,
+      // where it covers the least; measured once per banner, as showBanner
+      // does, so a Hit that reflows the layout does not move a live one.
+      const feltTop = n.felt.getBoundingClientRect().top;
+      const gap = (n.dealerCards.getBoundingClientRect().bottom + n.handsRow.getBoundingClientRect().top) / 2;
+      n.felt.style.setProperty('--turncue-top', `${gap - feltTop}px`);
+    }
+  }
+
   paintActions() {
     const n = this.nodes;
+    this.paintTurn();
     clear(n.actions);
     n.actions.classList.remove('is-betting');
     if (!this.round || this.roundFinished) { this.paintBettingControls(); return; }
@@ -895,6 +937,8 @@ export class BlackjackGame {
     );
     this.teardownFullscreen?.();
     this.teardownFullscreen = enableTableFullscreen(n.table, hud);
+    this.turnCue?.destroy();
+    this.turnCue = createTurnCue({ host: n.felt });
   }
 
   paintMHud() {
@@ -1050,8 +1094,44 @@ export class BlackjackGame {
     n.swapNote.style.display = note ? '' : 'none';
   }
 
+  /** Same idea as turnState() for the merged table: 'mine' when the human's
+   * seat is up (or, banking, when it is time to hit and open hands), 'wait'
+   * while anyone else plays, '' between rounds. */
+  mTurnState() {
+    const r = this.mround;
+    if (!r || this.mFinished || r.settled) return '';
+    if (r.phase === 'players') return r.players[r.activeSeat]?.isHuman ? 'mine' : 'wait';
+    if (r.phase === 'banker') return this.role === 'banker' ? 'mine' : 'wait';
+    return '';
+  }
+
+  /** Lifts and dims the human's own box (the plate, so the name and total
+   * travel with the fan) and fires the banner. The other boxes' rings come
+   * from highlightActiveMSeat/setMBankerActive. */
+  paintMTurn() {
+    const n = this.mnodes;
+    const state = this.mTurnState();
+    const mine = state === 'mine';
+    n.table.classList.toggle('is-still', !this.animationsOn());
+    const yours = this.role === 'banker' ? n.banker.box : n.seats[0].box;
+    for (const box of [n.banker.box, ...n.seats.map((s) => s.box)]) {
+      box.classList.toggle('is-mine', box === yours && mine);
+      box.classList.toggle('is-waiting', box === yours && state === 'wait');
+    }
+    n.actions.classList.toggle('is-waiting', state === 'wait');
+    const flashed = this.turnCue?.set(mine, this.role === 'banker' ? 'Your call' : 'Your turn');
+    if (flashed) {
+      // The swap row between the banker and the seats is idle mid-round.
+      // Measured once per banner so a reflow does not move a live one.
+      const feltTop = n.felt.getBoundingClientRect().top;
+      const mid = n.midRow.getBoundingClientRect();
+      n.felt.style.setProperty('--turncue-top', `${(mid.top + mid.bottom) / 2 - feltTop}px`);
+    }
+  }
+
   paintMActions() {
     const n = this.mnodes;
+    this.paintMTurn();
     clear(n.actions);
     n.actions.classList.remove('is-betting');
     this.paintMSwap();
@@ -1306,6 +1386,13 @@ export class BlackjackGame {
 
   clearMSeatHighlights() {
     this.mnodes.seats.forEach((s) => s.box.classList.remove('is-active'));
+    this.mnodes.banker.box.classList.remove('is-active');
+  }
+
+  /** The banker's box takes the turn ring once the seats are done, so a bot
+   * banker's play reads as someone's turn the way a bot seat's does. */
+  setMBankerActive() {
+    this.mnodes.banker.box.classList.add('is-active');
   }
 
   /** Drives seats in order: a bot's whole turn resolves and animates in one
@@ -1395,6 +1482,7 @@ export class BlackjackGame {
    * American's flipHoleCard) and then plays a fixed policy one action per
    * bankerBotStep() call, paced ~700ms, painting only what changed. */
   async startMBankerPhase() {
+    this.setMBankerActive();
     this.paintMActions();
     if (this.role === 'banker') {
       this.enableOpenableMSeats();
@@ -1444,11 +1532,13 @@ export class BlackjackGame {
 
   /** A brief highlight on the seat an opening just settled — border/shadow
    * only (the same transition .bj-box already carries for is-active/
-   * is-openable), not a layout property, so it never causes a reflow. */
+   * is-openable), not a layout property, so it never causes a reflow.
+   * is-flash, not is-active: the turn ring pulses and goes red on your own
+   * seat, and a half-second flash should be neither. */
   flashMSeat(i) {
     const box = this.mnodes.seats[i].box;
-    box.classList.add('is-active');
-    setTimeout(() => box.classList.remove('is-active'), 500);
+    box.classList.add('is-flash');
+    setTimeout(() => box.classList.remove('is-flash'), 500);
   }
 
   async onMBankerHit() {
