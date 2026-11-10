@@ -466,13 +466,13 @@ test('PUBLIC_HOSTS refuses an upgrade whose Host is not listed, and an empty lis
   }
 });
 
-test('the public host does not serve hidden folders or the server and test sources', async () => {
+test('both hosts refuse hidden folders; only the public host refuses the server and test sources', async () => {
   const pub = await start({ public: true });
   const lan = await start({ public: false });
   try {
     const get = (port, path) => fetch(`http://127.0.0.1:${port}${path}`).then((res) => res.status);
-    assert.equal(await get(lan.port, '/server/server.js'), 200, 'the LAN host still serves everything');
-    assert.equal(await get(lan.port, '/.claude/settings.json'), 200);
+    assert.equal(await get(lan.port, '/server/server.js'), 200, 'the LAN host still serves the server sources');
+    assert.equal(await get(lan.port, '/.claude/settings.json'), 404, 'the LAN host refuses hidden folders too');
     for (const path of ['/.claude/settings.json', '/server/server.js', '/test/online.test.js', '/Server/server.js', '/%2eclaude/settings.json', '/src/../server/server.js']) {
       assert.equal(await get(pub.port, path), 404, `${path} should be refused`);
     }
@@ -481,6 +481,50 @@ test('the public host does not serve hidden folders or the server and test sourc
   } finally {
     await pub.app.close();
     await lan.app.close();
+  }
+});
+
+test('an upgrade request with an unparseable target gets a 400 and does not crash the server', async () => {
+  const { app, port } = await start();
+  try {
+    const status = await new Promise((resolve, reject) => {
+      const socket = net.connect(port, '127.0.0.1');
+      let received = '';
+      const timer = setTimeout(() => { socket.destroy(); reject(new Error('no response')); }, 2000);
+      socket.on('error', () => {});
+      socket.on('data', (chunk) => { received += chunk.toString(); });
+      socket.on('close', () => {
+        clearTimeout(timer);
+        const match = /^HTTP\/1\.1 (\d{3})/.exec(received);
+        if (match) resolve(Number(match[1])); else reject(new Error('closed before a response'));
+      });
+      socket.write([
+        'GET // HTTP/1.1',
+        `Host: 127.0.0.1:${port}`,
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        'Sec-WebSocket-Version: 13',
+        '', '',
+      ].join('\r\n'));
+    });
+    assert.equal(status, 400);
+    const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+    assert.equal(health.status, 200, 'the server must survive the malformed upgrade');
+  } finally {
+    await app.close();
+  }
+});
+
+test('a malformed percent-escape in a path is a 4xx and does not crash the server', async () => {
+  const { app, port } = await start();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/%E0%A4%A`);
+    assert.ok(res.status >= 400 && res.status < 500, `expected a 4xx, got ${res.status}`);
+    const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+    assert.equal(health.status, 200);
+  } finally {
+    await app.close();
   }
 });
 
