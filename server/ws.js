@@ -261,9 +261,16 @@ export function attachWebSocket(server, { path = '/lan', onConnection, heartbeat
   const connections = new Set();
 
   server.on('upgrade', (req, socket) => {
-    const url = new URL(req.url, 'http://localhost');
+    // A client that resets mid-handshake would otherwise raise an unhandled 'error'.
+    socket.on('error', () => {});
+    let url = null;
+    try {
+      url = new URL(req.url, 'http://localhost');
+    } catch {
+      // `//` and similar request targets throw; answer them like any other bad request.
+    }
     const key = req.headers['sec-websocket-key'];
-    if (url.pathname !== path || req.headers.upgrade?.toLowerCase() !== 'websocket' || !key) {
+    if (!url || url.pathname !== path || req.headers.upgrade?.toLowerCase() !== 'websocket' || !key) {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
       return;

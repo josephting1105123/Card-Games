@@ -23,6 +23,7 @@
 import { createServer } from 'node:http';
 import { createReadStream, promises as fs } from 'node:fs';
 import { gzipSync } from 'node:zlib';
+import { pipeline } from 'node:stream';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { attachWebSocket } from './ws.js';
@@ -190,17 +191,22 @@ function etagMatches(header, etag) {
 
 /**
  * Resolve a URL path inside ROOT, refusing anything that climbs out of it (null).
- * On the public host it also refuses files that are not the app (false): hidden
- * folders such as .git and .claude, and the server and test sources.
+ * Hidden folders such as .git and .claude are refused in both modes (false). On
+ * the public host it also refuses the server and test sources. A malformed
+ * percent-escape is treated like a path that climbs out (null).
  */
 function resolvePath(pathname, isPublic = false) {
-  const decoded = decodeURIComponent(pathname);
-  const relative = normalize(decoded).replace(/^(\.\.[/\\])+/, '');
-  if (isPublic) {
-    const segments = relative.split(/[/\\]+/).filter(Boolean);
-    const first = segments[0]?.toLowerCase();
-    if (segments.some((s) => s.startsWith('.')) || first === 'server' || first === 'test') return false;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
   }
+  const relative = normalize(decoded).replace(/^(\.\.[/\\])+/, '');
+  const segments = relative.split(/[/\\]+/).filter(Boolean);
+  const first = segments[0]?.toLowerCase();
+  if (segments.some((s) => s.startsWith('.'))) return false;
+  if (isPublic && (first === 'server' || first === 'test')) return false;
   const target = join(ROOT, relative === '/' || relative === sep ? 'index.html' : relative);
   if (!target.startsWith(ROOT)) return null;
   return target;
@@ -237,7 +243,8 @@ async function serve(req, res, file, headOnly) {
   }
   res.writeHead(200, { ...headers, 'content-length': stat.size });
   if (headOnly) return res.end();
-  return createReadStream(file).pipe(res);
+  // Headers are already sent, so an error can't become a status; pipeline destroys both ends.
+  return pipeline(createReadStream(file), res, () => {});
 }
 
 function json(res, status, body) {
@@ -436,6 +443,8 @@ function printBanner(config) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const app = createAppServer();
+  // Last resort: one unexpected throw in a request path should not end every room.
+  process.on('uncaughtException', (error) => { console.error('[fatal] uncaught exception', error); });
   app.listen().then(() => printBanner(app.config));
   for (const signal of ['SIGINT', 'SIGTERM']) {
     process.on(signal, () => {
