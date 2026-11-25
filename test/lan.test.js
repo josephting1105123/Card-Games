@@ -2061,7 +2061,8 @@ test('a blackjack bet is dropped when its owner leaves', async (t) => {
 });
 
 test('a member who resumes into a seat dealt to a bot cannot play it, and the hand still settles', async (t) => {
-  const host = await startHub();
+  // Pin the deal: a random seed can give the banker a special, which settles the hand at the deal.
+  const host = await startHub({ makeSeed: () => 'resume-0' });
   t.after(() => host.stop());
   const { clients, ids, code, room } = await roomOf(host, ['Alice', 'Bob'], bjSettings);
   const { Alice, Bob } = clients;
@@ -2071,6 +2072,7 @@ test('a member who resumes into a seat dealt to a bot cannot play it, and the ha
 
   Alice.send({ t: 'start' });
   await waitFor(() => room.state);
+  assert.equal(room.phase, 'playing', 'the pinned seed must not deal a banker special');
   const back = await connect(host);
   const views = [];
   back.socket.addEventListener('message', (event) => {

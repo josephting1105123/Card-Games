@@ -46,6 +46,7 @@ export class RoomHub {
       heldSeatTtlMs: HELD_SEAT_TTL_MS,
       maxRooms: MAX_ROOMS,
       maxRoomsPerIp: MAX_ROOMS_PER_IP,
+      makeSeed: () => randomBytes(8).toString('hex'), // tests pin this to get a repeatable deal
       ...options,
     };
     this.sweeper = setInterval(() => this.sweep(), 60_000);
@@ -493,7 +494,7 @@ export class RoomHub {
   deal(room, players = this.lineup(room)) {
     clearTimeout(room.botTimer);
     const { adapter } = room;
-    const seed = randomBytes(8).toString('hex');
+    const seed = this.options.makeSeed();
     room.state = adapter.createGame({
       seed, players, settings: room.settings, previous: room.state, lastHoldemButton: room.lastHoldemButton,
     });
