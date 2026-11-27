@@ -20,4 +20,4 @@ services:
         value: "3"
       # The public host only accepts WebSockets through cards.entropicsoftwarelabs.com by default; PUBLIC_HOSTS=* opens it to the onrender.com hostname for testing before DNS (no env entry needed).
       - key: ALLOWED_ORIGINS
-        value: "https://josephting1105123.github.io,https://entropicsoftwarelabs.com,https://www.entropicsoftwarelabs.com"
+        value: "https://play.entropicsoftwarelabs.com,https://josephting1105123.github.io,https://entropicsoftwarelabs.com,https://www.entropicsoftwarelabs.com"

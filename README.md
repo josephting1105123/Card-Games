@@ -7,7 +7,7 @@
 **Dou Di Zhu, Big Two, Blackjack and Texas Hold'em against bots, in the browser.**<br>
 Installs as an app, runs offline, and has no build step and no dependencies.
 
-[![Play it in your browser](https://img.shields.io/badge/%E2%96%B6_Play_now-in_your_browser-B91C1C?style=for-the-badge)](https://josephting1105123.github.io/Card-Games/)
+[![Play it in your browser](https://img.shields.io/badge/%E2%96%B6_Play_now-in_your_browser-B91C1C?style=for-the-badge)](https://play.entropicsoftwarelabs.com/)
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/josephting1105123/Card-Games/ci.yml?branch=main&style=flat-square&label=tests)](https://github.com/josephting1105123/Card-Games/actions/workflows/ci.yml)
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES_modules-F7DF1E?style=flat-square&logo=javascript&logoColor=black)

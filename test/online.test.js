@@ -146,7 +146,7 @@ test('an upgrade is refused for a foreign Origin and accepted for allowed or abs
     const bad = await rawConnect(port, { origin: 'https://evil.example' });
     assert.equal(bad.status, 403);
     clients.push(bad);
-    for (const origin of [PAGES, `${PAGES}/`, 'https://www.entropicsoftwarelabs.com', `http://127.0.0.1:${port}`, undefined]) {
+    for (const origin of [PAGES, `${PAGES}/`, 'https://play.entropicsoftwarelabs.com', 'https://www.entropicsoftwarelabs.com', `http://127.0.0.1:${port}`, undefined]) {
       const ok = await rawConnect(port, { origin });
       clients.push(ok);
       assert.equal(ok.status, 101, `origin ${origin} should be accepted`);

@@ -14,7 +14,15 @@ beyond what the default `GITHUB_TOKEN` is allowed to do, and
 integration*. Until it is set, the deploy job fails with *Get Pages site failed*;
 after it is set, re-run the workflow and every later push deploys on its own.
 
-The site then appears at **<https://josephting1105123.github.io/Card-Games/>**. Open it and use your browser's *Install* or
+The site is served at **<https://play.entropicsoftwarelabs.com/>**. That is a
+custom domain on the Pages site: a Cloudflare CNAME `play` pointing at
+`josephting1105123.github.io`, set to **DNS only** so GitHub can issue the
+certificate, and the same name under **Settings → Pages → Custom domain** with
+*Enforce HTTPS* ticked. The workflow deploys with Actions, so no `CNAME` file is
+needed in the repo. The old <https://josephting1105123.github.io/Card-Games/>
+address redirects there.
+
+Open it and use your browser's *Install* or
 *Add to Home Screen*: it is a PWA, caches itself on first load, and then runs
 with no network at all.
 
@@ -57,7 +65,7 @@ started with `node server/server.js`, health-checked on `/healthz`.
 | `PORT` | 8787 | Port to listen on. Render sets it. |
 | `HOST` | `0.0.0.0` | Address to bind. |
 | `PUBLIC` | unset | `1` for the online host: no LAN address is advertised and private-network origins are not trusted. |
-| `ALLOWED_ORIGINS` | `https://josephting1105123.github.io`, `https://entropicsoftwarelabs.com`, `https://www.entropicsoftwarelabs.com` | Comma-separated origins allowed to open a WebSocket. A missing Origin and the server's own host are always allowed. Without `PUBLIC`, http pages on localhost and private addresses are allowed too. |
+| `ALLOWED_ORIGINS` | `https://play.entropicsoftwarelabs.com`, `https://josephting1105123.github.io`, `https://entropicsoftwarelabs.com`, `https://www.entropicsoftwarelabs.com` | Comma-separated origins allowed to open a WebSocket. A missing Origin and the server's own host are always allowed. Without `PUBLIC`, http pages on localhost and private addresses are allowed too. |
 | `TRUST_PROXY_HOPS` | 0 | Proxies in front. The client is that many entries from the right in `X-Forwarded-For`; 0 uses the socket address. |
 | `MAX_CONN_PER_IP` | 20 | Live WebSocket connections per client address; the next one gets a 429. |
 | `UPGRADES_PER_IP` | 10 | WebSocket connects allowed per client address in any 10 seconds; more get a 429. |

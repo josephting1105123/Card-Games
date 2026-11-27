@@ -34,6 +34,7 @@ import { DEFAULT_PORT } from '../src/net/roomcode.js';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const DEFAULT_ALLOWED_ORIGINS = [
+  'https://play.entropicsoftwarelabs.com',
   'https://josephting1105123.github.io',
   'https://entropicsoftwarelabs.com',
   'https://www.entropicsoftwarelabs.com',
